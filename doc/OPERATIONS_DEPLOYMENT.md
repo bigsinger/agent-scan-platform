@@ -7,7 +7,7 @@
 | 路径 | 用途 |
 | --- | --- |
 | `src/assessment/main.py` | FastAPI 应用入口，挂载 `/api/v1` 和 `/assessment` |
-| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 122 个 API 契约并提供本地实现兜底 |
+| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 135 个 API 契约并提供本地实现兜底 |
 | `src/assessment/scanning/` | 本地发现、静态规则、证据脱敏、扫描编排 |
 | `src/assessment/scanning/guard.py` | 只读 Guard 防御监测，负责配置哈希基线、变化检测和防御建议 |
 | `src/assessment/reports/` | HTML/JSON 报告渲染器 |
@@ -29,6 +29,7 @@
 5. 报告由扫描快照生成，渲染时不重新读取目标目录，便于审计和复现。
 6. 关闭互联网和 Snyk Token 时仍可完成核心本地扫描、发现、证据和报告。
 7. Guard 防御监测仅读取已安装 Agent 的配置文件并写入本系统 SQLite，不修改 Codex、Hermes 或其他 Agent 的安装目录。
+8. 沙箱策略自测只做本地策略判定，不访问敏感路径、不发起网络请求、不启动外部子进程或 stdio MCP Server。
 
 ## 3. 环境要求
 
@@ -80,6 +81,14 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/guard/check
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
+```
+
+沙箱策略自测：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sandbox-policy/test
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy/export
 ```
 
 ## 5. Linux / macOS 本地部署
@@ -338,6 +347,24 @@ Invoke-WebRequest `
 2. 审批通过前保持 `DRAFT` 或 `REVIEW_REQUIRED`。
 3. 若后续集成运行时平台，应由主平台负责认证、审批、发布和回滚。
 4. 本模块只保留草案、artifact、审计事件和防御建议。
+
+沙箱策略运维操作只生成本系统 `sandbox_policy`、`policy_decision`、`artifact` 和 `audit_event` 记录，不会修改或拦截已安装 Codex/Hermes：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy
+Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8000/api/v1/sandbox-policy -Body (@{ reset = $true } | ConvertTo-Json) -ContentType "application/json"
+$test = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sandbox-policy/test
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($test.test.download)" -OutFile sandbox-policy-test.json
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile sandbox-policy.json
+```
+
+沙箱策略交付建议：
+
+1. 把自测结果作为“进程级安全降级”证据，不宣称没有容器时具备强隔离。
+2. 检查 `network.default=deny`、`process.stdio_mcp=per-server-consent`、`process.subprocess=deny-by-default`。
+3. 自测 artifact 中不得出现原始敏感路径、Token、Authorization Header 或完整环境变量值。
+4. 企业如需真实运行时拦截，应由主平台或端点安全产品落地，本模块只输出策略、判定和审计证据。
 
 任务生命周期运维操作只影响本系统任务记录、报告制品和审计事件，不会修改或终止已安装 Codex/Hermes：
 

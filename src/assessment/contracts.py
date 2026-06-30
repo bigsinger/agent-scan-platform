@@ -130,6 +130,7 @@ POST /api/v1/scanners/{id}/self-test
 GET /api/v1/sandbox-policy
 PUT /api/v1/sandbox-policy
 POST /api/v1/sandbox-policy/test
+GET /api/v1/sandbox-policy/export
 GET /api/v1/findings
 PATCH /api/v1/findings/{id}
 POST /api/v1/findings/{id}/accept
@@ -227,7 +228,7 @@ PAGE_API_MAP = {
     "P17": ["POST /api/v1/redteam-runs", "GET /api/v1/redteam-runs/{id}", "POST /api/v1/redteam-runs/{id}/stop"],
     "P18": ["GET /api/v1/redteam-cases", "POST /api/v1/redteam-cases", "POST /api/v1/redteam-cases/{id}/validate"],
     "P19": ["GET /api/v1/executor/health", "GET /api/v1/scanners", "POST /api/v1/scanners/{id}/self-test"],
-    "P20": ["GET /api/v1/sandbox-policy", "PUT /api/v1/sandbox-policy", "POST /api/v1/sandbox-policy/test"],
+    "P20": ["GET /api/v1/sandbox-policy", "PUT /api/v1/sandbox-policy", "POST /api/v1/sandbox-policy/test", "GET /api/v1/sandbox-policy/export"],
     "P21": ["GET /api/v1/findings", "PATCH /api/v1/findings/{id}", "POST /api/v1/findings/{id}/accept"],
     "P22": ["GET /api/v1/findings/{id}", "GET /api/v1/findings/{id}/evidence", "POST /api/v1/findings/{id}/retest"],
     "P23": ["GET /api/v1/evidence", "GET /api/v1/evidence/export", "GET /api/v1/evidence/{id}", "GET /api/v1/evidence/{id}/download", "POST /api/v1/evidence/{id}/redact", "GET /api/v1/artifacts/{id}/download"],
@@ -324,7 +325,7 @@ def entity_for_page(page_id: str) -> str:
         "P17": "redteam_run",
         "P18": "redteam_case",
         "P19": "scanner_plugin, process_execution",
-        "P20": "sandbox_policy",
+        "P20": "sandbox_policy, policy_decision, audit_event",
         "P21": "finding",
         "P22": "finding, evidence, retest_run",
         "P23": "evidence, artifact",

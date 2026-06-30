@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
@@ -305,8 +306,10 @@ async def generic_get(resource: str, request: Request) -> dict:
         return {"state": "running", "slots": {"running": 2, "available": 0, "max": 2}, "queue": 3}
     if path == "/executor/health":
         return executor_health(state)
+    if path == "/sandbox-policy/export":
+        return export_sandbox_policy(get_store(), state)
     if path == "/sandbox-policy":
-        return {"policy": state.get("sandboxPolicy", default_sandbox_policy()), "status": "ACTIVE"}
+        return {"policy": load_sandbox_policy(get_store(), state), "status": "ACTIVE"}
     if path == "/settings":
         return {"settings": state.get("settings", default_settings())}
     if path.startswith("/redteam/runs/") or path.startswith("/redteam-runs/"):
@@ -553,10 +556,9 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path == "/integrations/runtime-platform/events":
         result["event"] = runtime_platform_event(store, state, body)
     elif path == "/sandbox-policy" and method == "PUT":
-        state["sandboxPolicy"] = {**default_sandbox_policy(), **body, "updated_at": utc_now()}
-        result["policy"] = state["sandboxPolicy"]
+        result["policy"] = save_sandbox_policy(store, state, body)
     elif path == "/sandbox-policy/test":
-        result["test"] = {"status": "PASS", "policy": state.get("sandboxPolicy", default_sandbox_policy()), "checked_at": utc_now()}
+        result["test"] = run_sandbox_policy_test(store, state, body)
     elif path == "/settings" and method == "PUT":
         state["settings"] = body
         result["settings"] = body
@@ -828,12 +830,349 @@ def executor_health(state: dict) -> dict:
 def default_sandbox_policy() -> dict:
     return {
         "id": "sandbox_default",
-        "mode": "read_only",
-        "network": "deny-by-default",
-        "stdio_mcp": "per-server-consent",
-        "remote_mcp": "https-allowlist-required",
+        "name": "本地只读扫描安全策略",
+        "status": "ACTIVE",
+        "version": "local-readonly@4.1",
+        "mode": "local-readonly",
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "profiles": [
+            {
+                "id": "local-readonly",
+                "name": "local-readonly",
+                "description": "配置、MCP 与 Skill 只读扫描；不启动 stdio MCP。",
+                "chips": ["RO paths", "network deny", "no subprocess"],
+                "status": "默认",
+            },
+            {
+                "id": "mcp-inspect",
+                "name": "mcp-inspect",
+                "description": "仅在逐项审批后允许检查 stdio MCP 启动参数。",
+                "chips": ["consent required", "command redaction", "no auto-start"],
+                "status": "需审批",
+            },
+            {
+                "id": "dynamic-redteam",
+                "name": "dynamic-redteam",
+                "description": "动态红队用例以 dry-run 与空执行保存判定证据。",
+                "chips": ["dry-run", "empty execution", "timeout"],
+                "status": "受控",
+            },
+        ],
+        "paths": {
+            "read": [
+                "<workspace>/**",
+                "<home>/.codex/**",
+                "<home>/.agents/**",
+                "<home>/AppData/Local/hermes/**",
+            ],
+            "write": [
+                "data/work/${job_id}/**",
+                "data/artifacts/**",
+                "data/reports/**",
+            ],
+            "deny": [
+                "<home>/.ssh/**",
+                "<home>/.gnupg/**",
+                "<home>/.aws/**",
+                "<system-config>/**",
+                "/etc/**",
+            ],
+        },
+        "env": {
+            "inherit": ["PATH", "HOME", "USERPROFILE", "LOCALAPPDATA"],
+            "deny_patterns": ["TOKEN", "SECRET", "PASSWORD", "KEY", "AUTHORIZATION"],
+            "redact": "before-persist",
+        },
+        "network": {
+            "default": "deny",
+            "allow": [],
+            "metadata_endpoints": ["169.254.169.254", "100.100.100.200"],
+        },
+        "process": {
+            "subprocess": "deny-by-default",
+            "stdio_mcp": "per-server-consent",
+            "remote_mcp": "https-allowlist-required",
+            "max_parallel": 2,
+        },
+        "limits": {
+            "timeout_sec": 600,
+            "memory_mb": 2048,
+            "output_mb": 10,
+        },
         "dangerous_actions": ["delete", "publish", "external_message", "payment", "production_write"],
         "evidence_redaction": "enabled",
+        "updated_at": utc_now(),
+    }
+
+
+def load_sandbox_policy(store: Any, state: dict | None = None) -> dict:
+    persisted = store.get_record("sandbox_policy", "sandbox_default")
+    if persisted is None:
+        records = store.list_records("sandbox_policy", limit=1)
+        persisted = records[0] if records else None
+    raw = persisted or ((state or {}).get("sandboxPolicy") if state else None) or {}
+    policy = merge_sandbox_policy(raw)
+    policy["safe_mode"] = "policy-evaluation-only"
+    policy["mutates_installed_agents"] = False
+    return policy
+
+
+def merge_sandbox_policy(values: dict) -> dict:
+    policy = default_sandbox_policy()
+    if not isinstance(values, dict):
+        return policy
+    for key, value in values.items():
+        if key in {"paths", "env", "network", "process", "limits"}:
+            if isinstance(value, dict):
+                policy[key] = {**policy.get(key, {}), **value}
+        elif key == "profiles" and isinstance(value, list) and value:
+            policy[key] = value
+        else:
+            policy[key] = value
+    policy.setdefault("id", "sandbox_default")
+    policy.setdefault("status", "ACTIVE")
+    if str(policy.get("mode") or "") not in {"local-readonly", "read_only", "mcp-inspect", "dynamic-redteam"}:
+        policy["mode"] = "local-readonly"
+    if isinstance(policy.get("paths"), dict):
+        deny = policy["paths"].get("deny") or []
+        policy["paths"]["deny"] = [
+            "<system-config>/**" if str(item).replace("\\", "/").lower().startswith("c:/windows/system32/config") else item
+            for item in deny
+        ]
+    return policy
+
+
+def save_sandbox_policy(store: Any, state: dict, body: dict) -> dict:
+    policy = default_sandbox_policy() if body.get("reset") else merge_sandbox_policy(body)
+    validation_errors = validate_sandbox_policy(policy)
+    if validation_errors:
+        raise HTTPException(status_code=422, detail={"message": "sandbox policy is unsafe", "validation_errors": validation_errors})
+    policy["updated_at"] = utc_now()
+    policy["safe_mode"] = "policy-evaluation-only"
+    policy["mutates_installed_agents"] = False
+    updated = store.upsert_record("sandbox_policy", policy, status=str(policy.get("status") or "ACTIVE"))
+    state["sandboxPolicy"] = updated
+    store.audit_event("put.sandbox-policy", "sandbox_policy", updated["id"], {"reset": bool(body.get("reset")), "safe_mode": updated["safe_mode"]})
+    return updated
+
+
+def validate_sandbox_policy(policy: dict) -> list[dict]:
+    errors: list[dict] = []
+    network_default = str(policy.get("network", {}).get("default", "")).lower()
+    if network_default not in {"deny", "deny-by-default"}:
+        errors.append({"field": "network.default", "message": "network default must remain deny"})
+    stdio_policy = str(policy.get("process", {}).get("stdio_mcp") or policy.get("stdio_mcp") or "").lower()
+    if stdio_policy in {"allow", "always-allow", "auto-start"}:
+        errors.append({"field": "process.stdio_mcp", "message": "stdio MCP cannot be auto-started by sandbox policy"})
+    subprocess_policy = str(policy.get("process", {}).get("subprocess") or "").lower()
+    if subprocess_policy in {"allow", "always-allow"}:
+        errors.append({"field": "process.subprocess", "message": "subprocess must stay deny-by-default for local scan workers"})
+    deny_patterns = policy.get("env", {}).get("deny_patterns") or []
+    if not any("TOKEN" in str(item).upper() for item in deny_patterns):
+        errors.append({"field": "env.deny_patterns", "message": "token-like environment variables must be denied or redacted"})
+    for index, pattern in enumerate(policy.get("paths", {}).get("write") or []):
+        text = str(pattern).replace("\\", "/").lower()
+        if text in {"/**", "c:/**", "c:/*", "<home>/**", "~/**"} or text.startswith("<home>/.ssh"):
+            errors.append({"field": f"paths.write[{index}]", "message": "write scope is too broad or targets sensitive user paths"})
+    return errors
+
+
+def run_sandbox_policy_test(store: Any, state: dict, body: dict) -> dict:
+    policy = load_sandbox_policy(store, state)
+    test_run_id = new_id("sbt")
+    checked_at = utc_now()
+    tests = sandbox_policy_self_tests(policy, test_run_id, checked_at)
+    run_status = "PASS" if all(item["status"] in {"PASS", "DEGRADED"} for item in tests) else "FAIL"
+    for item in tests:
+        item["run_status"] = run_status
+        store.upsert_record("policy_decision", item, status=item["status"])
+    payload = {
+        "schema": "agent-security-sandbox-policy-test@4.1",
+        "test_run_id": test_run_id,
+        "policy_id": policy.get("id"),
+        "status": run_status,
+        "checked_at": checked_at,
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "boundary": "只做本地策略判定；未访问敏感路径、未发起网络请求、未启动 stdio MCP 或外部子进程。",
+        "tests": tests,
+    }
+    artifact = store.write_artifact(
+        "sandbox-policy-test",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"policy_id": policy.get("id"), "test_run_id": test_run_id, "safe_mode": "policy-evaluation-only"},
+    )
+    result = {
+        "id": test_run_id,
+        "status": run_status,
+        "policy_id": policy.get("id"),
+        "checked_at": checked_at,
+        "tests": tests,
+        "artifact_id": artifact["id"],
+        "artifact_path": artifact["relative_path"],
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+    }
+    state["sandboxTestResult"] = result
+    store.audit_event("post.sandbox-policy.test", "sandbox_policy", str(policy.get("id")), {"test_run_id": test_run_id, "status": run_status})
+    return result
+
+
+def sandbox_policy_self_tests(policy: dict, test_run_id: str, checked_at: str) -> list[dict]:
+    checks = [
+        ("path.workspace_read", "路径策略", "工作区只读允许", "ALLOW_READ", sandbox_path_decision(policy, "read", REPO_ROOT / "README.md")),
+        ("path.home_ssh_deny", "路径策略", "用户 SSH 目录拒绝", "DENY", sandbox_path_decision(policy, "read", Path.home() / ".ssh" / "id_rsa")),
+        ("path.traversal_deny", "路径策略", "路径穿越拒绝", "DENY", sandbox_path_decision(policy, "read", REPO_ROOT / ".." / ".." / ".ssh" / "id_rsa")),
+        ("path.work_write", "路径策略", "本系统工作目录写入允许", "ALLOW_WRITE", sandbox_path_decision(policy, "write", DATA_DIR / "work" / test_run_id / "probe.json")),
+        ("env.secret_redaction", "环境策略", "敏感环境变量脱敏", "REDACT", sandbox_env_decision(policy, {"PATH": "safe", "HERMES_TOKEN": "secret-token", "Authorization": "Bearer token"})),
+        ("network.metadata_deny", "网络策略", "云元数据地址阻断", "DENY", sandbox_network_decision(policy, "http://169.254.169.254/latest/meta-data")),
+        ("process.subprocess_deny", "进程策略", "外部子进程默认拒绝", "DENY", sandbox_process_decision(policy, "powershell.exe -NoProfile Get-ChildItem")),
+        ("process.stdio_mcp_consent", "MCP 策略", "stdio MCP 需要逐项审批", "REQUIRE_CONSENT", sandbox_mcp_decision(policy, "stdio")),
+    ]
+    results: list[dict] = []
+    for check_id, category, name, expected, decision in checks:
+        actual = decision.get("decision")
+        status = "PASS" if actual == expected else "FAIL"
+        if check_id == "path.traversal_deny" and actual == "DENY":
+            status = "PASS"
+        results.append(
+            {
+                "id": f"dec_{stable_hash(f'{test_run_id}:{check_id}', 20)}",
+                "test_run_id": test_run_id,
+                "policy_id": policy.get("id"),
+                "check_id": check_id,
+                "category": category,
+                "name": name,
+                "expected": expected,
+                "actual": actual,
+                "status": status,
+                "detail": decision.get("detail", ""),
+                "target": decision.get("target", ""),
+                "safe_mode": "policy-evaluation-only",
+                "checked_at": checked_at,
+                "created_at": checked_at,
+            }
+        )
+    return results
+
+
+def sandbox_path_decision(policy: dict, operation: str, raw_path: Path | str) -> dict:
+    path = resolve_policy_path(raw_path)
+    redacted = redact_local_path(path)
+    if is_under(path, Path.home() / ".ssh") or is_under(path, Path.home() / ".gnupg") or is_under(path, Path.home() / ".aws"):
+        return {"decision": "DENY", "target": redacted, "detail": "sensitive user secret path"}
+    if operation == "write":
+        writable_roots = [DATA_DIR / "work", DATA_DIR / "artifacts", DATA_DIR / "reports"]
+        decision = "ALLOW_WRITE" if any(is_under(path, root) for root in writable_roots) else "DENY"
+        return {"decision": decision, "target": redacted, "detail": "write scope evaluated without touching filesystem"}
+    readable_roots = [REPO_ROOT, Path.home() / ".codex", Path.home() / ".agents", Path.home() / "AppData" / "Local" / "hermes"]
+    decision = "ALLOW_READ" if any(is_under(path, root) for root in readable_roots) else "DENY"
+    return {"decision": decision, "target": redacted, "detail": "read scope evaluated without opening file"}
+
+
+def sandbox_env_decision(policy: dict, env: dict) -> dict:
+    patterns = [str(item).upper() for item in policy.get("env", {}).get("deny_patterns", [])]
+    redacted: dict[str, str] = {}
+    sensitive = False
+    for key, value in env.items():
+        is_sensitive = any(pattern in str(key).upper() for pattern in patterns)
+        sensitive = sensitive or is_sensitive
+        redacted[str(key)] = "<REDACTED>" if is_sensitive else str(value)
+    return {"decision": "REDACT" if sensitive else "ALLOW", "target": "env", "detail": json.dumps(redacted, ensure_ascii=False)}
+
+
+def sandbox_network_decision(policy: dict, url: str) -> dict:
+    parsed = urlparse(url)
+    host = parsed.hostname or url
+    metadata_hosts = {str(item) for item in policy.get("network", {}).get("metadata_endpoints", [])}
+    allowed_hosts = {str(item).lower() for item in policy.get("network", {}).get("allow", [])}
+    default = str(policy.get("network", {}).get("default", "deny")).lower()
+    if host in metadata_hosts:
+        return {"decision": "DENY", "target": host, "detail": "metadata endpoint blocked; no network request was sent"}
+    if default in {"deny", "deny-by-default"} and host.lower() not in allowed_hosts:
+        return {"decision": "DENY", "target": host, "detail": "default deny"}
+    return {"decision": "ALLOW", "target": host, "detail": "host allowlisted"}
+
+
+def sandbox_process_decision(policy: dict, command: str) -> dict:
+    subprocess_policy = str(policy.get("process", {}).get("subprocess", "deny-by-default")).lower()
+    decision = "DENY" if subprocess_policy.startswith("deny") else "ALLOW"
+    return {"decision": decision, "target": redact_text(command), "detail": "command was classified only; not executed"}
+
+
+def sandbox_mcp_decision(policy: dict, transport: str) -> dict:
+    stdio_policy = str(policy.get("process", {}).get("stdio_mcp", "per-server-consent")).lower()
+    if transport == "stdio" and stdio_policy in {"per-server-consent", "consent", "approval-required"}:
+        return {"decision": "REQUIRE_CONSENT", "target": transport, "detail": "stdio MCP requires explicit approval and is not auto-started"}
+    if transport == "stdio":
+        return {"decision": "DENY", "target": transport, "detail": "stdio MCP blocked"}
+    return {"decision": "ALLOW", "target": transport, "detail": "non-stdio transport policy"}
+
+
+def resolve_policy_path(raw_path: Path | str) -> Path:
+    text = str(raw_path)
+    text = text.replace("<workspace>", str(REPO_ROOT)).replace("<home>", str(Path.home())).replace("${job_id}", "job")
+    try:
+        return Path(text).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return Path(text).expanduser().absolute()
+
+
+def is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def redact_local_path(path: Path | str) -> str:
+    text = str(path).replace("\\", "/")
+    replacements = [
+        (str(REPO_ROOT).replace("\\", "/"), "<workspace>"),
+        (str(DATA_DIR).replace("\\", "/"), "data"),
+        (str(Path.home()).replace("\\", "/"), "<home>"),
+    ]
+    for needle, replacement in replacements:
+        if needle and text.lower().startswith(needle.lower()):
+            text = replacement + text[len(needle) :]
+            return text
+    if Path(text).is_absolute() or (len(text) > 2 and text[1] == ":"):
+        parts = [part for part in text.split("/") if part and not part.endswith(":")]
+        suffix = "/".join(parts[-2:]) if parts else "path"
+        return "<outside>/" + suffix
+    return text
+
+
+def export_sandbox_policy(store: Any, state: dict) -> dict:
+    policy = load_sandbox_policy(store, state)
+    decisions = store.list_records("policy_decision", limit=50)
+    payload = {
+        "schema": "agent-security-sandbox-policy@4.1",
+        "exported_at": utc_now(),
+        "policy": policy,
+        "recent_decisions": decisions,
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "boundary": "导出内容仅来自本系统 SQLite 和 artifact，不包含原始敏感环境变量或本机绝对路径。",
+    }
+    artifact = store.write_artifact(
+        "sandbox-policy",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"policy_id": policy.get("id"), "safe_mode": "policy-evaluation-only"},
+    )
+    store.audit_event("get.sandbox-policy.export", "artifact", artifact["id"], {"policy_id": policy.get("id"), "decisions": len(decisions)})
+    return {
+        "format": "sandbox-policy-json",
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "policy_id": policy.get("id"),
+        "decision_count": len(decisions),
+        "exported_at": payload["exported_at"],
     }
 
 
@@ -1668,6 +2007,15 @@ def runtime_state() -> dict:
     state["sqliteStatus"] = store.database_status()
     state["guardStatus"] = PassiveGuard(store).status()
     state["dashboardMetrics"] = dashboard_metrics(state)
+    state["sandboxPolicy"] = load_sandbox_policy(store, state)
+    decisions = store.list_records("policy_decision", limit=20)
+    if decisions:
+        latest_test = next((item for item in decisions if item.get("test_run_id")), decisions[0])
+        state["sandboxTestResult"] = {
+            "status": latest_test.get("run_status") or latest_test.get("status") or "UNKNOWN",
+            "checked_at": latest_test.get("checked_at") or latest_test.get("created_at"),
+            "tests": decisions,
+        }
 
     if state.get("agentAssets"):
         state["selectedAsset"] = state["agentAssets"][0]

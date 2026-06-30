@@ -140,6 +140,35 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 
 首次运行会建立基线；后续运行如果检测到配置哈希变化，会在总览页展示待处理建议，并在数据库中写入 `defense_recommendation`。
 
+## 4.2 执行安全 / 沙箱策略
+
+位置：
+
+```text
+左侧导航 → 执行安全 / 沙箱
+```
+
+用途：
+
+- 查看本模块扫描执行的路径、环境变量、网络、进程和 stdio MCP 策略。
+- 运行本地策略自测，确认敏感路径、云元数据地址、外部子进程和 stdio MCP 默认不会被放行。
+- 导出 `agent-security-sandbox-policy@4.1` JSON，供企业评审或变更留档。
+
+安全边界：
+
+1. 自测只做本地策略判定，不读取 `~/.ssh` 等敏感文件。
+2. 不发起网络请求，只判定 URL/Host 是否应被拒绝。
+3. 不启动外部子进程，不启动 stdio MCP Server。
+4. 策略和判定项只写入本系统 SQLite 的 `sandbox_policy`、`policy_decision`、`artifact` 和 `audit_event`。
+5. 页面会标记 `mutates_installed_agents=false`，不会修改 Codex、Hermes、Claude Code 或 MCP 配置。
+
+常用操作：
+
+- “运行逃逸自测”：生成 8 类策略判定，并返回可下载 JSON artifact。
+- “保存”：把当前策略写入 SQLite，并记录审计事件。
+- “恢复默认”：恢复本地只读默认策略。
+- “导出”：导出当前策略和最近判定项。
+
 ## 5. MCP 启动审批
 
 位置：
@@ -459,6 +488,28 @@ $drafts = Invoke-RestMethod `
 Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($drafts.policy_drafts[0].download)" `
   -OutFile policy-draft.json
+```
+
+### 沙箱策略自测和导出
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy
+
+Invoke-RestMethod `
+  -Method Put `
+  -Uri http://127.0.0.1:8000/api/v1/sandbox-policy `
+  -Body (@{ reset = $true } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$test = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sandbox-policy/test
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($test.test.download)" `
+  -OutFile sandbox-policy-test.json
+
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy/export
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($export.download)" `
+  -OutFile sandbox-policy.json
 ```
 
 ### 生成报告

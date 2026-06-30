@@ -25,6 +25,24 @@ data(){
     initial.discoveryLog = initial.discoveryLog || [];
     initial.sqliteStatus = initial.sqliteStatus || {file_bytes:0, mode:'WAL', state:'未知', pragma:{}};
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
+    initial.sandboxPolicy = Object.assign({
+      id:'sandbox_default',
+      version:'local-readonly@4.1',
+      mode:'local-readonly',
+      safe_mode:'policy-evaluation-only',
+      mutates_installed_agents:false,
+      profiles:[
+        {id:'local-readonly', name:'local-readonly', description:'配置、MCP 与 Skill 只读扫描；不启动 stdio MCP。', chips:['RO paths','network deny','no subprocess'], status:'默认'},
+        {id:'mcp-inspect', name:'mcp-inspect', description:'仅在逐项审批后允许检查 stdio MCP 启动参数。', chips:['consent required','command redaction','no auto-start'], status:'需审批'},
+        {id:'dynamic-redteam', name:'dynamic-redteam', description:'动态红队用例以 dry-run 与空执行保存判定证据。', chips:['dry-run','empty execution','timeout'], status:'受控'}
+      ],
+      paths:{read:['<workspace>/**'], write:['data/work/${job_id}/**','data/artifacts/**'], deny:['<home>/.ssh/**','<home>/.gnupg/**']},
+      env:{inherit:['PATH','HOME','USERPROFILE'], deny_patterns:['TOKEN','SECRET','PASSWORD','KEY']},
+      network:{default:'deny', allow:[]},
+      process:{subprocess:'deny-by-default', stdio_mcp:'per-server-consent'},
+      limits:{timeout_sec:600, memory_mb:2048, output_mb:10}
+    }, initial.sandboxPolicy || {});
+    initial.sandboxTestResult = initial.sandboxTestResult || {status:'未运行', tests:[]};
     initial.quickModes = (initial.quickModes || []).filter(mode => mode.id !== 'fixture');
     initial.backupRecords = initial.backupRecords || [];
     initial.attackPaths = initial.attackPaths || [];
@@ -499,6 +517,94 @@ data(){
     async refreshSqliteStatus(){
       const res=await this.apiGet('/api/v1/sqlite/status');
       this.sqliteStatus=res;
+    },
+    sandboxStatusClass(status){
+      if(['PASS','ACTIVE','默认','通过'].includes(status)) return 'low';
+      if(['DEGRADED','需审批','受控'].includes(status)) return 'medium';
+      if(['FAIL','FAILED','失败'].includes(status)) return 'critical';
+      return 'gray';
+    },
+    sandboxPolicyYaml(policy){
+      const p=policy || this.sandboxPolicy || {};
+      const paths=p.paths || {};
+      const env=p.env || {};
+      const network=p.network || {};
+      const process=p.process || {};
+      const limits=p.limits || {};
+      const lines=[
+        'id: '+(p.id || 'sandbox_default'),
+        'mode: '+(p.mode || 'local-readonly'),
+        'mutates_installed_agents: '+String(Boolean(p.mutates_installed_agents)),
+        'paths:',
+        '  read:',
+        ...((paths.read || []).map(x=>'    - '+x)),
+        '  write:',
+        ...((paths.write || []).map(x=>'    - '+x)),
+        '  deny:',
+        ...((paths.deny || []).map(x=>'    - '+x)),
+        'env:',
+        '  inherit: ['+((env.inherit || []).join(', '))+']',
+        '  deny_patterns: ['+((env.deny_patterns || []).join(', '))+']',
+        'network:',
+        '  default: '+(network.default || 'deny'),
+        '  allow: ['+((network.allow || []).join(', '))+']',
+        'process:',
+        '  subprocess: '+(process.subprocess || 'deny-by-default'),
+        '  stdio_mcp: '+(process.stdio_mcp || 'per-server-consent'),
+        'limits:',
+        '  timeout_sec: '+(limits.timeout_sec || 600),
+        '  memory_mb: '+(limits.memory_mb || 2048),
+        '  output_mb: '+(limits.output_mb || 10)
+      ];
+      return lines.join('\n');
+    },
+    async refreshSandboxPolicy(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/sandbox-policy');
+        this.sandboxPolicy=res.policy || {};
+        this.toastMsg('沙箱策略已刷新：'+(this.sandboxPolicy.id || 'sandbox_default'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async saveSandboxPolicy(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPut('/api/v1/sandbox-policy', this.sandboxPolicy || {});
+        this.sandboxPolicy=res.policy || this.sandboxPolicy;
+        this.toastMsg('沙箱策略已保存并审计：'+(this.sandboxPolicy.id || 'sandbox_default'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async restoreSandboxDefaults(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPut('/api/v1/sandbox-policy', {reset:true});
+        this.sandboxPolicy=res.policy || {};
+        this.toastMsg('已恢复本地只读默认策略');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async runSandboxSelfTest(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/sandbox-policy/test', {});
+        this.sandboxTestResult=res.test || {status:'UNKNOWN', tests:[]};
+        this.toastMsg('沙箱自测完成：'+this.sandboxTestResult.status+'，判定 '+((this.sandboxTestResult.tests||[]).length)+' 项');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async exportSandboxPolicy(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/sandbox-policy/export');
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('沙箱策略已导出：'+(res.artifact&&res.artifact.id || '完成'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    downloadSandboxTest(){
+      if(this.sandboxTestResult && this.sandboxTestResult.download) window.open(this.sandboxTestResult.download, '_blank', 'noopener');
     },
     async runScheduleNow(schedule){
       if(!schedule || !schedule.id) return;

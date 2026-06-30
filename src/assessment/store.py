@@ -46,6 +46,7 @@ GENERIC_TABLES = [
     "process_execution",
     "sandbox_policy",
     "sandbox_profile",
+    "policy_decision",
     "mcp_server",
     "mcp_tool",
     "mcp_prompt",

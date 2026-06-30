@@ -60,6 +60,52 @@ def test_database_maintenance_endpoints():
     assert backups.json()["total"] >= 1
 
 
+def test_sandbox_policy_is_real_review_only_and_audited():
+    policy_response = client.get("/api/v1/sandbox-policy")
+    assert policy_response.status_code == 200
+    policy = policy_response.json()["policy"]
+    assert policy["mode"] == "local-readonly"
+    assert policy["mutates_installed_agents"] is False
+    assert policy["process"]["stdio_mcp"] == "per-server-consent"
+
+    unsafe = client.put(
+        "/api/v1/sandbox-policy",
+        json={"network": {"default": "allow"}, "process": {"stdio_mcp": "auto-start", "subprocess": "allow"}},
+    )
+    assert unsafe.status_code == 422
+
+    restored = client.put("/api/v1/sandbox-policy", json={"reset": True})
+    assert restored.status_code == 200
+    assert restored.json()["policy"]["network"]["default"] == "deny"
+
+    test = client.post("/api/v1/sandbox-policy/test", json={})
+    assert test.status_code == 200
+    result = test.json()["test"]
+    assert result["status"] == "PASS"
+    assert result["safe_mode"] == "policy-evaluation-only"
+    assert result["mutates_installed_agents"] is False
+    assert result["download"].endswith("/download")
+    checks = {item["check_id"]: item for item in result["tests"]}
+    assert checks["network.metadata_deny"]["actual"] == "DENY"
+    assert checks["process.stdio_mcp_consent"]["actual"] == "REQUIRE_CONSENT"
+    assert checks["process.subprocess_deny"]["detail"].endswith("not executed")
+    assert all(":\\" not in item.get("target", "") and ":/" not in item.get("target", "") for item in result["tests"])
+
+    downloaded = client.get(result["download"])
+    assert downloaded.status_code == 200
+    assert "agent-security-sandbox-policy-test@4.1" in downloaded.text
+    assert "未启动 stdio MCP" in downloaded.text
+
+    exported = client.get("/api/v1/sandbox-policy/export")
+    assert exported.status_code == 200
+    export_body = exported.json()
+    assert export_body["format"] == "sandbox-policy-json"
+    export_download = client.get(export_body["download"])
+    assert export_download.status_code == 200
+    assert "agent-security-sandbox-policy@4.1" in export_download.text
+    assert "C:/Windows/System32/config" not in export_download.text
+
+
 def test_report_evidence_and_risk_closure_actions():
     scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50}).json()
     report = client.post("/api/v1/reports", json={"assessment_id": scan["assessment"]["id"], "type": "Standard"}).json()["report"]

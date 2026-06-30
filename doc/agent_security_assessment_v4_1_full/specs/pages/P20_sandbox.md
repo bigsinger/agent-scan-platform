@@ -41,6 +41,7 @@
 - `GET /api/v1/sandbox-policy`
 - `PUT /api/v1/sandbox-policy`
 - `POST /api/v1/sandbox-policy/test`
+- `GET /api/v1/sandbox-policy/export`
 
 接口返回必须统一包装：
 
@@ -66,7 +67,7 @@
 
 ## 5. 主要实体
 
-`sandbox_policy, policy_decision, audit_event`
+`sandbox_policy, policy_decision, artifact, audit_event`
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 

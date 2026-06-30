@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent 安全测评能力模块 V4.1</title>
-<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.11">
+<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.12">
 </head>
 <body>
 <div id="boot-status" class="boot-status"><div class="boot-card"><strong>Agent 安全测评模块正在启动</strong><p>如果页面长时间无响应，请检查本地 Vue 静态资源、浏览器 Console 或模板编译错误。</p></div></div>
@@ -572,34 +572,14 @@ safe_mode: dry_run</div></div><div class="card"><h2>发布门禁</h2><table><tbo
 <!-- P20 SANDBOX -->
 <div v-if="current==='sandbox'">
   <div class="card">
-    <div class="card-head"><div><h2>执行安全 / 沙箱</h2><div class="desc">即使没有额外容器运行时，仍通过路径、环境、进程、资源与网络策略实现安全降级；可选接入 Docker/Podman。</div></div><button class="btn primary" @click="toastMsg('沙箱自测开始：路径/网络/进程/资源')">运行逃逸自测</button></div>
+    <div class="card-head"><div><h2>执行安全 / 沙箱</h2><div class="desc">即使没有额外容器运行时，仍通过路径、环境、进程、资源与网络策略实现安全降级；自测只做本地策略判定，不启动外部 Agent。</div></div><div><button class="btn" :disabled="opsBusy" @click="refreshSandboxPolicy">刷新</button><button class="btn primary" :disabled="opsBusy" @click="runSandboxSelfTest">运行逃逸自测</button></div></div>
     <div class="grid g3">
-      <div class="agent-card" style="--accent:#315efb"><h3>local-readonly</h3><div class="desc">配置和 Skill 只读扫描。</div><div class="chips"><span class="chip">RO paths</span><span class="chip">network deny</span><span class="chip">no subprocess</span></div><span class="badge low">默认</span></div>
-      <div class="agent-card" style="--accent:#f79009"><h3>mcp-inspect</h3><div class="desc">允许经审批启动 stdio MCP。</div><div class="chips"><span class="chip">workspace</span><span class="chip">target-only net</span><span class="chip">resource limit</span></div><span class="badge high">需审批</span></div>
-      <div class="agent-card" style="--accent:#7f56d9"><h3>dynamic-redteam</h3><div class="desc">Dry-run 动态用例与受控空执行。</div><div class="chips"><span class="chip">temp home</span><span class="chip">empty execution</span><span class="chip">timeout</span></div><span class="badge purple">受控</span></div>
+      <div class="agent-card" v-for="p in (sandboxPolicy.profiles||[])" :key="p.id" style="--accent:#315efb"><h3>{{p.name}}</h3><div class="desc">{{p.description}}</div><div class="chips"><span class="chip" v-for="chip in (p.chips||[])" :key="chip">{{chip}}</span></div><span :class="['badge',sandboxStatusClass(p.status)]">{{p.status}}</span></div>
     </div>
   </div>
   <div class="grid g2">
-    <div class="card"><h2>当前配置</h2><div class="code">id: mcp-inspect
-paths:
-  read:
-    - /workspace/agent/**
-  write:
-    - data/work/${job_id}/**
-  deny:
-    - ~/.ssh/**
-    - /etc/**
-env:
-  inherit: [PATH, HOME]
-  deny_patterns: [TOKEN, SECRET, PASSWORD]
-network:
-  default: deny
-  allow: [target-explicit]
-limits:
-  timeout: 600
-  memory_mb: 2048
-  output_mb: 10</div></div>
-    <div class="card"><h2>自测结果</h2><table><thead><tr><th>测试</th><th>期望</th><th>结果</th><th>状态</th></tr></thead><tbody><tr><td>路径穿越</td><td>拒绝</td><td>拒绝</td><td><span class="badge low">通过</span></td></tr><tr><td>符号链接逃逸</td><td>拒绝</td><td>拒绝</td><td><span class="badge low">通过</span></td></tr><tr><td>云元数据</td><td>阻断</td><td>阻断</td><td><span class="badge low">通过</span></td></tr><tr><td>内存超限</td><td>Kill</td><td>Kill 2.3s</td><td><span class="badge low">通过</span></td></tr><tr><td>进程树取消</td><td>无残留</td><td>0 残留</td><td><span class="badge low">通过</span></td></tr><tr><td>容器隔离</td><td>可选</td><td>未安装</td><td><span class="badge gray">降级</span></td></tr></tbody></table><div class="callout amber">没有容器运行时时，不宣称“强沙箱”。页面和报告必须标记为进程级安全降级。</div></div>
+    <div class="card"><div class="card-head"><div><h2>当前配置</h2><div class="desc">{{sandboxPolicy.version}} · {{sandboxPolicy.safe_mode}}</div></div><div><button class="btn sm" :disabled="opsBusy" @click="saveSandboxPolicy">保存</button><button class="btn sm" :disabled="opsBusy" @click="restoreSandboxDefaults">恢复默认</button><button class="btn sm soft" :disabled="opsBusy" @click="exportSandboxPolicy">导出</button></div></div><div class="code">{{sandboxPolicyYaml(sandboxPolicy)}}</div></div>
+    <div class="card"><div class="card-head"><div><h2>自测结果</h2><div class="desc">{{sandboxTestResult.checked_at || '尚未运行'}} · Artifact {{sandboxTestResult.artifact_path || '未生成'}}</div></div><span :class="['badge',sandboxStatusClass(sandboxTestResult.status)]">{{sandboxTestResult.status}}</span></div><table><thead><tr><th>测试</th><th>期望</th><th>结果</th><th>状态</th></tr></thead><tbody><tr v-for="t in (sandboxTestResult.tests||[])" :key="t.id"><td>{{t.name}}<div class="tiny muted">{{t.category}} · {{t.target}}</div></td><td>{{t.expected}}</td><td>{{t.actual}}</td><td><span :class="['badge',sandboxStatusClass(t.status)]">{{t.status}}</span></td></tr><tr v-if="!(sandboxTestResult.tests||[]).length"><td colspan="4" class="muted">尚未运行本地沙箱策略自测。</td></tr></tbody></table><div class="callout amber">没有容器运行时时，不宣称“强沙箱”。本页只证明本模块扫描执行的进程级安全降级策略，不修改 Codex/Hermes 等已安装 Agent。</div><button v-if="sandboxTestResult.download" class="btn soft" style="margin-top:10px" @click="downloadSandboxTest">下载自测 JSON</button></div>
   </div>
 </div>
 
@@ -785,6 +765,6 @@ remote_analysis: false</div></div></div></div>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.11"></script>
+<script src="/static/assessment/app.js?v=4.1.12"></script>
 </body>
 </html>
