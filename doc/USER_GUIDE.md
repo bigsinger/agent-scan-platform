@@ -605,7 +605,7 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 
 - 保存草稿：创建 `assessment` 草稿记录，后续可复制或提交。
 - 复制任务：从已有任务生成新的草稿，不复用旧结果。
-- 重试任务：基于原任务创建新的 `QUEUED` 测评记录，保留 `source_task_id` / `retry_of` 和 `task.retry_queued` 事件，便于审计和复现。
+- 重试任务：任务列表、任务详情和失败 Job 行的“重试”会调用 `/api/v1/tasks/{id}/retry`，基于原任务创建新的 `QUEUED` 测评记录，保留 `source_task_id` / `retry_of` 和 `task.retry_queued` 事件，便于审计和复现。
 - 取消任务：把任务状态写为 `CANCELLED`，记录本地审计；当前实现不杀已安装 Agent 进程。
 - 刷新事件：从 SQLite `scan_event` 读取任务事件流。
 - 生成报告：基于指定任务生成 HTML/JSON 报告制品。

@@ -430,12 +430,23 @@ data(){
     statusClass(s){
       if(s==='已完成') return 'low';
       if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS') return 'low';
-      if(s==='运行中'||s==='RENDERING') return 'blue';
+      if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED') return 'blue';
       if(s==='等待审批'||s==='部分完成'||s==='WARN'||s==='NOT_RUN'||s==='未运行') return 'medium';
       if(s==='PENDING'||s==='OPEN') return 'medium';
       if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED') return 'critical';
       return 'gray';
+    },
+    isActiveTask(task){
+      if(!task) return false;
+      const status=task.status || task.state_code || '';
+      return ['运行中','等待审批','排队中','RUNNING','WAITING_CONSENT','QUEUED','RETRY_QUEUED'].includes(status) || ['RUNNING','WAITING_CONSENT','QUEUED'].includes(task.stage);
+    },
+    canRetryTask(task){
+      if(!task || !task.id) return false;
+      const status=task.status || task.state_code || '';
+      if(status==='DRAFT' || status==='草稿') return false;
+      return !this.isActiveTask(task);
     },
     mergeRecords(key, items){
       if(!items || !items.length) return;
@@ -1582,6 +1593,23 @@ data(){
         const res=await this.apiPost('/api/v1/tasks/'+encodeURIComponent(task.id)+'/clone', {});
         if(res.draft){ this.mergeRecords('tasks', [res.draft]); this.selectedTask=res.draft; }
         this.toastMsg('任务计划已复制为草稿：'+(res.draft&&res.draft.id || 'DRAFT'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async retryTask(task){
+      if(!task || !task.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/tasks/'+encodeURIComponent(task.id)+'/retry', {});
+        if(res.task){
+          this.mergeRecords('tasks', [res.task]);
+          this.selectedTask=res.task;
+          this.current='task-detail';
+          this.pushRoute('task-detail');
+          const events=await this.apiGet('/api/v1/tasks/'+encodeURIComponent(res.task.id)+'/events');
+          this.taskEvents=events.items || [];
+        }
+        this.toastMsg('任务已重新排队：'+(res.task&&res.task.id || 'QUEUED'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },

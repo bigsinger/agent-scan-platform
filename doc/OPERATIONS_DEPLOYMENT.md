@@ -558,6 +558,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.asses
 
 `retry` 会基于原任务生成一个新的 `QUEUED` 测评记录和 `task.retry_queued` 事件，保留 `source_task_id` / `retry_of` 便于审计。该操作不复用旧结果、不启动 Codex/Hermes、不启动 stdio MCP Server，也不会发送 kill 或修改外部配置。
 
+前端任务列表、任务详情页和失败 Job 行的“重试”按钮均调用同一个 `/api/v1/tasks/{id}/retry`，企业验收时可通过新任务 ID、事件流和 `audit_event` 交叉确认没有触碰外部 Agent 进程。
+
 能力管理健康检查：
 
 ```powershell

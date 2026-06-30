@@ -93,3 +93,14 @@ def test_findings_export_ui_is_api_backed():
     assert "@click=\"exportFindings\"" in html
     assert "async exportFindings" in app_js
     assert "/api/v1/findings/export" in app_js
+
+
+def test_task_retry_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "Job 已重新排队" not in html
+    assert "@click=\"retryTask(t)\"" in html
+    assert "@click=\"retryTask(selectedTask)\"" in html
+    assert "canRetryTask(t)" in html
+    assert "async retryTask" in app_js
+    assert "'/api/v1/tasks/'+encodeURIComponent(task.id)+'/retry'" in app_js
