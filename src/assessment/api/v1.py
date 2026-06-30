@@ -39,6 +39,7 @@ LIST_KEYS = {
     "/findings": "findings",
     "/evidence": "evidenceItems",
     "/attack-paths": "attackPaths",
+    "/policy-drafts": "policyDrafts",
     "/reports": "reports",
     "/retests": "retests",
     "/rules": "ruleRows",
@@ -68,6 +69,7 @@ TABLE_KEYS = {
     "/findings": "finding",
     "/evidence": "evidence",
     "/attack-paths": "attack_path",
+    "/policy-drafts": "policy_draft",
     "/reports": "report",
     "/retests": "retest_run",
     "/rules": "rule",
@@ -470,10 +472,23 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path == "/attack-paths/build":
         attack_path = build_attack_path(store, state, body)
         state.setdefault("attackPaths", []).insert(0, attack_path)
+        state["selectedAttackPath"] = attack_path
         result["attack_path"] = attack_path
+    elif path.startswith("/attack-paths/") and path.endswith("/confirm"):
+        attack_path_id = path.split("/")[-2]
+        result["attack_path"] = confirm_attack_path(store, state, attack_path_id, body)
+        result["status"] = "CONFIRMED"
+    elif path.startswith("/attack-paths/") and path.endswith("/policy-drafts"):
+        attack_path_id = path.split("/")[-2]
+        drafts = create_policy_drafts_for_attack_path(store, state, attack_path_id, body)
+        result["policy_drafts"] = drafts
+        result["status"] = "DRAFTED"
     elif path.startswith("/attack-paths/") and method == "PATCH":
         attack_path_id = path.split("/")[-1]
         result["attack_path"] = update_structured_record(store, state, "attack_path", "attackPaths", attack_path_id, body)
+    elif path.startswith("/policy-drafts/") and method == "PATCH":
+        draft_id = path.split("/")[-1]
+        result["policy_draft"] = update_structured_record(store, state, "policy_draft", "policyDrafts", draft_id, body)
     elif path == "/reports":
         report = create_report_from_existing_state(store, state, body)
         state = store.get_state()
@@ -698,6 +713,8 @@ def get_item_route(path: str, state: dict) -> dict | None:
             return {"item": item, "diff": {"before": item.get("before") if item else "P1", "after": item.get("after") if item else "待测", "changed": bool(item)}}
     if len(parts) >= 2 and parts[0] == "attack-paths":
         return {"item": get_store().get_record("attack_path", parts[1]) or find_item(state.get("attackPaths", []), parts[1])}
+    if len(parts) >= 2 and parts[0] == "policy-drafts":
+        return {"item": get_store().get_record("policy_draft", parts[1]) or find_item(state.get("policyDrafts", []), parts[1])}
     return None
 
 
@@ -1296,16 +1313,189 @@ def redact_evidence_record(store: Any, state: dict, evidence_id: str, body: dict
 
 
 def build_attack_path(store: Any, state: dict, body: dict) -> dict:
-    findings = state.get("findings", [])[:5]
+    requested_ids = {str(item) for item in body.get("finding_ids", [])}
+    findings = combine_items(store.list_records("finding"), state.get("findings", []))
+    if requested_ids:
+        findings = [item for item in findings if str(item.get("id")) in requested_ids]
+    findings = findings[:5]
+    evidence_ids: list[str] = []
+    for finding in findings:
+        for evidence_id in finding.get("evidence_ids", []):
+            if evidence_id not in evidence_ids:
+                evidence_ids.append(evidence_id)
     attack_path = {
         "id": new_id("atk"),
         "name": body.get("name", "本地风险攻击路径"),
-        "status": "已生成",
+        "status": "需人工确认",
+        "state_code": "DRAFT",
+        "risk": "严重 P0" if any("P0" in str(item.get("severity", "")) or "严重" in str(item.get("severity", "")) for item in findings) else "高危 P1",
+        "confidence": round(max([float(item.get("confidence") or 0.8) for item in findings] or [0.8]), 2),
+        "finding_ids": [finding.get("id") for finding in findings],
+        "evidence_ids": evidence_ids,
         "nodes": [finding.get("component", finding.get("id")) for finding in findings],
         "edges": [{"from": findings[i].get("id"), "to": findings[i + 1].get("id"), "type": "enables"} for i in range(max(0, len(findings) - 1))],
+        "mitigations": mitigation_points_for_findings(findings),
+        "safe_mode": "draft-only",
         "created_at": utc_now(),
     }
     return store.upsert_record("attack_path", attack_path, status="READY")
+
+
+def mitigation_points_for_findings(findings: list[dict]) -> list[dict]:
+    points = [
+        {"id": "input-boundary", "title": "外部内容降级为不可信数据", "control": "mark_untrusted_content"},
+        {"id": "tool-confirm", "title": "高风险 Tool Call 需要二次确认", "control": "require_human_consent"},
+        {"id": "path-allowlist", "title": "限制文件读取到授权工作区", "control": "workspace_path_allowlist"},
+        {"id": "egress-deny", "title": "默认阻断未批准外传 Sink", "control": "deny_unapproved_egress"},
+    ]
+    rules = " ".join(str(item.get("rule") or item.get("rule_id") or "") for item in findings).upper()
+    if "SECRET" in rules:
+        points.append({"id": "secret-redaction", "title": "输出和证据写入前执行 Secret 脱敏", "control": "mandatory_redaction"})
+    return points
+
+
+def confirm_attack_path(store: Any, state: dict, attack_path_id: str, body: dict) -> dict:
+    values = {
+        "status": "已确认",
+        "state_code": "CONFIRMED",
+        "confirmed_at": utc_now(),
+        "confirmed_by": body.get("actor", "local-user"),
+        "confirm_reason": body.get("reason", "本地人工确认"),
+    }
+    attack_path = update_structured_record(store, state, "attack_path", "attackPaths", attack_path_id, values)
+    state["selectedAttackPath"] = attack_path
+    store.audit_event("attack_path.confirm", "attack_path", attack_path_id, values)
+    return attack_path
+
+
+def create_policy_drafts_for_attack_path(store: Any, state: dict, attack_path_id: str, body: dict) -> list[dict]:
+    attack_path = store.get_record("attack_path", attack_path_id) or find_item(state.get("attackPaths", []), attack_path_id)
+    if not attack_path:
+        attack_path = build_attack_path(store, state, {"name": body.get("name", "本地风险攻击路径")})
+    findings = combine_items(store.list_records("finding"), state.get("findings", []))
+    selected_ids = {str(item) for item in attack_path.get("finding_ids", [])}
+    if selected_ids:
+        findings = [item for item in findings if str(item.get("id")) in selected_ids]
+    findings = findings[:5]
+    templates = policy_templates_for_findings(findings)
+    drafts: list[dict] = []
+    for template in templates:
+        policy_id = "pol_" + stable_hash(f"{attack_path_id}:{template['id']}:{','.join(str(f.get('id')) for f in findings)}", 20)
+        draft = {
+            "id": policy_id,
+            "name": template["name"],
+            "type": template["type"],
+            "status": "DRAFT",
+            "state_code": "REVIEW_REQUIRED",
+            "source": "attack_path",
+            "attack_path_id": attack_path.get("id"),
+            "finding_ids": [item.get("id") for item in findings],
+            "control": template["control"],
+            "scope": template["scope"],
+            "effect": template["effect"],
+            "rationale": template["rationale"],
+            "safe_mode": "draft-only",
+            "mutates_installed_agents": False,
+            "requires_external_approval": True,
+            "created_at": utc_now(),
+        }
+        artifact_payload = {
+            "schema": "agent-security-policy-draft@4.1",
+            "draft": draft,
+            "implementation_boundary": "建议草案，仅写入本系统 SQLite 和 artifact；不自动发布到 Codex/Hermes 或运行时平台。",
+            "generated_at": utc_now(),
+        }
+        artifact = store.write_artifact(
+            "policy-draft",
+            json.dumps(artifact_payload, ensure_ascii=False, indent=2),
+            suffix="json",
+            metadata={"policy_draft_id": policy_id, "attack_path_id": attack_path.get("id"), "safe_mode": "draft-only"},
+        )
+        draft["artifact_id"] = artifact["id"]
+        draft["artifact_path"] = artifact["relative_path"]
+        draft["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+        updated = store.upsert_record("policy_draft", draft, status="DRAFT")
+        recommendation = {
+            "id": "rec_" + policy_id,
+            "title": f"策略草案待评审：{draft['name']}",
+            "severity": template["severity"],
+            "agent": "Runtime Platform",
+            "type": "POLICY_DRAFT",
+            "status": "OPEN",
+            "policy_draft_id": policy_id,
+            "attack_path_id": attack_path.get("id"),
+            "recommendation": draft["rationale"],
+            "created_at": utc_now(),
+        }
+        store.upsert_record("defense_recommendation", recommendation, status="OPEN")
+        merge_state_record(state, "policyDrafts", updated)
+        drafts.append(updated)
+
+    attack_path.update({"policy_draft_ids": [draft["id"] for draft in drafts], "updated_at": utc_now()})
+    updated_path = store.upsert_record("attack_path", attack_path, status=str(attack_path.get("status") or "READY"))
+    merge_state_record(state, "attackPaths", updated_path)
+    state["selectedAttackPath"] = updated_path
+    return drafts
+
+
+def policy_templates_for_findings(findings: list[dict]) -> list[dict]:
+    rules = " ".join(str(item.get("rule") or item.get("rule_id") or "") for item in findings).upper()
+    templates = [
+        {
+            "id": "untrusted-input-boundary",
+            "name": "外部内容不可信边界策略",
+            "type": "input_boundary",
+            "control": "mark_untrusted_content",
+            "scope": {"content_sources": ["web", "repo-doc", "external-file"], "agents": sorted({str(item.get("agent") or "local") for item in findings})},
+            "effect": "review",
+            "severity": "高危 P1",
+            "rationale": "将外部内容作为数据输入处理，禁止其覆盖系统、开发者或安全策略指令。",
+        },
+        {
+            "id": "mcp-tool-consent",
+            "name": "高风险 MCP/Tool 二次确认策略",
+            "type": "tool_execution",
+            "control": "require_human_consent",
+            "scope": {"transports": ["stdio"], "dangerous_actions": ["file_read", "network_send", "shell_exec"]},
+            "effect": "deny-until-approved",
+            "severity": "高危 P1",
+            "rationale": "对 stdio MCP 和高风险 Tool Call 保持默认拒绝，仅允许人工审批后的本任务执行。",
+        },
+        {
+            "id": "workspace-path-allowlist",
+            "name": "工作区路径白名单策略",
+            "type": "data_access",
+            "control": "workspace_path_allowlist",
+            "scope": {"allowed": ["<workspace>"], "denied": ["~/.ssh", "%USERPROFILE%/.ssh", "system-secret-paths"]},
+            "effect": "deny",
+            "severity": "高危 P1",
+            "rationale": "阻止 Agent 或工具读取授权工作区外的私钥、凭据和系统敏感路径。",
+        },
+        {
+            "id": "egress-sink-deny",
+            "name": "未批准外传 Sink 阻断策略",
+            "type": "network_egress",
+            "control": "deny_unapproved_egress",
+            "scope": {"default": "deny", "approved_domains": []},
+            "effect": "deny",
+            "severity": "高危 P1",
+            "rationale": "阻断从私有上下文到未知外部服务的发送、上传、发信和 Webhook 行为。",
+        },
+    ]
+    if "SECRET" in rules:
+        templates.append(
+            {
+                "id": "mandatory-redaction",
+                "name": "证据与报告强制脱敏策略",
+                "type": "evidence_redaction",
+                "control": "mandatory_redaction",
+                "scope": {"fields": ["prompt", "tool_args", "env", "headers", "evidence.content"]},
+                "effect": "redact-before-write",
+                "severity": "严重 P0",
+                "rationale": "确保 Secret、Token、Authorization Header 和私钥在入库、报告、集成前统一脱敏。",
+            }
+        )
+    return templates
 
 
 def update_structured_record(store: Any, state: dict, table: str, state_key: str, record_id: str, values: dict) -> dict:
@@ -1458,6 +1648,7 @@ REAL_STATE_PATHS = {
     "reports": "/reports",
     "components": "/components",
     "attackPaths": "/attack-paths",
+    "policyDrafts": "/policy-drafts",
     "retests": "/retests",
     "ruleRows": "/rules",
     "backupRecords": "/backups",
@@ -1488,6 +1679,10 @@ def runtime_state() -> dict:
         state["selectedFinding"] = state["findings"][0]
     if state.get("evidenceItems"):
         state["selectedEvidence"] = state["evidenceItems"][0]
+    if state.get("attackPaths"):
+        state["selectedAttackPath"] = state["attackPaths"][0]
+    if state.get("policyDrafts"):
+        state["selectedPolicyDraft"] = state["policyDrafts"][0]
     return state
 
 

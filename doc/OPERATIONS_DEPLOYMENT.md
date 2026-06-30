@@ -308,6 +308,37 @@ Invoke-WebRequest `
 3. 不把原始密钥、完整 Prompt、完整环境变量值写入工单或外部报告系统。
 4. 保留期到期后归档或删除 `data/artifacts/` 中的脱敏制品，删除前先保留审计记录。
 
+攻击路径与策略草案运维操作只生成本系统 `attack_path`、`policy_draft`、`defense_recommendation` 和 JSON artifact，不会自动发布到运行时平台，也不会修改已安装 Agent：
+
+```powershell
+$path = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/attack-paths/build `
+  -Body (@{ finding_ids = @("<finding_id>"); name = "本地风险攻击路径" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/attack-paths/$($path.attack_path.id)/confirm" `
+  -Body (@{ reason = "人工确认" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$drafts = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/attack-paths/$($path.attack_path.id)/policy-drafts"
+
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($drafts.policy_drafts[0].download)" `
+  -OutFile policy-draft.json
+```
+
+策略草案交付建议：
+
+1. 在企业 POC 中把草案作为整改建议或主平台审批输入，不作为自动生效策略。
+2. 审批通过前保持 `DRAFT` 或 `REVIEW_REQUIRED`。
+3. 若后续集成运行时平台，应由主平台负责认证、审批、发布和回滚。
+4. 本模块只保留草案、artifact、审计事件和防御建议。
+
 任务生命周期运维操作只影响本系统任务记录、报告制品和审计事件，不会修改或终止已安装 Codex/Hermes：
 
 ```powershell

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent 安全测评能力模块 V4.1</title>
-<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.10">
+<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.11">
 </head>
 <body>
 <div id="boot-status" class="boot-status"><div class="boot-card"><strong>Agent 安全测评模块正在启动</strong><p>如果页面长时间无响应，请检查本地 Vue 静态资源、浏览器 Console 或模板编译错误。</p></div></div>
@@ -647,10 +647,11 @@ reproducibility: 3/3</div></div>
 
 <!-- P24 ATTACK PATHS -->
 <div v-if="current==='attack-paths'">
-  <div class="card"><div class="card-head"><div><h2>攻击路径</h2><div class="desc">从入口、信任边界、能力、资产到影响，关联 Finding 和 Evidence。</div></div><div><button class="btn" @click="toastMsg('攻击路径图已导出 SVG')">导出图</button><button class="btn success" @click="toastMsg('路径已人工确认')">确认路径</button></div></div>
-    <div class="toolbar"><select><option>AP-001 间接注入 → Repo 外泄</option><option>AP-002 Skill 供应链 → 命令执行</option><option>AP-003 Memory 投毒 → 持久化行为</option></select><span class="badge critical">P0</span><span class="badge blue">置信度 0.93</span></div>
+  <div class="card"><div class="card-head"><div><h2>攻击路径</h2><div class="desc">从入口、信任边界、能力、资产到影响，关联 Finding 和 Evidence。</div></div><div><button class="btn" :disabled="opsBusy" @click="buildAttackPath">生成路径</button><button class="btn success" :disabled="opsBusy||!selectedAttackPath.id" @click="confirmAttackPath(selectedAttackPath)">确认路径</button></div></div>
+    <div class="toolbar"><select v-model="selectedAttackPath"><option v-for="p in attackPaths" :value="p">{{p.name}} · {{p.id}}</option></select><span :class="['badge',String(selectedAttackPath.risk||'').includes('P0')?'critical':'high']">{{selectedAttackPath.risk||'待生成'}}</span><span class="badge blue">置信度 {{selectedAttackPath.confidence||'待计算'}}</span><span class="badge gray">{{selectedAttackPath.status||'无路径'}}</span></div>
     <div class="pathgraph" style="margin:28px 0"><div class="pathnode">外部文档<br><span class="badge high">入口</span></div><div class="pathnode">隐藏指令<br><span class="badge critical">劫持</span></div><div class="pathnode">Agent Planner<br><span class="badge medium">信任边界</span></div><div class="pathnode">MCP Tool<br><span class="badge high">能力</span></div><div class="pathnode">Repo / Network<br><span class="badge critical">外泄</span></div></div>
-    <div class="grid g2"><div><h3>路径节点与证据</h3><table><thead><tr><th>节点</th><th>类型</th><th>Finding</th><th>证据</th></tr></thead><tbody><tr><td>外部文档</td><td>Entry</td><td>IN-02</td><td>ev_file_02</td></tr><tr><td>隐藏指令</td><td>Control</td><td>CONTENT-UNICODE-001</td><td>ev_diff_01</td></tr><tr><td>Planner</td><td>Agent</td><td>BA-01</td><td>ev_prompt_01</td></tr><tr><td>read_file/send_report</td><td>Capability</td><td>MCP-TS-001</td><td>ev_tool_03</td></tr></tbody></table></div><div><h3>建议缓解点</h3><div class="timeline"><div class="event"><div class="event-time">1 · Input</div><div class="event-text">外部内容降级为不可信数据。</div></div><div class="event"><div class="event-time">2 · Planning</div><div class="event-text">控制流与数据流隔离。</div></div><div class="event"><div class="event-time">3 · Tool</div><div class="event-text">路径和出站域名白名单。</div></div><div class="event"><div class="event-time">4 · Runtime</div><div class="event-text">将策略草案推送运行时防护平台。</div></div></div><button class="btn soft" @click="toastMsg('已创建 4 条策略草案')">生成策略草案</button></div></div>
+    <div class="grid g2"><div><h3>路径节点与证据</h3><table><thead><tr><th>节点</th><th>类型</th><th>Finding</th><th>证据</th></tr></thead><tbody><tr v-for="(node,index) in (selectedAttackPath.nodes||[])"><td>{{node}}</td><td>{{index===0?'Entry':index===(selectedAttackPath.nodes||[]).length-1?'Impact':'Control'}}</td><td class="mono">{{(selectedAttackPath.finding_ids||[])[index]||'关联风险'}}</td><td class="mono">{{(selectedAttackPath.evidence_ids||[])[index]||'已脱敏证据'}}</td></tr><tr v-if="!(selectedAttackPath.nodes||[]).length"><td>暂无路径</td><td>待生成</td><td>点击生成路径</td><td>本地只读</td></tr></tbody></table></div><div><h3>建议缓解点</h3><div class="timeline"><div class="event" v-for="(m,index) in (selectedAttackPath.mitigations||[])"><div class="event-time">{{index+1}} · {{m.control}}</div><div class="event-text">{{m.title}}</div></div><div v-if="!(selectedAttackPath.mitigations||[]).length" class="event"><div class="event-time">待生成</div><div class="event-text">先生成攻击路径，再创建策略草案。</div></div></div><button class="btn soft" :disabled="opsBusy" @click="generatePolicyDrafts(selectedAttackPath)">生成策略草案</button></div></div>
+    <div class="card" style="margin-top:16px"><div class="card-head"><div><h3>策略草案</h3><div class="desc">草案只写入本系统 SQLite 和 artifact，不会自动发布或修改已安装 Agent。</div></div><span class="badge blue">{{policyDrafts.length}} drafts</span></div><table><thead><tr><th>策略</th><th>类型</th><th>效果</th><th>状态</th><th>制品</th><th>操作</th></tr></thead><tbody><tr v-for="p in policyDrafts"><td>{{p.name}}<div class="tiny muted mono">{{p.id}}</div></td><td>{{p.type}}</td><td>{{p.effect}}</td><td><span class="badge medium">{{p.status}}</span></td><td class="mono">{{p.artifact_path}}</td><td><button class="btn sm" @click="selectedPolicyDraft=p">查看</button><button class="btn sm" @click="downloadPolicyDraft(p)">下载</button></td></tr><tr v-if="!policyDrafts.length"><td colspan="6">暂无策略草案，点击“生成策略草案”创建。</td></tr></tbody></table><div v-if="selectedPolicyDraft&&selectedPolicyDraft.id" class="callout" style="margin-top:12px">{{selectedPolicyDraft.rationale}}</div></div>
   </div>
 </div>
 
@@ -784,6 +785,6 @@ remote_analysis: false</div></div></div></div>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.10"></script>
+<script src="/static/assessment/app.js?v=4.1.11"></script>
 </body>
 </html>

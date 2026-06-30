@@ -261,6 +261,29 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 3. “重新脱敏”会使用本地统一规则重新处理当前证据，并写入新的 redacted artifact。
 4. “下载 JSON”只下载本系统生成的脱敏证据文件，不回读目标 Agent 原始文件。
 
+## 8.1 攻击路径与策略草案
+
+位置：
+
+```text
+左侧导航 → 攻击路径
+```
+
+页面能力：
+
+- “生成路径”会基于当前 SQLite 中的 Finding 和 Evidence 建立攻击路径草案。
+- “确认路径”只记录人工确认状态和审计事件，不执行任何外部策略发布。
+- “生成策略草案”会创建 `policy_draft` 记录、脱敏 JSON artifact 和 `defense_recommendation`，用于交付评审或后续主平台审批。
+- 策略草案默认 `DRAFT`，`mutates_installed_agents=false`，不会自动修改 Codex、Hermes、Claude Code 或 MCP 配置。
+
+常见策略草案包括：
+
+- 外部内容不可信边界。
+- 高风险 MCP/Tool 二次确认。
+- 工作区路径白名单。
+- 未批准外传 Sink 阻断。
+- 证据与报告强制脱敏。
+
 ## 9. 报告中心
 
 位置：
@@ -412,6 +435,30 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/retest `
   -Body (@{ scope = "固化输入" } | ConvertTo-Json) `
   -ContentType "application/json"
+```
+
+### 攻击路径和策略草案
+
+```powershell
+$path = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/attack-paths/build `
+  -Body (@{ finding_ids = @("<finding_id>"); name = "本地风险攻击路径" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/attack-paths/$($path.attack_path.id)/confirm" `
+  -Body (@{ reason = "人工确认" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$drafts = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/attack-paths/$($path.attack_path.id)/policy-drafts"
+
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($drafts.policy_drafts[0].download)" `
+  -OutFile policy-draft.json
 ```
 
 ### 生成报告

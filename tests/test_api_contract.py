@@ -109,6 +109,42 @@ def test_report_evidence_and_risk_closure_actions():
     assert "agent-security-evidence-package@4.1" in package_download.text
 
 
+def test_attack_path_policy_drafts_are_review_only_artifacts():
+    scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50}).json()
+    finding_ids = [finding["id"] for finding in scan["findings"][:3]]
+    built = client.post("/api/v1/attack-paths/build", json={"finding_ids": finding_ids, "name": "Contract Attack Path"})
+    assert built.status_code == 200
+    attack_path = built.json()["attack_path"]
+    assert attack_path["status"] == "需人工确认"
+    assert attack_path["finding_ids"]
+    assert attack_path["safe_mode"] == "draft-only"
+
+    confirmed = client.post(f"/api/v1/attack-paths/{attack_path['id']}/confirm", json={"reason": "contract test"})
+    assert confirmed.status_code == 200
+    assert confirmed.json()["attack_path"]["status"] == "已确认"
+
+    drafts = client.post(f"/api/v1/attack-paths/{attack_path['id']}/policy-drafts", json={})
+    assert drafts.status_code == 200
+    policy_drafts = drafts.json()["policy_drafts"]
+    assert len(policy_drafts) >= 4
+    assert all(draft["status"] == "DRAFT" for draft in policy_drafts)
+    assert all(draft["mutates_installed_agents"] is False for draft in policy_drafts)
+    assert all(draft["download"].endswith("/download") for draft in policy_drafts)
+
+    listed = client.get("/api/v1/policy-drafts")
+    assert listed.status_code == 200
+    assert listed.json()["total"] >= len(policy_drafts)
+    draft = policy_drafts[0]
+    detail = client.get(f"/api/v1/policy-drafts/{draft['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["item"]["id"] == draft["id"]
+    download = client.get(draft["download"])
+    assert download.status_code == 200
+    assert "agent-security-policy-draft@4.1" in download.text
+    reviewed = client.patch(f"/api/v1/policy-drafts/{draft['id']}", json={"status": "REVIEWED"})
+    assert reviewed.json()["policy_draft"]["status"] == "REVIEWED"
+
+
 def test_capability_management_actions_are_persisted():
     rule = client.post("/api/v1/rules", json={"id": "TEST-RULE-LOCAL", "name": "Contract Rule", "severity": "中危 P2"})
     assert rule.status_code == 200

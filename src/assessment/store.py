@@ -70,6 +70,7 @@ GENERIC_TABLES = [
     "attack_path",
     "attack_path_node",
     "attack_path_edge",
+    "policy_draft",
     "report",
     "retest",
     "retest_run",

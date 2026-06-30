@@ -103,6 +103,16 @@ $package = Invoke-RestMethod http://127.0.0.1:8000/api/v1/evidence/export
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($package.download)" -OutFile evidence-package.json
 ```
 
+攻击路径与防御策略草案：
+
+```powershell
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body (@{ mode = "path"; target_path = "tests\fixtures\sample_agent_project"; max_files = 50 } | ConvertTo-Json) -ContentType "application/json"
+$path = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/attack-paths/build -Body (@{ finding_ids = @($scan.findings | Select-Object -First 3 -ExpandProperty id); name = "本地风险攻击路径" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/attack-paths/$($path.attack_path.id)/confirm" -Body (@{ reason = "人工确认" } | ConvertTo-Json) -ContentType "application/json"
+$drafts = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/attack-paths/$($path.attack_path.id)/policy-drafts"
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($drafts.policy_drafts[0].download)" -OutFile policy-draft.json
+```
+
 任务生命周期操作：
 
 ```powershell

@@ -27,6 +27,10 @@ data(){
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
     initial.quickModes = (initial.quickModes || []).filter(mode => mode.id !== 'fixture');
     initial.backupRecords = initial.backupRecords || [];
+    initial.attackPaths = initial.attackPaths || [];
+    initial.policyDrafts = initial.policyDrafts || [];
+    initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
+    initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
     initial.reportPreviewData = initial.reportPreviewData || null;
     initial.ruleTestResult = null;
@@ -418,6 +422,51 @@ data(){
       if(!evidence || !evidence.id) return;
       window.open((evidence.download || ('/api/v1/evidence/'+encodeURIComponent(evidence.id)+'/download')), '_blank', 'noopener');
       this.toastMsg('已请求下载脱敏证据 JSON');
+    },
+    async buildAttackPath(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const findingIds=(this.findings || []).slice(0,5).map(f=>f.id).filter(Boolean);
+        const res=await this.apiPost('/api/v1/attack-paths/build', {finding_ids:findingIds, name:'本地风险攻击路径'});
+        if(res.attack_path){ this.mergeRecords('attackPaths', [res.attack_path]); this.selectedAttackPath=res.attack_path; }
+        this.toastMsg('攻击路径已生成：'+(res.attack_path&&res.attack_path.id || 'READY'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async confirmAttackPath(path){
+      const target=path || this.selectedAttackPath;
+      if(!target || !target.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/attack-paths/'+encodeURIComponent(target.id)+'/confirm', {reason:'本地人工确认'});
+        if(res.attack_path){ this.mergeRecords('attackPaths', [res.attack_path]); this.selectedAttackPath=res.attack_path; }
+        this.toastMsg('攻击路径已确认：'+target.id);
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async generatePolicyDrafts(path){
+      let target=path || this.selectedAttackPath;
+      this.opsBusy=true; this.apiError='';
+      try {
+        if(!target || !target.id){
+          const built=await this.apiPost('/api/v1/attack-paths/build', {finding_ids:(this.findings || []).slice(0,5).map(f=>f.id).filter(Boolean), name:'本地风险攻击路径'});
+          target=built.attack_path;
+          if(target){ this.mergeRecords('attackPaths', [target]); this.selectedAttackPath=target; }
+        }
+        if(!target || !target.id) throw new Error('缺少攻击路径');
+        const res=await this.apiPost('/api/v1/attack-paths/'+encodeURIComponent(target.id)+'/policy-drafts', {});
+        if(res.policy_drafts && res.policy_drafts.length){
+          this.mergeRecords('policyDrafts', res.policy_drafts);
+          this.selectedPolicyDraft=res.policy_drafts[0];
+        }
+        this.toastMsg('策略草案已生成：'+((res.policy_drafts&&res.policy_drafts.length)||0)+' 条');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    downloadPolicyDraft(draft){
+      if(!draft) return;
+      if(draft.download) window.open(draft.download, '_blank', 'noopener');
+      this.toastMsg('已请求下载策略草案 JSON');
     },
     async runSqliteBackup(){
       this.opsBusy=true; this.apiError='';
