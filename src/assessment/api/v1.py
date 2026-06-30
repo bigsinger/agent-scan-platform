@@ -431,29 +431,18 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         consent_id = path.split("/")[-2]
         status = "本任务允许" if path.endswith("/approve") else "已拒绝"
         result["consent"] = update_consent(store, state, consent_id, status, body)
-    elif path.startswith("/tasks/") and path.endswith("/cancel"):
+    elif (path.startswith("/tasks/") or path.startswith("/assessments/")) and path.endswith("/cancel"):
         task_id = path.split("/")[-2]
         result["task"] = update_task_state(store, state, task_id, "已取消", "CANCELLED")
         result["status"] = "CANCELLED"
-    elif path.startswith("/tasks/") and path.endswith("/retry"):
+    elif (path.startswith("/tasks/") or path.startswith("/assessments/")) and path.endswith("/retry"):
         task_id = path.split("/")[-2]
-        result["task"] = update_task_state(store, state, task_id, "排队中", "RETRY_QUEUED")
+        result["task"] = retry_task(store, state, task_id, body)
         result["status"] = "RETRY_QUEUED"
     elif path.startswith("/tasks/") and path.endswith("/clone"):
         task_id = path.split("/")[-2]
         result["draft"] = clone_task_as_draft(store, state, task_id, body)
         result["status"] = "DRAFT"
-    elif path.endswith("/cancel"):
-        result["status"] = "CANCELLED"
-        mutate_task_status(state, path, "已取消")
-    elif path.endswith("/retry"):
-        result["status"] = "RETRY_QUEUED"
-    elif path.endswith("/skip"):
-        result["status"] = "SKIPPED_WITH_AUDIT"
-    elif path.endswith("/import"):
-        asset = {"id": new_id("agt"), "name": "imported-agent", "adapter": "Generic", "coverage": "导入", "path": "<imported>", "configs": 1, "mcp": 0, "skills": 0, "score": 80, "p0": 0, "p1": 0, "probe": "待探测", "caps": ["Imported"]}
-        state.setdefault("agentAssets", []).insert(0, asset)
-        result["agent"] = asset
     elif path == "/agents":
         asset = {"id": new_id("agt"), **body, "probe": "手工创建"}
         state.setdefault("agentAssets", []).insert(0, asset)
@@ -461,8 +450,6 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path.startswith("/agents/") and path.endswith("/probe"):
         agent_id = path.split("/")[-2]
         result.update(probe_agent_asset(store, state, agent_id, body))
-    elif path.endswith("/probe"):
-        result["probe"] = {"status": "正常", "finished_at": utc_now(), "mode": "local-readonly"}
     elif path == "/assessments/drafts":
         result["draft"] = create_assessment_draft(store, state, body)
     elif path == "/assessments/plan":
@@ -635,36 +622,6 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["compat"] = result["self_test"].get("compat")
     elif path == "/diagnostics/scenario":
         result["scenario"] = apply_diagnostic_scenario(state, body)
-    elif path.endswith("/publish"):
-        result["status"] = "PUBLISHED"
-    elif path.endswith("/self-test"):
-        result["self_test"] = {"status": "PASS", "fixture": "local"}
-    elif path.endswith("/handshake"):
-        result["handshake"] = {"status": "WAITING_CONSENT_OR_DONE", "captured_at": utc_now()}
-    elif path.endswith("/terminate"):
-        result["status"] = "TERMINATED"
-    elif path.endswith("/scan"):
-        result["scan"] = {"status": "QUEUED", "scanner": "local-analysis"}
-    elif path.endswith("/quarantine"):
-        result["status"] = "QUARANTINED"
-    elif path.endswith("/decision"):
-        result["decision"] = {"status": "RECORDED"}
-    elif path.endswith("/confirm"):
-        result["status"] = "CONFIRMED"
-    elif path.endswith("/complete"):
-        result["status"] = "COMPLETED"
-    elif path.endswith("/validate"):
-        result["validation"] = {"status": "PASS", "validation_errors": []}
-    elif path.endswith("/run-now"):
-        result["run"] = {"status": "QUEUED", "created_at": utc_now()}
-    elif path.endswith("/pause"):
-        result["status"] = "PAUSED"
-    elif path.endswith("/test"):
-        result["test"] = {"status": "PASS", "checked_at": utc_now()}
-    elif path.endswith("/sync"):
-        result["sync"] = {"status": "DONE", "cursor": new_id("cursor")}
-    elif path.endswith("/push"):
-        result["push"] = {"status": "SENT_TO_PLATFORM"}
     elif method == "PATCH" and path.startswith("/findings/"):
         finding_id = path.split("/")[-1]
         result["finding"] = update_item(state.get("findings", []), finding_id, body)
@@ -673,11 +630,37 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         existing["updated_at"] = utc_now()
         store.upsert_record("finding", existing, status=str(existing.get("status") or "NEEDS_REVIEW"))
     else:
-        result["status"] = "accepted"
+        unsupported_write_operation(store, method, path, body)
 
     store.save_state(state)
     result["audit_event"] = store.audit_event(path_action(method, path), "api_route", path, {"body": body})
     return result
+
+
+def unsupported_write_operation(store: Any, method: str, path: str, body: dict) -> None:
+    audit_event = store.audit_event(
+        "unsupported." + path_action(method, path),
+        "api_route",
+        path,
+        {
+            "status": "NOT_IMPLEMENTED",
+            "method": method,
+            "path": path,
+            "body": redacted_body_summary(body),
+            "mutates_installed_agents": False,
+        },
+    )
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "code": "NOT_IMPLEMENTED",
+            "message": "该写操作尚未实现，系统没有执行任何动作。",
+            "route": path,
+            "method": method,
+            "audit_event": audit_event,
+            "mutates_installed_agents": False,
+        },
+    )
 
 
 def get_item_route(path: str, state: dict) -> dict | None:
@@ -826,35 +809,6 @@ def update_item(items: list[dict], item_id: str, values: dict) -> dict:
     item.update(values)
     item["updated_at"] = utc_now()
     return item
-
-
-def create_assessment(state: dict, name: str, stage: str) -> dict:
-    source = state.get("tasks", [{}])[0]
-    assessment = {
-        **source,
-        "id": new_id("asm"),
-        "name": name,
-        "target": "本机/显式目标",
-        "adapter": "Local",
-        "profile": "standard-complete",
-        "stage": stage,
-        "progress": 1,
-        "critical": 0,
-        "high": 0,
-        "slot": "queued",
-        "status": "运行中",
-    }
-    state.setdefault("tasks", []).insert(0, assessment)
-    state["selectedTask"] = assessment
-    return assessment
-
-
-def mutate_task_status(state: dict, path: str, status: str) -> None:
-    task_id = path.split("/")[-2] if path.count("/") > 1 else ""
-    for task in state.get("tasks", []):
-        if task.get("id") == task_id:
-            task["status"] = status
-            return
 
 
 def agent_scan_compat() -> dict:
@@ -3436,6 +3390,68 @@ def clone_task_as_draft(store: Any, state: dict, task_id: str, body: dict) -> di
     return create_assessment_draft(store, state, payload, source=source)
 
 
+def retry_task(store: Any, state: dict, task_id: str, body: dict) -> dict:
+    source = store.get_record("assessment", task_id) or store.get_record("task", task_id) or find_item(state.get("tasks", []), task_id) or {"id": task_id}
+    plan = dict(source.get("plan") if isinstance(source.get("plan"), dict) else {})
+    plan.update(
+        {
+            "retry_of": task_id,
+            "source_stage": source.get("stage"),
+            "source_status": source.get("status"),
+            "queued_by": "local-user",
+            "queued_at": utc_now(),
+        }
+    )
+    retry = dict(source)
+    retry.update(
+        {
+            "id": new_id("asm"),
+            "name": body.get("name") or f"{source.get('name', task_id)} · 重试",
+            "target": body.get("target") or source.get("target") or source.get("target_path") or "本机 Agent 配置",
+            "target_path": body.get("target_path") or source.get("target_path", ""),
+            "target_id": body.get("target_id") or source.get("target_id", ""),
+            "adapter": body.get("adapter") or source.get("adapter") or "自动识别",
+            "profile": body.get("profile_id") or source.get("profile") or "standard-complete",
+            "source_task_id": task_id,
+            "retry_of": task_id,
+            "stage": "QUEUED",
+            "progress": 0,
+            "critical": 0,
+            "high": 0,
+            "slot": "queued",
+            "status": "排队中",
+            "state_code": "QUEUED",
+            "safe_mode": body.get("safe_mode") or source.get("safe_mode") or "read_only",
+            "mcp_policy": body.get("mcp_policy") or source.get("mcp_policy") or "per-server-consent",
+            "remote_analysis": bool(body.get("remote_analysis", source.get("remote_analysis", False))),
+            "plan": plan,
+            "mutates_installed_agents": False,
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
+        }
+    )
+    updated = store.upsert_record("assessment", retry, status="QUEUED")
+    merge_state_record(state, "tasks", updated)
+    state["selectedTask"] = updated
+    store.scan_event(
+        updated["id"],
+        "task.retry_queued",
+        {
+            "message": f"任务已基于 {task_id} 重新排队；未启动或修改已安装 Agent",
+            "source_task_id": task_id,
+            "safe_mode": updated.get("safe_mode"),
+            "mutates_installed_agents": False,
+        },
+    )
+    store.audit_event(
+        "post.tasks.retry",
+        "assessment",
+        updated["id"],
+        {"source_task_id": task_id, "mutates_installed_agents": False},
+    )
+    return updated
+
+
 def build_assessment_plan(body: dict, state: dict) -> dict:
     return {
         "id": new_id("plan"),
@@ -5204,6 +5220,16 @@ def raw_secret_like(value: str) -> bool:
 def path_action(method: str, path: str) -> str:
     normalized = path.strip("/").replace("/", ".").replace("{", "").replace("}", "")
     return f"{method.lower()}.{normalized}"
+
+
+def redacted_body_summary(body: dict) -> dict:
+    text = json.dumps(body or {}, ensure_ascii=False, sort_keys=True, default=str)
+    keys = sorted(str(key) for key in body.keys()) if isinstance(body, dict) else []
+    return {
+        "keys": keys,
+        "sha256_16": stable_hash(text, length=16),
+        "redacted": redact_text(text, max_len=1000),
+    }
 
 
 REAL_STATE_PATHS = {

@@ -605,9 +605,12 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 
 - 保存草稿：创建 `assessment` 草稿记录，后续可复制或提交。
 - 复制任务：从已有任务生成新的草稿，不复用旧结果。
+- 重试任务：基于原任务创建新的 `QUEUED` 测评记录，保留 `source_task_id` / `retry_of` 和 `task.retry_queued` 事件，便于审计和复现。
 - 取消任务：把任务状态写为 `CANCELLED`，记录本地审计；当前实现不杀已安装 Agent 进程。
 - 刷新事件：从 SQLite `scan_event` 读取任务事件流。
 - 生成报告：基于指定任务生成 HTML/JSON 报告制品。
+
+重试和取消都只影响本系统 SQLite 任务记录，不启动、不终止、不修改 Codex、Hermes、Claude Code、Cursor 或 stdio MCP Server。
 
 ## 10. API 使用示例
 
@@ -616,6 +619,21 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 ```
+
+### 未实现写接口
+
+```powershell
+$response = Invoke-WebRequest `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/not-a-real-module/self-test `
+  -Body (@{ api_key = "sk-xxxxxxxxxxxxxxxx" } | ConvertTo-Json) `
+  -ContentType "application/json" `
+  -SkipHttpErrorCheck
+$response.StatusCode
+$response.Content
+```
+
+返回 `501 NOT_IMPLEMENTED` 表示该写接口还没有真实实现，系统没有执行任何动作。审计事件会保存脱敏后的请求摘要；不会再因为路径后缀是 `self-test`、`test`、`sync`、`publish`、`run-now` 等就返回固定成功结果。
 
 ### 快速扫描
 

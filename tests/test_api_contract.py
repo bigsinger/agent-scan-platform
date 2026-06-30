@@ -54,6 +54,32 @@ def test_system_health_self_test_is_real_and_persists_artifact(monkeypatch, tmp_
     assert store.get_record("artifact", payload["artifact"]["id"]) is not None
 
 
+def test_unknown_write_routes_do_not_fake_success(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "unsupported-write.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.post(
+        "/api/v1/not-a-real-module/self-test",
+        json={"api_key": "sk-contracttestsecretvalue"},
+    )
+
+    assert response.status_code == 501
+    body = response.json()
+    detail = body["error"]["details"]
+    assert detail["code"] == "NOT_IMPLEMENTED"
+    assert detail["mutates_installed_agents"] is False
+    assert "PASS" not in json.dumps(body, ensure_ascii=False)
+    assert "fixture" not in json.dumps(body, ensure_ascii=False)
+
+    with store.connect() as conn:
+        row = conn.execute("SELECT action, payload_json FROM audit_event ORDER BY seq DESC LIMIT 1").fetchone()
+    assert row["action"] == "unsupported.post.not-a-real-module.self-test"
+    assert "NOT_IMPLEMENTED" in row["payload_json"]
+    assert "sk-contracttestsecretvalue" not in row["payload_json"]
+    assert "<REDACTED_SECRET>" in row["payload_json"]
+
+
 def test_assessment_profile_lifecycle_is_api_backed_and_audited(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "profiles.db")
     store.initialize()
@@ -725,6 +751,23 @@ def test_task_lifecycle_actions_are_persisted():
     assert cloned.status_code == 200
     assert cloned.json()["draft"]["status"] == "DRAFT"
     assert cloned.json()["draft"]["source_task_id"] == task_id
+
+    retried = client.post(f"/api/v1/tasks/{task_id}/retry", json={})
+    assert retried.status_code == 200
+    retry_task = retried.json()["task"]
+    assert retried.json()["status"] == "RETRY_QUEUED"
+    assert retry_task["source_task_id"] == task_id
+    assert retry_task["retry_of"] == task_id
+    assert retry_task["stage"] == "QUEUED"
+    assert retry_task["state_code"] == "QUEUED"
+    assert retry_task["mutates_installed_agents"] is False
+    retry_events = client.get(f"/api/v1/tasks/{retry_task['id']}/events")
+    assert retry_events.status_code == 200
+    assert retry_events.json()["items"][0]["type"] == "task.retry_queued"
+
+    legacy_retry = client.post(f"/api/v1/assessments/{task_id}/retry", json={})
+    assert legacy_retry.status_code == 200
+    assert legacy_retry.json()["task"]["retry_of"] == task_id
 
     cancelled = client.post(f"/api/v1/tasks/{task_id}/cancel", json={"reason": "contract test"})
     assert cancelled.status_code == 200
