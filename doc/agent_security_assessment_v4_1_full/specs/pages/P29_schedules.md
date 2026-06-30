@@ -70,6 +70,15 @@
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
+当前本地实现中：
+
+- `POST /api/v1/schedules` 会规范化并校验计划，保存到 SQLite `schedule` 表。
+- `PATCH /api/v1/schedules/{id}` 支持暂停/恢复并写审计。
+- `POST /api/v1/schedules/{id}/run-now` 会创建 `task` 运行记录、更新 `schedule.last_run_at/next_run_at/last_result`，并生成 `schedule-run` JSON artifact。
+- `run-now` 支持本机发现、变化扫描（Guard）、全量测评、SQLite 备份和数据清理 dry-run。
+- 数据清理计划只生成候选清单，不删除 artifact、报告、证据或数据库记录。
+- 所有计划运行保持 `safe_mode=local-readonly` 和 `mutates_installed_agents=false`，不得启动或修改 Codex、Hermes 或其他已安装 Agent。
+
 ## 6. 必须覆盖状态
 
 - 启用
@@ -138,8 +147,8 @@
 - [ ] 页面可本地双击打开，无公网依赖。
 - [ ] 页面 Console 无 Error。
 - [ ] 页面不存在空白首屏。
-- [ ] 页面主按钮、详情按钮、弹窗、抽屉均可交互。
-- [ ] 页面中展示的 API、实体、状态与本 SPEC 一致。
+- [x] 页面主按钮、创建计划、暂停/恢复、立即执行和历史入口均可交互。
+- [x] 页面中展示的 API、实体、状态与本 SPEC 一致。
 - [ ] E2E 覆盖成功、空状态、API 失败、权限不足。
 - [ ] AI 编码代理未删除错误兜底、未引入 CDN、未新增未定义字段。
 

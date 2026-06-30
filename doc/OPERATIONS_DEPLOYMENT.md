@@ -479,9 +479,15 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
 计划任务操作只写本系统 SQLite，不会直接启动已安装 Agent。立即执行会生成本地任务记录：
 
 ```powershell
-$schedule = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "本机变化扫描"; type = "本机发现"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
-Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($schedule.schedule.id)/run-now"
+$schedule = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "本机发现计划"; type = "本机发现"; trigger = "0 2 * * *"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
+$run = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($schedule.schedule.id)/run-now"
+$run.result
+
+$backup = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "SQLite 备份计划"; type = "数据库备份"; trigger = "0 3 * * *"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($backup.schedule.id)/run-now"
 ```
+
+周期计划 `run-now` 会创建 `task` 运行记录、更新 `schedule.last_run_at/next_run_at/last_result`，并生成 `schedule-run` JSON artifact。当前本地动作包括本机发现、Guard 变化扫描、全量测评、SQLite 在线备份和数据清理 dry-run；不会删除文件，也不会修改 Codex/Hermes 等已安装 Agent。
 
 ## 11. 安全加固建议
 

@@ -62,6 +62,8 @@ data(){
     initial.backupRecords = initial.backupRecords || [];
     initial.attackPaths = initial.attackPaths || [];
     initial.policyDrafts = initial.policyDrafts || [];
+    initial.scheduleDraft = Object.assign({name:'本机变化扫描', type:'变化扫描', target:'已登记配置快照', target_path:'', trigger:'0 2 * * *', misfire:'跳过', status:'ACTIVE', profile:'quick-experience', max_backlog:1, max_files:100}, initial.scheduleDraft || {});
+    initial.scheduleLastRun = null;
     initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
@@ -1062,7 +1064,11 @@ data(){
       try {
         const res=await this.apiPost('/api/v1/schedules/'+encodeURIComponent(schedule.id)+'/run-now', {});
         if(res.run){ this.mergeRecords('tasks', [res.run]); }
-        this.toastMsg('计划已立即入队：'+(res.run&&res.run.id || schedule.id));
+        if(res.schedule){ this.mergeRecords('schedules', [res.schedule]); Object.assign(schedule, res.schedule); }
+        if(res.result && res.result.backup_id){ this.mergeRecords('backupRecords', [{id:res.result.backup_id, relative_path:res.result.relative_path, sha256:res.result.sha256, size:res.result.size, status:'VERIFIED'}]); }
+        if(res.result && res.result.assessment_id){ await this.loadBootstrap(); }
+        this.scheduleLastRun=res;
+        this.toastMsg('计划立即执行完成：'+(res.result&&res.result.action || 'run-now')+' · '+(res.run&&res.run.state_code || res.run&&res.run.status));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
@@ -1116,7 +1122,8 @@ data(){
     async createSchedule(){
       this.opsBusy=true; this.apiError='';
       try {
-        const res=await this.apiPost('/api/v1/schedules', {name:'本机变化扫描', type:'变化扫描', target:'全部变化 Agent', trigger:'0 2 * * *', misfire:'跳过', status:'ACTIVE', profile:'quick-experience'});
+        const payload=Object.assign({}, this.scheduleDraft || {});
+        const res=await this.apiPost('/api/v1/schedules', payload);
         if(res.schedule){ this.mergeRecords('schedules', [res.schedule]); }
         this.toastMsg('计划已保存：'+(res.schedule&&res.schedule.id));
       } catch (err) { this.apiError=this.describeError(err); }

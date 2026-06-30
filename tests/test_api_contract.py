@@ -319,11 +319,45 @@ def test_capability_management_actions_are_persisted():
     assert scanner.json()["self_test"]["status"] == "PASS"
     assert scanner.json()["self_test"]["mode"] == "local-readonly"
 
-    schedule = client.post("/api/v1/schedules", json={"name": "Contract Schedule", "type": "本机发现", "status": "ACTIVE"}).json()["schedule"]
+    schedule = client.post(
+        "/api/v1/schedules",
+        json={
+            "name": "Contract Discovery Schedule",
+            "type": "本机发现",
+            "target_path": "tests/fixtures/sample_agent_project",
+            "trigger": "*/30 * * * *",
+            "status": "ACTIVE",
+        },
+    ).json()["schedule"]
+    assert schedule["safe_mode"] == "local-readonly"
+    assert schedule["mutates_installed_agents"] is False
+    assert schedule["next_run_at"]
     paused = client.patch(f"/api/v1/schedules/{schedule['id']}", json={"status": "PAUSED"})
     assert paused.json()["schedule"]["status"] == "PAUSED"
     run_now = client.post(f"/api/v1/schedules/{schedule['id']}/run-now", json={})
-    assert run_now.json()["run"]["status"] == "QUEUED"
+    run_body = run_now.json()
+    assert run_body["run"]["state_code"] == "COMPLETED"
+    assert run_body["run"]["safe_mode"] == "local-readonly"
+    assert run_body["run"]["mutates_installed_agents"] is False
+    assert run_body["result"]["action"] == "discovery"
+    assert run_body["result"]["hits"] >= 1
+    assert run_body["artifact"]["relative_path"].endswith(".json")
+    assert run_body["schedule"]["last_result"] == "COMPLETED"
+
+    backup_schedule = client.post(
+        "/api/v1/schedules",
+        json={"name": "Contract Backup Schedule", "type": "数据库备份", "trigger": "0 3 * * *", "status": "ACTIVE"},
+    ).json()["schedule"]
+    backup_run = client.post(f"/api/v1/schedules/{backup_schedule['id']}/run-now", json={})
+    assert backup_run.json()["result"]["action"] == "sqlite-backup"
+    assert backup_run.json()["result"]["sha256"]
+
+    unsafe_schedule = client.post(
+        "/api/v1/schedules",
+        json={"name": "Bad Schedule", "type": "本机发现", "target_path": "Z:/definitely/not/here", "trigger": "bad"},
+    )
+    assert unsafe_schedule.status_code == 422
+    assert unsafe_schedule.json()["error"]["validation_errors"]
 
     integration_test = client.post("/api/v1/integrations/runtime-platform/test", json={})
     assert integration_test.json()["test"]["status"] == "PASS"

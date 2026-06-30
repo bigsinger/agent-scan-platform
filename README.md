@@ -185,7 +185,10 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.asses
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/scanners/scanner.local-analysis/self-test
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/rules/SECRET-KEY-001/test -Body (@{ sample = "sk-test-value" } | ConvertTo-Json) -ContentType "application/json"
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "本机变化扫描"; type = "本机发现"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
+$schedule = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "本机发现计划"; type = "本机发现"; trigger = "0 2 * * *"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/schedules/$($schedule.schedule.id)/run-now"
+$backup = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "SQLite 备份计划"; type = "数据库备份"; trigger = "0 3 * * *"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/schedules/$($backup.schedule.id)/run-now"
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
 Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8000/api/v1/settings -Body (@{ default_profile = "standard-complete"; timezone = "Asia/Shanghai" } | ConvertTo-Json) -ContentType "application/json"
 $settings = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings

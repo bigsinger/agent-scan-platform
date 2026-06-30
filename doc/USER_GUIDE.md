@@ -735,11 +735,27 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/scanners/scanner.loc
 $schedule = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/schedules `
-  -Body (@{ name = "本机变化扫描"; type = "本机发现"; status = "ACTIVE" } | ConvertTo-Json) `
+  -Body (@{
+    name = "本机发现计划"
+    type = "本机发现"
+    trigger = "0 2 * * *"
+    status = "ACTIVE"
+  } | ConvertTo-Json) `
   -ContentType "application/json"
 
-Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($schedule.schedule.id)/run-now"
+$run = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($schedule.schedule.id)/run-now"
+$run.result
+
+$backup = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/schedules `
+  -Body (@{ name = "SQLite 备份计划"; type = "数据库备份"; trigger = "0 3 * * *"; status = "ACTIVE" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($backup.schedule.id)/run-now"
 ```
+
+`run-now` 当前支持五类本地动作：本机发现、变化扫描（Guard）、全量测评、SQLite 备份、数据清理 dry-run。所有计划运行都会写入 `task` 记录和 `schedule-run` JSON artifact；数据清理只生成候选清单，不删除 artifact、报告或证据。
 
 集成与设置：
 

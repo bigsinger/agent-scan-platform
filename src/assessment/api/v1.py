@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
@@ -558,13 +559,13 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         scanner_id = path.split("/")[-2]
         result["self_test"] = scanner_self_test(store, scanner_id)
     elif path == "/schedules":
-        result["schedule"] = upsert_named_record(store, state, "schedule", "schedules", body, "sch", status=str(body.get("status") or "ACTIVE"))
+        result["schedule"] = save_schedule(store, state, body)
     elif path.startswith("/schedules/") and path.endswith("/run-now"):
         schedule_id = path.split("/")[-2]
-        result["run"] = schedule_run_now(store, state, schedule_id)
+        result.update(schedule_run_now(store, state, schedule_id))
     elif method == "PATCH" and path.startswith("/schedules/"):
         schedule_id = path.split("/")[-1]
-        result["schedule"] = update_structured_record(store, state, "schedule", "schedules", schedule_id, body)
+        result["schedule"] = update_schedule(store, state, schedule_id, body)
     elif path.startswith("/integrations/") and path.endswith("/test"):
         integration_id = path.split("/")[-2]
         result["test"] = integration_test(store, state, integration_id)
@@ -3345,16 +3346,388 @@ def scanner_self_test(store: Any, scanner_id: str) -> dict:
     return result
 
 
-def schedule_run_now(store: Any, state: dict, schedule_id: str) -> dict:
-    run = {
-        "id": new_id("job"),
-        "schedule_id": schedule_id,
-        "status": "QUEUED",
-        "created_at": utc_now(),
-        "next": "immediate",
+SCHEDULE_TYPES = {"本机发现", "变化扫描", "全量测评", "数据库备份", "数据清理"}
+
+
+def save_schedule(store: Any, state: dict, body: dict) -> dict:
+    schedule = normalize_schedule(body)
+    errors = validate_schedule(schedule)
+    if errors:
+        raise HTTPException(status_code=422, detail={"message": "schedule validation failed", "validation_errors": errors})
+    updated = store.upsert_record("schedule", schedule, status=str(schedule.get("status") or "ACTIVE"))
+    merge_state_record(state, "schedules", updated)
+    store.audit_event("post.schedules", "schedule", updated["id"], {"payload_redacted": redacted_schedule_payload(updated)})
+    return updated
+
+
+def update_schedule(store: Any, state: dict, schedule_id: str, body: dict) -> dict:
+    existing = store.get_record("schedule", schedule_id) or find_item(state.get("schedules", []), schedule_id) or {"id": schedule_id}
+    schedule = normalize_schedule({**existing, **body})
+    schedule["id"] = schedule_id
+    errors = validate_schedule(schedule)
+    if errors:
+        raise HTTPException(status_code=422, detail={"message": "schedule validation failed", "validation_errors": errors})
+    schedule["updated_at"] = utc_now()
+    updated = store.upsert_record("schedule", schedule, status=str(schedule.get("status") or "ACTIVE"))
+    merge_state_record(state, "schedules", updated)
+    store.audit_event("patch.schedules", "schedule", schedule_id, {"changed": sorted(body.keys()), "status": updated.get("status")})
+    return updated
+
+
+def normalize_schedule(body: dict) -> dict:
+    created_at = body.get("created_at") or utc_now()
+    schedule_type = normalize_schedule_type(str(body.get("type") or "本机发现"))
+    trigger = str(body.get("trigger") or "0 2 * * *").strip()
+    schedule = {
+        "id": body.get("id") or new_id("sch"),
+        "name": str(body.get("name") or default_schedule_name(schedule_type)),
+        "type": schedule_type,
+        "target": str(body.get("target") or default_schedule_target(schedule_type)),
+        "target_path": str(body.get("target_path") or body.get("path") or ""),
+        "trigger": trigger,
+        "misfire": str(body.get("misfire") or "跳过"),
+        "profile": str(body.get("profile") or "quick-experience"),
+        "max_backlog": max(1, min(coerce_int(body.get("max_backlog"), 1), 20)),
+        "max_files": max(1, min(coerce_int(body.get("max_files"), 100), 2500)),
+        "status": str(body.get("status") or "ACTIVE"),
+        "timezone": str(body.get("timezone") or "Asia/Shanghai"),
+        "last": body.get("last") or body.get("last_run_at") or "",
+        "last_run_at": body.get("last_run_at") or "",
+        "last_result": body.get("last_result") or "",
+        "next": body.get("next") or next_fire_time(trigger),
+        "next_run_at": body.get("next_run_at") or next_fire_time(trigger),
+        "run_count": coerce_int(body.get("run_count"), 0),
+        "failure_count": coerce_int(body.get("failure_count"), 0),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "execution_mode": "manual-run-now",
+        "created_at": created_at,
     }
-    merge_state_record(state, "jobs", run)
-    return store.upsert_record("task", run, status="QUEUED")
+    return schedule
+
+
+def normalize_schedule_type(value: str) -> str:
+    text = value.strip().lower()
+    aliases = {
+        "assessment": "全量测评",
+        "maintenance": "数据库备份",
+        "retention": "数据清理",
+        "discovery": "本机发现",
+        "guard": "变化扫描",
+        "backup": "数据库备份",
+    }
+    if text in aliases:
+        return aliases[text]
+    for item in SCHEDULE_TYPES:
+        if item.lower() == text or item in value:
+            return item
+    return value if value in SCHEDULE_TYPES else "本机发现"
+
+
+def default_schedule_name(schedule_type: str) -> str:
+    return {
+        "本机发现": "本机 Agent 周期发现",
+        "变化扫描": "本机变化扫描",
+        "全量测评": "本机完整测评",
+        "数据库备份": "SQLite 在线备份",
+        "数据清理": "证据保留 dry-run",
+    }.get(schedule_type, "本机周期任务")
+
+
+def default_schedule_target(schedule_type: str) -> str:
+    return {
+        "本机发现": "当前用户 Agent 配置",
+        "变化扫描": "已登记配置快照",
+        "全量测评": "本机 Agent 配置",
+        "数据库备份": "data/db/app.db",
+        "数据清理": "data/artifacts dry-run",
+    }.get(schedule_type, "本机")
+
+
+def validate_schedule(schedule: dict) -> list[dict]:
+    errors: list[dict] = []
+    if schedule.get("type") not in SCHEDULE_TYPES:
+        errors.append({"field": "type", "message": "计划类型必须为本机发现、变化扫描、全量测评、数据库备份或数据清理"})
+    if str(schedule.get("status")) not in {"ACTIVE", "PAUSED", "DISABLED"}:
+        errors.append({"field": "status", "message": "计划状态必须为 ACTIVE、PAUSED 或 DISABLED"})
+    if not is_supported_cron(str(schedule.get("trigger") or "")):
+        errors.append({"field": "trigger", "message": "当前本地调度只支持 5 段 cron，分钟/小时可为数字、* 或 */N"})
+    target_path = str(schedule.get("target_path") or "")
+    if target_path:
+        resolved = Path(target_path).expanduser()
+        if not resolved.exists():
+            errors.append({"field": "target_path", "message": "目标路径不存在或当前用户不可读"})
+        elif not os.access(resolved, os.R_OK):
+            errors.append({"field": "target_path", "message": "目标路径不可读"})
+    if schedule.get("mutates_installed_agents") is not False:
+        errors.append({"field": "mutates_installed_agents", "message": "周期计划不得修改已安装 Agent"})
+    return errors
+
+
+def is_supported_cron(trigger: str) -> bool:
+    parts = trigger.split()
+    if len(parts) != 5:
+        return False
+    return cron_part_supported(parts[0], 0, 59) and cron_part_supported(parts[1], 0, 23)
+
+
+def cron_part_supported(value: str, lower: int, upper: int) -> bool:
+    if value == "*":
+        return True
+    if value.startswith("*/"):
+        return value[2:].isdigit() and lower < int(value[2:]) <= upper + 1
+    return value.isdigit() and lower <= int(value) <= upper
+
+
+def next_fire_time(trigger: str) -> str:
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    parts = trigger.split()
+    if len(parts) != 5 or not is_supported_cron(trigger):
+        return (now + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    minute_raw, hour_raw, _dom, _month, dow_raw = parts
+    if minute_raw.startswith("*/"):
+        step = max(1, int(minute_raw[2:]))
+        candidate = now + timedelta(minutes=step)
+        return candidate.isoformat().replace("+00:00", "Z")
+    if hour_raw.startswith("*/"):
+        step = max(1, int(hour_raw[2:]))
+        minute = 0 if minute_raw == "*" else int(minute_raw)
+        candidate = now.replace(minute=minute) + timedelta(hours=step)
+        return candidate.isoformat().replace("+00:00", "Z")
+    minute = now.minute if minute_raw == "*" else int(minute_raw)
+    hour = now.hour if hour_raw == "*" else int(hour_raw)
+    candidate = now.replace(hour=hour, minute=minute)
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    if dow_raw not in {"*", "?"} and dow_raw.isdigit():
+        wanted = 6 if int(dow_raw) in {0, 7} else int(dow_raw) - 1
+        for offset in range(8):
+            maybe = candidate + timedelta(days=offset)
+            if maybe.weekday() == wanted and maybe > now:
+                candidate = maybe
+                break
+    return candidate.isoformat().replace("+00:00", "Z")
+
+
+def schedule_run_now(store: Any, state: dict, schedule_id: str) -> dict:
+    schedule = store.get_record("schedule", schedule_id) or find_item(state.get("schedules", []), schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail=f"Schedule not found: {schedule_id}")
+    schedule = normalize_schedule(schedule)
+    run_id = new_id("job")
+    started_at = utc_now()
+    task = {
+        "id": run_id,
+        "name": f"计划立即执行 · {schedule.get('name')}",
+        "schedule_id": schedule_id,
+        "schedule_type": schedule.get("type"),
+        "target": schedule.get("target"),
+        "target_path": schedule.get("target_path", ""),
+        "status": "RUNNING",
+        "stage": "SCHEDULE_RUN",
+        "progress": 10,
+        "slot": "local",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "execution_mode": "manual-run-now",
+        "created_at": started_at,
+        "started_at": started_at,
+    }
+    store.upsert_record("task", task, status="RUNNING")
+    merge_state_record(state, "tasks", task)
+
+    try:
+        result = execute_schedule_action(store, state, schedule)
+        run_status = "COMPLETED"
+        task_status = "已完成"
+        stage = "DONE"
+    except Exception as exc:
+        result = {"status": "FAILED", "error": str(exc), "safe_mode": "local-readonly", "mutates_installed_agents": False}
+        run_status = "FAILED"
+        task_status = "失败"
+        stage = "FAILED"
+
+    finished_at = utc_now()
+    artifact_payload = {
+        "schema": "agent-security-schedule-run@4.1",
+        "schedule": redacted_schedule_payload(schedule),
+        "run_id": run_id,
+        "result": result,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "boundary": "计划立即执行只调用本系统只读发现、Guard、扫描、备份或清理 dry-run；不修改已安装 Agent。",
+    }
+    artifact = store.write_artifact(
+        "schedule-run",
+        json.dumps(artifact_payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"schedule_id": schedule_id, "run_id": run_id, "safe_mode": "local-readonly"},
+    )
+    task.update(
+        {
+            "status": task_status,
+            "state_code": run_status,
+            "stage": stage,
+            "progress": 100,
+            "finished_at": finished_at,
+            "result": result,
+            "artifact_id": artifact["id"],
+            "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        }
+    )
+    updated_task = store.upsert_record("task", task, status=run_status)
+    merge_state_record(state, "tasks", updated_task)
+
+    schedule.update(
+        {
+            "last": finished_at,
+            "last_run_at": finished_at,
+            "last_result": run_status,
+            "next": next_fire_time(str(schedule.get("trigger") or "0 2 * * *")),
+            "next_run_at": next_fire_time(str(schedule.get("trigger") or "0 2 * * *")),
+            "run_count": coerce_int(schedule.get("run_count"), 0) + 1,
+            "failure_count": coerce_int(schedule.get("failure_count"), 0) + (1 if run_status == "FAILED" else 0),
+            "updated_at": finished_at,
+        }
+    )
+    updated_schedule = store.upsert_record("schedule", schedule, status=str(schedule.get("status") or "ACTIVE"))
+    merge_state_record(state, "schedules", updated_schedule)
+    store.audit_event("post.schedules.run-now", "schedule", schedule_id, {"run_id": run_id, "status": run_status, "type": schedule.get("type")})
+    return {"run": updated_task, "schedule": updated_schedule, "result": result, "artifact": artifact}
+
+
+def execute_schedule_action(store: Any, state: dict, schedule: dict) -> dict:
+    schedule_type = str(schedule.get("type") or "本机发现")
+    target_path = str(schedule.get("target_path") or "")
+    if schedule_type == "本机发现":
+        payload = {"scope": "scheduled", "path": target_path} if target_path else {"scope": "scheduled"}
+        discovery = LocalScanEngine(store).run_discovery(payload)
+        return {
+            "status": "COMPLETED",
+            "action": "discovery",
+            "run_id": discovery.run["id"],
+            "agents": len(discovery.agents),
+            "hits": len(discovery.hits),
+            "mcp_servers": len(discovery.mcp_servers),
+            "skills": len(discovery.skills),
+            "errors": len(discovery.errors),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+    if schedule_type == "变化扫描":
+        guard = PassiveGuard(store).check()
+        return {
+            "status": "COMPLETED",
+            "action": "guard-check",
+            "event_id": guard["event"]["id"],
+            "changed": guard["event"]["changed"],
+            "missing": guard["event"]["missing"],
+            "recommendations": guard["event"]["recommendations"],
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+    if schedule_type == "数据库备份":
+        backup = store.backup_database()
+        return {
+            "status": "COMPLETED",
+            "action": "sqlite-backup",
+            "backup_id": backup["id"],
+            "relative_path": backup["relative_path"],
+            "sha256": backup["sha256"],
+            "size": backup["size"],
+            "safe_mode": "local-maintenance",
+            "mutates_installed_agents": False,
+        }
+    if schedule_type == "全量测评":
+        payload = {
+            "mode": "path" if target_path else "machine",
+            "target_path": target_path,
+            "adapter": "auto",
+            "max_files": schedule.get("max_files", 100),
+        }
+        scan = LocalScanEngine(store).run_quick_scan(payload)
+        return {
+            "status": "COMPLETED",
+            "action": "quick-scan",
+            "assessment_id": scan.assessment["id"],
+            "report_id": scan.report["id"],
+            "findings": len(scan.findings),
+            "evidence": len(scan.evidence),
+            "files_scanned": scan.files_scanned,
+            "files_skipped": scan.files_skipped,
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+    if schedule_type == "数据清理":
+        return schedule_retention_dry_run(store, schedule)
+    raise HTTPException(status_code=422, detail={"message": "unsupported schedule type", "validation_errors": [{"field": "type", "message": schedule_type}]})
+
+
+def schedule_retention_dry_run(store: Any, schedule: dict) -> dict:
+    retention_days = max(1, coerce_int(schedule.get("retention_days"), 180))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    artifacts = store.list_records("artifact", limit=5000)
+    expired: list[dict] = []
+    for artifact in artifacts:
+        created = parse_utc_datetime(str(artifact.get("created_at") or ""))
+        if created and created < cutoff:
+            expired.append(
+                {
+                    "id": artifact.get("id"),
+                    "kind": artifact.get("kind"),
+                    "relative_path": artifact.get("relative_path"),
+                    "created_at": artifact.get("created_at"),
+                    "size": artifact.get("size"),
+                }
+            )
+    payload = {
+        "schema": "agent-security-retention-dry-run@4.1",
+        "schedule_id": schedule.get("id"),
+        "retention_days": retention_days,
+        "checked_at": utc_now(),
+        "expired_count": len(expired),
+        "expired_size": sum(coerce_int(item.get("size"), 0) for item in expired),
+        "expired_preview": expired[:100],
+        "mutates_files": False,
+        "boundary": "数据清理计划当前仅生成 dry-run 清单，不删除 artifact、报告、证据或数据库记录。",
+    }
+    artifact = store.write_artifact(
+        "retention-dry-run",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"schedule_id": schedule.get("id"), "safe_mode": "local-readonly"},
+    )
+    return {
+        "status": "COMPLETED",
+        "action": "retention-dry-run",
+        "expired_count": len(expired),
+        "expired_size": payload["expired_size"],
+        "artifact_id": artifact["id"],
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "mutates_files": False,
+    }
+
+
+def parse_utc_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def redacted_schedule_payload(schedule: dict) -> dict:
+    payload = dict(schedule)
+    if payload.get("target_path"):
+        payload["target_path"] = safe_display_path(Path(str(payload["target_path"])).expanduser())
+    payload["safe_mode"] = "local-readonly"
+    payload["mutates_installed_agents"] = False
+    return payload
 
 
 def integration_test(store: Any, state: dict, integration_id: str) -> dict:
