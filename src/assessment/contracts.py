@@ -136,6 +136,7 @@ PUT /api/v1/sandbox-policy
 POST /api/v1/sandbox-policy/test
 GET /api/v1/sandbox-policy/export
 GET /api/v1/findings
+GET /api/v1/findings/export
 PATCH /api/v1/findings/{id}
 POST /api/v1/findings/{id}/accept
 GET /api/v1/findings/{id}
@@ -235,7 +236,7 @@ PAGE_API_MAP = {
     "P18": ["GET /api/v1/redteam-cases", "POST /api/v1/redteam-cases", "POST /api/v1/redteam-cases/{id}/validate", "POST /api/v1/redteam-cases/{id}/dry-run"],
     "P19": ["GET /api/v1/executor/health", "GET /api/v1/scanners", "POST /api/v1/scanners/{id}/self-test"],
     "P20": ["GET /api/v1/sandbox-policy", "PUT /api/v1/sandbox-policy", "POST /api/v1/sandbox-policy/test", "GET /api/v1/sandbox-policy/export"],
-    "P21": ["GET /api/v1/findings", "PATCH /api/v1/findings/{id}", "POST /api/v1/findings/{id}/accept"],
+    "P21": ["GET /api/v1/findings", "GET /api/v1/findings/export", "PATCH /api/v1/findings/{id}", "POST /api/v1/findings/{id}/accept"],
     "P22": ["GET /api/v1/findings/{id}", "GET /api/v1/findings/{id}/evidence", "POST /api/v1/findings/{id}/retest"],
     "P23": ["GET /api/v1/evidence", "GET /api/v1/evidence/export", "GET /api/v1/evidence/{id}", "GET /api/v1/evidence/{id}/download", "POST /api/v1/evidence/{id}/redact", "GET /api/v1/artifacts/{id}/download"],
     "P24": ["GET /api/v1/attack-paths", "POST /api/v1/attack-paths/build", "POST /api/v1/attack-paths/{id}/confirm", "POST /api/v1/attack-paths/{id}/policy-drafts", "PATCH /api/v1/attack-paths/{id}", "GET /api/v1/policy-drafts", "PATCH /api/v1/policy-drafts/{id}"],

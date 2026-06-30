@@ -671,6 +671,17 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/findings?page_size=50
 ```
 
+### 导出风险 CSV
+
+```powershell
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/findings/export
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($export.download)" `
+  -OutFile findings.csv
+```
+
+风险 CSV 只来自本系统 SQLite 中的 Finding 记录，导出字段会再次脱敏并写入 `data/artifacts/findings-export`。该操作不会重新扫描目标目录，不启动 Agent/MCP，也不修改已安装 Codex/Hermes。
+
 ### 查询证据
 
 ```powershell

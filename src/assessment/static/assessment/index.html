@@ -584,7 +584,7 @@ safe_mode: {{selectedCase.safe_mode||'dry-run'}}</div></div><div class="card"><h
 <!-- P21 FINDINGS -->
 <div v-if="current==='findings'">
   <div class="card">
-    <div class="card-head"><div><h2>风险中心</h2><div class="desc">84 项基线、agent-scan 兼容规则、产品专项和动态红队统一成稳定 Finding。</div></div><button class="btn" @click="toastMsg('风险清单 CSV 已导出')">导出</button></div>
+    <div class="card-head"><div><h2>风险中心</h2><div class="desc">84 项基线、agent-scan 兼容规则、产品专项和动态红队统一成稳定 Finding。</div></div><button class="btn" :disabled="opsBusy" @click="exportFindings">导出 CSV</button></div>
     <div class="toolbar"><input class="search" placeholder="搜索标题 / 规则 / 组件"><select><option>全部严重度</option><option>P0 严重</option><option>P1 高危</option><option>P2 中危</option></select><select><option>全部状态</option><option>待复核</option><option>已确认</option><option>修复中</option><option>待复测</option><option>已修复</option></select><select><option>全部来源</option><option>Local Analyzer</option><option>agent-scan Bridge</option><option>Skill/SCA</option><option>Red Team</option></select></div>
     <div class="split">
       <div><div v-for="f in findings" :class="['finding-row',{active:selectedFinding.id===f.id}]" @click="selectedFinding=f"><div style="display:flex;justify-content:space-between"><span :class="['badge',f.sevClass]">{{f.severity}}</span><span class="tiny muted">{{f.status}}</span></div><div class="finding-title">{{f.title}}</div><div class="finding-meta"><span>{{f.agent}}</span><span>{{f.rule}}</span><span>{{f.source}}</span><span>{{f.confidence}}</span></div></div></div>

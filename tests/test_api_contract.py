@@ -487,6 +487,17 @@ def test_report_evidence_and_risk_closure_actions():
     linked_evidence = client.get(f"/api/v1/findings/{finding['id']}/evidence")
     assert linked_evidence.status_code == 200
     assert linked_evidence.json()["total"] >= 1
+    findings_export = client.get("/api/v1/findings/export")
+    assert findings_export.status_code == 200
+    findings_export_body = findings_export.json()
+    assert findings_export_body["format"] == "findings-csv"
+    assert findings_export_body["counts"]["findings"] >= 1
+    assert findings_export_body["mutates_installed_agents"] is False
+    findings_csv = client.get(findings_export_body["download"])
+    assert findings_csv.status_code == 200
+    assert findings_csv.headers["content-type"].startswith("text/csv")
+    assert "id,severity,status,title,agent,component,rule,source" in findings_csv.text
+    assert finding["id"] in findings_csv.text
     accepted = client.post(f"/api/v1/findings/{finding['id']}/accept", json={"reason": "contract test"})
     assert accepted.json()["finding"]["status"] == "已接受风险"
     retest = client.post(f"/api/v1/findings/{finding['id']}/retest", json={"scope": "固化输入"})

@@ -443,6 +443,17 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
+风险 CSV 导出：
+
+```powershell
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/findings/export
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($export.download)" `
+  -OutFile findings.csv
+```
+
+导出仅读取本系统 `finding` 表并写入 `data/artifacts/findings-export`，不会重新访问客户目录、不会启动 Agent/MCP、不会修改 Codex/Hermes 配置。用于客户评审时建议同时留存 `$export.artifact.sha256`。
+
 证据制品运维操作只读取 SQLite 中的 evidence 记录并生成脱敏 JSON artifact；不会回读、覆盖或删除 Codex/Hermes/Claude Code 安装目录文件：
 
 ```powershell

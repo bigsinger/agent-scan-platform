@@ -84,3 +84,12 @@ def test_profile_template_ui_is_api_backed():
     assert "async validateProfile" in app_js
     assert "async publishProfile" in app_js
     assert "/api/v1/profiles" in app_js
+
+
+def test_findings_export_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "风险清单 CSV 已导出" not in html
+    assert "@click=\"exportFindings\"" in html
+    assert "async exportFindings" in app_js
+    assert "/api/v1/findings/export" in app_js

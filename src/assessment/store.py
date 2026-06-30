@@ -736,6 +736,7 @@ def content_type_for_suffix(suffix: str) -> str:
     mapping = {
         "html": "text/html; charset=utf-8",
         "json": "application/json; charset=utf-8",
+        "csv": "text/csv; charset=utf-8",
         "txt": "text/plain; charset=utf-8",
         "sarif": "application/sarif+json; charset=utf-8",
     }

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import os
 import re
@@ -280,6 +282,12 @@ async def licenses_export() -> dict:
 async def evidence_export() -> dict:
     store = get_store()
     return export_evidence_package(store, runtime_state())
+
+
+@router.get("/findings/export")
+async def findings_export() -> dict:
+    store = get_store()
+    return export_findings_csv(store, runtime_state())
 
 
 @router.get("/evidence/{evidence_id}/download")
@@ -3585,6 +3593,76 @@ def export_evidence_package(store: Any, state: dict) -> dict:
         "counts": package["counts"],
         "download": f"/api/v1/artifacts/{artifact['id']}/download",
         "generated_at": package["generated_at"],
+    }
+
+
+def export_findings_csv(store: Any, state: dict) -> dict:
+    findings = combine_items(store.list_records("finding", limit=5000), state.get("findings", []))
+    rows = [finding_export_row(item) for item in findings]
+    buffer = io.StringIO()
+    fieldnames = [
+        "id",
+        "severity",
+        "status",
+        "title",
+        "agent",
+        "component",
+        "rule",
+        "source",
+        "confidence",
+        "compat",
+        "evidence_ids",
+        "fix",
+        "created_at",
+        "updated_at",
+    ]
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    csv_content = buffer.getvalue()
+    artifact = store.write_artifact(
+        "findings-export",
+        csv_content,
+        suffix="csv",
+        metadata={"safe_mode": "local-readonly", "finding_count": len(rows), "raw_sensitive_evidence": "not-included"},
+    )
+    store.audit_event(
+        "get.findings.export",
+        "artifact",
+        artifact["id"],
+        {"finding_count": len(rows), "format": "csv", "mutates_installed_agents": False},
+    )
+    return {
+        "format": "findings-csv",
+        "artifact": artifact,
+        "counts": {"findings": len(rows)},
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "generated_at": utc_now(),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "columns": fieldnames,
+    }
+
+
+def finding_export_row(finding: dict) -> dict:
+    evidence_ids = finding.get("evidence_ids") or []
+    if isinstance(evidence_ids, str):
+        evidence_ids = [evidence_ids]
+    return {
+        "id": redact_text(str(finding.get("id") or ""), max_len=200),
+        "severity": redact_text(str(finding.get("severity") or ""), max_len=200),
+        "status": redact_text(str(finding.get("status") or ""), max_len=200),
+        "title": redact_text(str(finding.get("title") or ""), max_len=500),
+        "agent": redact_text(str(finding.get("agent") or finding.get("target") or ""), max_len=300),
+        "component": redact_text(str(finding.get("component") or ""), max_len=500),
+        "rule": redact_text(str(finding.get("rule") or finding.get("rule_id") or ""), max_len=200),
+        "source": redact_text(str(finding.get("source") or ""), max_len=200),
+        "confidence": redact_text(str(finding.get("confidence") or ""), max_len=80),
+        "compat": redact_text(str(finding.get("compat") or finding.get("compatibility_code") or ""), max_len=100),
+        "evidence_ids": ";".join(redact_text(str(item), max_len=120) for item in evidence_ids),
+        "fix": redact_text(str(finding.get("fix") or finding.get("remediation") or ""), max_len=1000),
+        "created_at": redact_text(str(finding.get("created_at") or ""), max_len=100),
+        "updated_at": redact_text(str(finding.get("updated_at") or ""), max_len=100),
     }
 
 

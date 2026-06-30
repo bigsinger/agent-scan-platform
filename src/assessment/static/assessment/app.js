@@ -1106,6 +1106,15 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
+    async exportFindings(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/findings/export');
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('风险清单 CSV 已生成：'+((res.counts&&res.counts.findings)||0)+' 条');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
     async redactEvidence(evidence){
       if(!evidence || !evidence.id) return;
       this.opsBusy=true; this.apiError='';
