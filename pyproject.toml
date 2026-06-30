@@ -1,0 +1,23 @@
+[project]
+name = "agent-security-assessment"
+version = "4.1.0"
+description = "Local Agent security assessment module based on the V4.1 SPEC."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+assessment = ["static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

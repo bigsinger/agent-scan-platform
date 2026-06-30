@@ -1,0 +1,10 @@
+{
+  "vue.global.prod.js": {
+    "name": "Vue",
+    "version": "3.5.18",
+    "license": "MIT",
+    "source": "vendored from doc/agent_security_assessment_prototype.html offline build",
+    "sha256": "c6a0162f37dd6c2eb68059ba01e63ec76c58862853b4caa645b9605752bc1987",
+    "usage": "assessment frontend runtime"
+  }
+}

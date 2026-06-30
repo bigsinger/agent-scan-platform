@@ -1,0 +1,328 @@
+# Agent 安全测评能力模块 V4.1 运维部署手册
+
+本文档面向本地试用、企业 POC、内网测评环境和后续私有化交付。当前实现是单进程 FastAPI + SQLite + 本地静态前端，默认不依赖云服务、Redis、PostgreSQL、对象存储或公网 CDN。
+
+## 1. 交付物清单
+
+| 路径 | 用途 |
+| --- | --- |
+| `src/assessment/main.py` | FastAPI 应用入口，挂载 `/api/v1` 和 `/assessment` |
+| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 122 个 API 契约并提供本地实现兜底 |
+| `src/assessment/scanning/` | 本地发现、静态规则、证据脱敏、扫描编排 |
+| `src/assessment/scanning/guard.py` | 只读 Guard 防御监测，负责配置哈希基线、变化检测和防御建议 |
+| `src/assessment/reports/` | HTML/JSON 报告渲染器 |
+| `src/assessment/static/` | 离线 Vue 前端与本地 vendor 资源 |
+| `data/db/app.db` | SQLite 主库，首次启动自动创建 |
+| `data/artifacts/` | 脱敏证据制品 |
+| `data/reports/` | HTML/JSON 报告制品 |
+| `data/backups/` | SQLite Online Backup 输出 |
+| `tests/fixtures/` | 本地验收 Fixture |
+
+## 2. 运行边界
+
+默认安全策略：
+
+1. 服务默认建议绑定 `127.0.0.1`，企业对外暴露必须放在已有认证网关或反向代理后。
+2. 扫描器只读访问目标目录，不执行目标仓库脚本。
+3. 发现 MCP stdio Server 时只解析配置，生成待审批记录，不自动启动进程。
+4. 证据保存脱敏片段和文件哈希，不保存原始密钥、Cookie、完整 Prompt 或完整环境变量值。
+5. 报告由扫描快照生成，渲染时不重新读取目标目录，便于审计和复现。
+6. 关闭互联网和 Snyk Token 时仍可完成核心本地扫描、发现、证据和报告。
+7. Guard 防御监测仅读取已安装 Agent 的配置文件并写入本系统 SQLite，不修改 Codex、Hermes 或其他 Agent 的安装目录。
+
+## 3. 环境要求
+
+最低要求：
+
+- Python 3.12 或更高版本。
+- Windows 10/11、Windows Server、Linux x86_64 或 macOS。
+- 可写工作目录，用于 `data/` 和 `logs/`。
+- 浏览器：Chrome、Edge、Firefox 任一现代版本。
+
+可选要求：
+
+- Node.js：仅用于 `node --check` 前端语法检查，运行系统不需要 Node。
+- Playwright：仅用于扩展浏览器 E2E 验收，当前核心功能不强依赖。
+
+## 4. Windows 本地部署
+
+在仓库根目录执行：
+
+```powershell
+cd F:\bigsinger\agent-scan-platform
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+启动服务：
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8000
+```
+
+访问：
+
+```text
+http://127.0.0.1:8000/assessment
+```
+
+健康检查：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+```
+
+只读 Guard 检查：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/guard/check
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
+```
+
+## 5. Linux / macOS 本地部署
+
+```bash
+cd /opt/agent-scan-platform
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+PYTHONPATH=src python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8000
+```
+
+## 6. 企业 POC 启动建议
+
+推荐 POC 流程：
+
+1. 部署在客户测试机或跳板机，先绑定 `127.0.0.1`。
+2. 准备一个包含 `.mcp.json`、`AGENTS.md`、`.agents/skills/*/SKILL.md` 的测试目录。
+3. 用快速扫描指定该目录，确认发现、风险、证据、报告闭环。
+4. 再扫描客户真实 Agent 项目目录。
+5. 如果需要多人访问，使用企业现有网关提供登录、TLS、审计和访问控制。
+
+不建议在 POC 第一阶段直接绑定 `0.0.0.0`。如必须绑定：
+
+```powershell
+python -m uvicorn assessment.main:app --host 0.0.0.0 --port 8000
+```
+
+对外暴露时必须满足：
+
+- 前置认证。
+- TLS 或内网专线。
+- 只允许测评人员访问。
+- 不把 `data/` 目录通过静态服务器暴露。
+
+## 7. 数据目录和备份
+
+默认数据目录：
+
+```text
+data/
+  db/app.db
+  artifacts/
+  reports/
+  backups/
+  work/
+```
+
+手工备份：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/backup
+```
+
+备份使用 SQLite Online Backup API，不直接复制运行中的数据库文件。备份文件写入：
+
+```text
+data/backups/app-YYYYMMDDHHMMSS.db
+```
+
+完整性检查：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/database/integrity-check
+```
+
+WAL checkpoint：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/database/checkpoint
+```
+
+数据库压缩：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/vacuum
+```
+
+## 8. 运维巡检
+
+每日巡检：
+
+1. `GET /api/v1/health` 返回 `status=ok`。
+2. `data/db/app.db`、`data/artifacts/`、`data/reports/` 可写。
+3. 最近一次备份存在且可读。
+4. `GET /api/v1/sqlite/status` 表数量和文件大小正常增长。
+5. 前端 `/assessment` 无空白页，浏览器 Console 无 Error。
+
+每次版本升级前：
+
+1. 停止 Uvicorn 进程。
+2. 执行 `/api/v1/sqlite/backup`。
+3. 归档当前 `data/`。
+4. 升级代码和依赖。
+5. 运行测试与烟测。
+6. 启动新版本。
+
+## 9. 验收命令
+
+后端编译：
+
+```powershell
+python -m compileall src tools tests
+```
+
+前端语法：
+
+```powershell
+node --check src\assessment\static\assessment\app.js
+```
+
+离线前端检查：
+
+```powershell
+python tools\check_frontend_offline.py --html src\assessment\static\assessment\index.html --expect-pages 48
+```
+
+测试：
+
+```powershell
+pytest -q
+```
+
+Fixture 快速扫描：
+
+```powershell
+$body = @{
+  mode = "path"
+  target_path = "tests\fixtures\sample_agent_project"
+  adapter = "Codex"
+  max_files = 200
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
+```
+
+## 10. 规则与报告能力
+
+当前本地规则覆盖：
+
+- Secret / API Key / Token / 私钥模式。
+- Tool / Prompt 提示注入。
+- 下载即执行、递归删除、PowerShell IEX 等危险命令链。
+- MCP stdio 高风险外壳命令。
+- MCP 配置敏感环境变量。
+- Skill 指令越权和供应链脚本风险。
+- 隐藏 Unicode / Bidi 控制字符。
+- Codex / Agent 审批和沙箱危险组合。
+- Remote MCP 明文 HTTP 风险。
+
+报告格式：
+
+- HTML：面向人工审阅和客户交付。
+- JSON：面向平台同步、二次分析和归档。
+
+## 11. 安全加固建议
+
+本模块不是完整 IAM 系统。企业部署时应复用现有平台能力：
+
+1. 认证：统一 SSO 或堡垒机。
+2. 授权：限制只有测评人员能访问。
+3. 网络：绑定 loopback 或内网地址，禁止公网裸露。
+4. 日志：Uvicorn 日志进入企业日志系统。
+5. 备份：`data/backups/` 定期同步到企业备份介质。
+6. 保留期：脱敏证据默认建议 180 天，超过保留期归档或删除。
+7. 数据脱敏：禁止把原始密钥、完整 Prompt、完整环境变量值写入工单。
+
+## 12. 常见故障
+
+### 端口被占用
+
+```powershell
+Get-NetTCPConnection -LocalPort 8000 | Select-Object LocalAddress,LocalPort,OwningProcess
+Stop-Process -Id <PID>
+```
+
+或改用其他端口：
+
+```powershell
+python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8765
+```
+
+### 页面空白
+
+检查：
+
+1. `/static/vendor/vue.global.prod.js` 是否能访问。
+2. 浏览器 Console 是否有模板错误。
+3. 运行 `python tools/check_frontend_offline.py --html src/assessment/static/assessment/index.html --expect-pages 48`。
+
+### SQLite locked
+
+常见原因是已有服务进程未退出。处理：
+
+1. 停止所有 Uvicorn 进程。
+2. 确认没有杀毒或同步工具锁定 `data/db/app.db`。
+3. 重启服务。
+
+### 扫描很慢
+
+处理：
+
+1. 优先扫描明确目录，不直接扫整个用户目录。
+2. 使用 `max_files` 限制文件数量。
+3. 排除 `node_modules`、`.git`、`dist`、`build` 等目录，系统已默认跳过。
+4. 大文件超过默认 1 MiB 会跳过，可按需调高 `max_file_bytes`。
+
+### 报告下载为空
+
+检查：
+
+1. `POST /api/v1/quick-scans` 响应里是否有 `report.id`。
+2. `data/reports/` 是否可写。
+3. 使用 `/api/v1/reports/{id}/download` 下载。
+
+## 13. 升级和回滚
+
+升级：
+
+1. 备份 SQLite。
+2. 停止服务。
+3. 更新代码。
+4. 运行编译、测试和前端离线检查。
+5. 启动服务。
+
+回滚：
+
+1. 停止服务。
+2. 恢复上一版本代码。
+3. 如 schema 不兼容，恢复对应 `data/backups/*.db`。
+4. 启动上一版本。
+
+当前 schema 使用通用 JSON 行表，升级风险较低，但仍必须备份。Guard 防御监测相关数据落在：
+
+- `config_snapshot`：Agent 配置、MCP、Skill 的路径哈希与 SHA-256 基线。
+- `guard_event`：每次只读 Guard 检查的统计结果。
+- `defense_recommendation`：配置变化、stdio MCP 审批等防御建议。
+
+## 14. 与外部项目的参考关系
+
+实现参考了两个公开项目的产品边界和交付经验：
+
+- Tencent AI-Infra-Guard：本地/容器化安全体检、API 文档和无认证部署警示。
+- Snyk agent-scan：Agent/MCP/Skill 发现、stdio MCP 启动前审批、本地分析与可选云分析边界。
+
+本仓库没有复制上述项目源码；当前交付以本地规则和自有 FastAPI/SQLite 管线为主。
