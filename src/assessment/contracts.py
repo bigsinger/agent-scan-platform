@@ -92,6 +92,7 @@ GET /api/v1/agents/{id}/components
 GET /api/v1/agents/{id}/snapshots
 GET /api/v1/agents/{id}/abom
 GET /api/v1/agents/{id}/abom/diff
+GET /api/v1/agents/{id}/abom/export
 GET /api/v1/adapters
 POST /api/v1/adapters/{id}/self-test
 GET /api/v1/profiles
@@ -218,7 +219,7 @@ PAGE_API_MAP = {
     "P04": ["POST /api/v1/discovery-runs", "GET /api/v1/discovery-runs/{id}", "GET /api/v1/discovery-hits/export", "POST /api/v1/discovery-hits/{id}/import", "POST /api/v1/discovery-hits/{id}/ignore"],
     "P05": ["GET /api/v1/agents", "GET /api/v1/agents/{id}", "POST /api/v1/agents/{id}/probe"],
     "P06": ["GET /api/v1/agents/{id}", "GET /api/v1/agents/{id}/components", "GET /api/v1/agents/{id}/snapshots"],
-    "P07": ["GET /api/v1/agents/{id}/abom", "GET /api/v1/agents/{id}/abom/diff"],
+    "P07": ["GET /api/v1/agents/{id}/abom", "GET /api/v1/agents/{id}/abom/diff", "GET /api/v1/agents/{id}/abom/export"],
     "P08": ["GET /api/v1/adapters", "POST /api/v1/adapters/{id}/self-test"],
     "P09": ["GET /api/v1/profiles", "POST /api/v1/profiles", "POST /api/v1/profiles/{id}/publish"],
     "P10": ["GET /api/v1/agent-scan/compat", "POST /api/v1/agent-scan/self-test"],

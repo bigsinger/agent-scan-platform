@@ -59,6 +59,53 @@ def test_discovery_creates_mcp_consent_without_starting_stdio():
     assert payload["consents"][0]["env"]["OPENAI_API_KEY"] == "<REDACTED>"
 
 
+def test_agent_detail_abom_snapshots_and_export_are_derived_from_discovery():
+    discovery = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "fixture-abom"})
+    assert discovery.status_code == 200
+    agent = discovery.json()["agents"][0]
+
+    detail = client.get(f"/api/v1/agents/{agent['id']}")
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["item"]["safe_mode"] == "local-readonly"
+    assert detail_payload["item"]["mutates_installed_agents"] is False
+    assert detail_payload["components"]
+    assert detail_payload["abom"]["nodes"]
+
+    components = client.get(f"/api/v1/agents/{agent['id']}/components")
+    assert components.status_code == 200
+    component_types = {item["type"] for item in components.json()["items"]}
+    assert {"Agent", "Config", "MCP Server", "Skill"} & component_types
+
+    abom = client.get(f"/api/v1/agents/{agent['id']}/abom")
+    assert abom.status_code == 200
+    abom_payload = abom.json()
+    assert abom_payload["safe_mode"] == "local-readonly"
+    assert abom_payload["mutates_installed_agents"] is False
+    assert any(node["type"] == "Agent" for node in abom_payload["nodes"])
+    assert any(node["type"] in {"Config", "MCP Server", "Skill"} for node in abom_payload["nodes"])
+    assert abom_payload["relations"]
+
+    snapshots = client.get(f"/api/v1/agents/{agent['id']}/snapshots")
+    assert snapshots.status_code == 200
+    snapshot_payload = snapshots.json()
+    assert snapshot_payload["items"]
+    assert all(item["id"] != "snap_001" for item in snapshot_payload["items"])
+    assert all(item["safe_mode"] == "local-readonly" for item in snapshot_payload["items"])
+
+    diff = client.get(f"/api/v1/agents/{agent['id']}/abom/diff")
+    assert diff.status_code == 200
+    assert diff.json()["safe_mode"] == "local-readonly"
+
+    export = client.get(f"/api/v1/agents/{agent['id']}/abom/export")
+    assert export.status_code == 200
+    export_payload = export.json()
+    artifact = client.get(export_payload["download"])
+    assert artifact.status_code == 200
+    assert "agent-security-abom@4.1" in artifact.text
+    assert "不启动 Agent" in artifact.text
+
+
 def test_mcp_static_inspect_derives_tools_and_evidence_without_starting_stdio():
     discovery = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "fixture"})
     assert discovery.status_code == 200

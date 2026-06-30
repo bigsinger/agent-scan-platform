@@ -7,7 +7,7 @@
 | 路径 | 用途 |
 | --- | --- |
 | `src/assessment/main.py` | FastAPI 应用入口，挂载 `/api/v1` 和 `/assessment` |
-| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 138 个 API 契约并提供本地实现兜底 |
+| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 139 个 API 契约并提供本地实现兜底 |
 | `src/assessment/scanning/` | 本地发现、静态规则、证据脱敏、扫描编排 |
 | `src/assessment/scanning/guard.py` | 只读 Guard 防御监测，负责配置哈希基线、变化检测和防御建议 |
 | `src/assessment/reports/` | HTML/JSON 报告渲染器 |
@@ -174,6 +174,19 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/skills/$($skil
 ```
 
 上述 `quarantine` 是本系统内的逻辑隔离状态和审计记录，只写 SQLite 与 artifact，不移动、不重命名、不覆盖客户机器上的 Skill 文件。
+
+ABOM/攻击面 POC 可以在发现或快速扫描后验证：
+
+```powershell
+$agents = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agents
+$agent = $agents.items[0]
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/agents/$($agent.id)/components"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/agents/$($agent.id)/abom"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/agents/$($agent.id)/abom/diff"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/agents/$($agent.id)/abom/export"
+```
+
+ABOM 只读取本系统 SQLite 中的发现、MCP、Tool、Skill、Finding、Evidence 和 Guard 快照记录。导出仅生成 `data/artifacts/` 下的 JSON artifact，不访问或修改已安装 Agent 的原始文件。
 
 不建议在 POC 第一阶段直接绑定 `0.0.0.0`。如必须绑定：
 

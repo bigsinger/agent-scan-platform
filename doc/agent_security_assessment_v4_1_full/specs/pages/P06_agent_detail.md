@@ -43,6 +43,7 @@
 - `GET /api/v1/agents/{id}`
 - `GET /api/v1/agents/{id}/components`
 - `GET /api/v1/agents/{id}/snapshots`
+- `GET /api/v1/agents/{id}/abom`
 
 接口返回必须统一包装：
 
@@ -107,6 +108,8 @@
 - 长任务不得在请求线程中直接执行；必须创建 task 后由本地任务执行器处理。
 - 查询接口必须支持分页、排序和筛选。
 - 所有返回数据必须经过脱敏，尤其是环境变量、Token、Authorization Header、绝对路径和命令参数。
+- Agent 详情的组件、MCP、Skill、风险和快照必须来自本系统发现/扫描记录，不得用固定演示数据。
+- 详情加载不得启动 Agent、不得启动 stdio MCP、不得修改已安装 Agent 文件。
 
 ## 9. SQLite 数据要求
 

@@ -641,16 +641,17 @@ def get_item_route(path: str, state: dict) -> dict | None:
     if len(parts) >= 2 and parts[0] == "agents":
         item = get_store().get_record("agent_instance", parts[1]) or find_item(state.get("agentAssets", []), parts[1]) or state.get("selectedAsset", {})
         if len(parts) == 2:
-            return {"item": item}
+            return agent_detail(get_store(), state, parts[1])
         if parts[2:] == ["components"]:
-            return page(combine_items(get_store().list_records("component"), state.get("components", [])), None)
+            return page(agent_components(get_store(), state, item), None)
         if parts[2:] == ["abom"]:
-            nodes = combine_items(get_store().list_records("component"), state.get("components", []))
-            return {"nodes": nodes, "relations": [{"from": item.get("name", "Agent"), "to": "MCP Server", "type": "uses"}]}
+            return agent_abom(get_store(), state, parts[1])
         if parts[2:] == ["abom", "diff"]:
-            return {"added": [], "removed": [], "changed": state.get("components", [])[:2]}
+            return agent_abom_diff(get_store(), state, parts[1])
+        if parts[2:] == ["abom", "export"]:
+            return export_agent_abom(get_store(), state, parts[1])
         if parts[2:] == ["snapshots"]:
-            return {"items": [{"id": "snap_001", "agent_id": parts[1], "sha256": "4bd0...82a1", "captured_at": utc_now()}], "total": 1}
+            return page(agent_snapshots(get_store(), state, item), None)
     if len(parts) >= 2 and parts[0] == "adapters":
         adapter = find_adapter(state, parts[1])
         return {"item": adapter}
@@ -1605,6 +1606,354 @@ def ignore_discovery_hit(store: Any, state: dict, hit_id: str, body: dict) -> di
     updated = store.upsert_record("discovery_hit", hit, status="IGNORED")
     merge_state_record(state, "discoveryHits", updated)
     return {"status": "IGNORED", "hit": updated}
+
+
+def agent_detail(store: Any, state: dict, agent_id: str) -> dict:
+    agent = store.get_record("agent_instance", agent_id) or find_item(state.get("agentAssets", []), agent_id) or {"id": agent_id, "status": "NOT_FOUND"}
+    components = agent_components(store, state, agent)
+    snapshots = agent_snapshots(store, state, agent)
+    findings = agent_findings(store, state, agent)
+    evidence = agent_evidence(store, findings)
+    abom = build_agent_abom(agent, components)
+    detail = dict(agent)
+    detail.update(
+        {
+            "component_count": len(components),
+            "snapshot_count": len(snapshots),
+            "finding_count": len(findings),
+            "evidence_count": len(evidence),
+            "last_snapshot_at": snapshots[0].get("last_seen_at") or snapshots[0].get("created_at") if snapshots else "",
+            "latest_config_sha256": snapshots[0].get("sha256") if snapshots else "",
+            "abom_summary": abom["summary"],
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+    )
+    return {"item": detail, "components": components, "snapshots": snapshots, "findings": findings, "evidence": evidence, "abom": abom}
+
+
+def agent_components(store: Any, state: dict, agent: dict) -> list[dict]:
+    nodes: list[dict] = [agent_root_component(agent)]
+    hits = [record for record in combine_items(store.list_records("discovery_hit", limit=2000), state.get("discoveryHits", [])) if record_matches_agent(agent, record)]
+    mcps = [record for record in combine_items(store.list_records("mcp_server", limit=1000), state.get("mcpServers", [])) if record_matches_agent(agent, record)]
+    skills = [record for record in combine_items(store.list_records("skill", limit=1000), state.get("skills", [])) if record_matches_agent(agent, record)]
+    tools = agent_tools(store, state, mcps)
+    findings = agent_findings(store, state, agent)
+
+    nodes.extend(component_from_hit(hit) for hit in hits)
+    nodes.extend(component_from_mcp(server) for server in mcps)
+    nodes.extend(component_from_skill(skill) for skill in skills)
+    nodes.extend(component_from_tool(tool) for tool in tools)
+    nodes.extend(component_from_finding(finding) for finding in findings[:50])
+
+    existing_components = combine_items(store.list_records("component", limit=2000), state.get("components", []))
+    nodes.extend(component_from_existing(item) for item in existing_components if record_matches_agent(agent, item))
+    return dedupe_nodes(nodes)
+
+
+def agent_abom(store: Any, state: dict, agent_id: str) -> dict:
+    agent = store.get_record("agent_instance", agent_id) or find_item(state.get("agentAssets", []), agent_id) or {"id": agent_id, "name": agent_id}
+    components = agent_components(store, state, agent)
+    return build_agent_abom(agent, components)
+
+
+def build_agent_abom(agent: dict, components: list[dict]) -> dict:
+    nodes = dedupe_nodes(components)
+    root_id = agent_root_component(agent)["id"]
+    relations = build_agent_relations(root_id, nodes)
+    by_type: dict[str, int] = {}
+    for node in nodes:
+        by_type[str(node.get("type") or "Unknown")] = by_type.get(str(node.get("type") or "Unknown"), 0) + 1
+    high_risk = [node for node in nodes if node.get("riskClass") in {"critical", "high"}]
+    external_domains = sorted({domain for node in nodes for domain in extract_domains(str(node.get("source") or "") + " " + str(node.get("url") or ""))})
+    return {
+        "agent": sanitize_agent(agent),
+        "nodes": nodes,
+        "relations": relations,
+        "summary": {
+            "components": len(nodes),
+            "relations": len(relations),
+            "by_type": by_type,
+            "trust_boundaries": len([node for node in nodes if node.get("trust") not in {"Local", "System", "Self"}]),
+            "external_domains": len(external_domains),
+            "high_risk": len(high_risk),
+        },
+        "external_domains": external_domains[:50],
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "generated_at": utc_now(),
+    }
+
+
+def agent_abom_diff(store: Any, state: dict, agent_id: str) -> dict:
+    agent = store.get_record("agent_instance", agent_id) or find_item(state.get("agentAssets", []), agent_id) or {"id": agent_id}
+    snapshots = agent_snapshots(store, state, agent)
+    changes = [
+        item
+        for item in store.list_records("defense_recommendation", limit=500)
+        if record_matches_agent(agent, item) and str(item.get("id") or "").startswith("chg_")
+    ]
+    added = [item for item in snapshots if item.get("status") in {"ACTIVE", "READY", "可导入"}][:20]
+    removed = [item for item in snapshots if item.get("status") == "MISSING"][:20]
+    return {
+        "agent": sanitize_agent(agent),
+        "added": added,
+        "removed": removed,
+        "changed": changes[:20],
+        "summary": {"added": len(added), "removed": len(removed), "changed": len(changes)},
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "generated_at": utc_now(),
+    }
+
+
+def export_agent_abom(store: Any, state: dict, agent_id: str) -> dict:
+    payload = {
+        "schema": "agent-security-abom@4.1",
+        "abom": agent_abom(store, state, agent_id),
+        "diff": agent_abom_diff(store, state, agent_id),
+        "snapshots": agent_snapshots(store, state, store.get_record("agent_instance", agent_id) or {"id": agent_id}),
+        "boundary": "ABOM 导出只读取本系统已发现记录并写入 artifact；不启动 Agent、不启动 stdio MCP、不修改本机 Agent 文件。",
+        "exported_at": utc_now(),
+    }
+    artifact = store.write_artifact("agent-abom", json.dumps(payload, ensure_ascii=False, indent=2), suffix="json", metadata={"agent_id": agent_id, "safe_mode": "local-readonly"})
+    store.audit_event("get.agents.abom.export", "agent_instance", agent_id, {"artifact_id": artifact["id"], "safe_mode": "local-readonly"})
+    return {"format": "json", "artifact": artifact, "download": f"/api/v1/artifacts/{artifact['id']}/download", "exported_at": payload["exported_at"]}
+
+
+def agent_snapshots(store: Any, state: dict, agent: dict) -> list[dict]:
+    snapshots = [item for item in store.list_records("config_snapshot", limit=5000) if record_matches_agent(agent, item)]
+    if not snapshots:
+        snapshots = [
+            {
+                "id": "snap_" + str(hit.get("path_hash") or stable_hash(str(hit.get("path") or hit.get("id")))),
+                "hit_id": hit.get("id"),
+                "agent": hit.get("agent"),
+                "type": hit.get("type"),
+                "path": hit.get("path"),
+                "path_hash": hit.get("path_hash"),
+                "sha256": hit.get("sha256"),
+                "source": hit.get("source"),
+                "scope": hit.get("scope"),
+                "last_seen_at": hit.get("updated_at") or hit.get("created_at"),
+                "status": hit.get("status", "READY"),
+                "snapshot_source": "discovery_hit",
+            }
+            for hit in combine_items(store.list_records("discovery_hit", limit=2000), state.get("discoveryHits", []))
+            if record_matches_agent(agent, hit) and hit.get("type") in {"Config", "MCP", "Skill", "Agent"}
+        ]
+    for item in snapshots:
+        item.setdefault("agent_id", agent.get("id"))
+        item.setdefault("safe_mode", "local-readonly")
+    return sorted(snapshots, key=lambda item: str(item.get("last_seen_at") or item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+
+
+def agent_tools(store: Any, state: dict, servers: list[dict]) -> list[dict]:
+    server_ids = {str(server.get("id")) for server in servers}
+    server_names = {str(server.get("name")) for server in servers}
+    tools = combine_items(store.list_records("mcp_tool", limit=1000), state.get("tools", []))
+    return [tool for tool in tools if str(tool.get("server_id")) in server_ids or str(tool.get("server")) in server_names or str(tool.get("server_id")) in server_names]
+
+
+def agent_findings(store: Any, state: dict, agent: dict) -> list[dict]:
+    findings = combine_items(store.list_records("finding", limit=1000), state.get("findings", []))
+    return [finding for finding in findings if record_matches_agent(agent, finding)]
+
+
+def agent_evidence(store: Any, findings: list[dict]) -> list[dict]:
+    evidence_ids = {evidence_id for finding in findings for evidence_id in finding.get("evidence_ids", [])}
+    if not evidence_ids:
+        return []
+    return [decorate_evidence_item(item) for item in store.list_records("evidence", limit=1000) if item.get("id") in evidence_ids or item.get("finding_id") in {finding.get("id") for finding in findings}]
+
+
+def record_matches_agent(agent: dict, record: dict) -> bool:
+    if not agent or not record:
+        return False
+    adapter = str(agent.get("adapter") or agent.get("name") or "").lower()
+    agent_name = str(agent.get("name") or "").lower()
+    agent_id = str(agent.get("id") or "").lower()
+    path = str(agent.get("path") or "").lower()
+    path_hash = str(agent.get("path_hash") or "").lower()
+    record_agent = str(record.get("agent") or record.get("adapter") or "").lower()
+    if record_agent and (record_agent == adapter or record_agent in agent_name or adapter in record_agent):
+        return True
+    if agent_id and str(record.get("agent_id") or record.get("source_agent_id") or "").lower() == agent_id:
+        return True
+    if path_hash and str(record.get("path_hash") or "").lower() == path_hash:
+        return True
+    haystack = " ".join(str(record.get(key) or "") for key in ("path", "source", "config", "component", "server", "name", "title")).lower()
+    if adapter and adapter not in {"generic", "unknown"} and adapter in haystack:
+        return True
+    if path.startswith("<target>/") and "<target>/" in haystack:
+        return True
+    if path.startswith("<project>/") and "<project>/" in haystack:
+        return True
+    home_prefix = "/".join(path.split("/")[:2]) if path.startswith("~/") else ""
+    if home_prefix and home_prefix in haystack:
+        return True
+    if path and haystack and path not in {"<project>", "<target>", "local"} and (path in haystack or haystack in path):
+        return True
+    return False
+
+
+def agent_root_component(agent: dict) -> dict:
+    risk_class = "critical" if int(agent.get("p0") or 0) else "high" if int(agent.get("p1") or 0) else "low"
+    risk = "严重" if risk_class == "critical" else "高危" if risk_class == "high" else "待扫描"
+    return {
+        "id": "abom_agent_" + stable_hash(str(agent.get("id") or agent.get("name") or "agent"), 16),
+        "type": "Agent",
+        "name": agent.get("name") or agent.get("adapter") or agent.get("id"),
+        "source": agent.get("path", ""),
+        "version": agent.get("version", ""),
+        "trust": "System" if agent.get("install_status") == "已安装" else "Local",
+        "risk": risk,
+        "riskClass": risk_class,
+        "agent_id": agent.get("id"),
+    }
+
+
+def component_from_hit(hit: dict) -> dict:
+    return {
+        "id": "abom_hit_" + stable_hash(str(hit.get("id") or hit.get("path") or hit.get("name")), 16),
+        "type": hit.get("type") or "Config",
+        "name": Path(str(hit.get("path") or hit.get("name") or "config")).name,
+        "source": hit.get("path", ""),
+        "version": hit.get("version", ""),
+        "trust": "Local",
+        "risk": "待扫描",
+        "riskClass": "low" if hit.get("type") == "Agent" else "medium",
+        "sha256": hit.get("sha256"),
+        "agent": hit.get("agent"),
+    }
+
+
+def component_from_mcp(server: dict) -> dict:
+    return {
+        "id": "abom_mcp_" + stable_hash(str(server.get("id") or server.get("name")), 16),
+        "type": "MCP Server",
+        "name": server.get("name"),
+        "source": server.get("config") or server.get("url") or "",
+        "transport": server.get("transport"),
+        "trust": "Local" if server.get("transport") == "stdio" else "External",
+        "risk": server.get("risk", "待检查"),
+        "riskClass": server.get("riskClass", "medium"),
+        "server_id": server.get("id"),
+        "agent": server.get("agent"),
+    }
+
+
+def component_from_skill(skill: dict) -> dict:
+    return {
+        "id": "abom_skill_" + stable_hash(str(skill.get("id") or skill.get("path") or skill.get("name")), 16),
+        "type": "Skill",
+        "name": skill.get("name"),
+        "source": skill.get("path", ""),
+        "trust": "Local",
+        "risk": skill.get("risk", "待扫描"),
+        "riskClass": skill.get("riskClass", "medium"),
+        "sha256": skill.get("sha256"),
+        "skill_id": skill.get("id"),
+        "agent": skill.get("agent"),
+    }
+
+
+def component_from_tool(tool: dict) -> dict:
+    labels = tool.get("labels") or []
+    risk_class = tool.get("riskClass") or ("high" if any(label in labels for label in ["shell_exec", "network_send", "destructive"]) else "medium")
+    return {
+        "id": "abom_tool_" + stable_hash(str(tool.get("id") or tool.get("name") or tool.get("server")), 16),
+        "type": "Tool",
+        "name": tool.get("name"),
+        "source": tool.get("server") or tool.get("server_id") or "",
+        "trust": "Local",
+        "risk": tool.get("risk", "需关注"),
+        "riskClass": risk_class,
+        "server_id": tool.get("server_id"),
+        "server": tool.get("server"),
+        "labels": labels,
+    }
+
+
+def component_from_finding(finding: dict) -> dict:
+    return {
+        "id": "abom_risk_" + stable_hash(str(finding.get("id") or finding.get("rule") or finding.get("title")), 16),
+        "type": "Risk",
+        "name": finding.get("title"),
+        "source": finding.get("component") or finding.get("source") or "",
+        "trust": "Finding",
+        "risk": finding.get("severity") or finding.get("risk") or "待复核",
+        "riskClass": finding.get("sevClass") or severity_class_from_text(finding.get("severity", "")),
+        "finding_id": finding.get("id"),
+        "rule": finding.get("rule") or finding.get("rule_id"),
+    }
+
+
+def component_from_existing(item: dict) -> dict:
+    return {
+        "id": "abom_cmp_" + stable_hash(str(item.get("id") or item.get("source") or item.get("name")), 16),
+        "type": item.get("type") or "Component",
+        "name": item.get("name"),
+        "source": item.get("source", ""),
+        "trust": item.get("trust", "Local"),
+        "risk": item.get("risk", "待扫描"),
+        "riskClass": item.get("riskClass", "medium"),
+    }
+
+
+def build_agent_relations(root_id: str, nodes: list[dict]) -> list[dict]:
+    relations: list[dict] = []
+    servers = {node.get("server_id") or node.get("name"): node for node in nodes if node.get("type") == "MCP Server"}
+    skills = {node.get("skill_id") or node.get("name"): node for node in nodes if node.get("type") == "Skill"}
+    for node in nodes:
+        node_id = node.get("id")
+        if node_id == root_id:
+            continue
+        node_type = node.get("type")
+        if node_type in {"Config", "MCP", "Skill", "MCP Server"}:
+            relation_type = "loads_skill" if node_type == "Skill" else "uses_mcp" if node_type == "MCP Server" else "has_config"
+            relations.append({"from": root_id, "to": node_id, "type": relation_type})
+        elif node_type == "Tool":
+            server_key = node.get("server_id") or node.get("server")
+            parent = servers.get(server_key)
+            relations.append({"from": parent.get("id") if parent else root_id, "to": node_id, "type": "exposes_tool"})
+        elif node_type == "Risk":
+            parent = next((skill for skill in skills.values() if str(skill.get("source") or "") and str(skill.get("source")) in str(node.get("source") or "")), None)
+            relations.append({"from": parent.get("id") if parent else root_id, "to": node_id, "type": "has_risk"})
+    return dedupe_relations(relations)
+
+
+def dedupe_nodes(nodes: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    seen: set[str] = set()
+    for node in nodes:
+        identity = str(node.get("id") or stable_hash(str(node)))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(node)
+    return result
+
+
+def dedupe_relations(relations: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    seen: set[str] = set()
+    for relation in relations:
+        identity = f"{relation.get('from')}->{relation.get('to')}:{relation.get('type')}"
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(relation)
+    return result
+
+
+def sanitize_agent(agent: dict) -> dict:
+    allowed = {"id", "name", "adapter", "coverage", "path", "configs", "mcp", "skills", "score", "p0", "p1", "probe", "version", "install_status", "status", "safe_mode", "mutates_installed_agents"}
+    return {key: value for key, value in agent.items() if key in allowed}
+
+
+def extract_domains(text: str) -> list[str]:
+    return re.findall(r"https?://([^/\s\"'<>]+)", text)
 
 
 def run_skill_scan(store: Any, state: dict, body: dict) -> dict:

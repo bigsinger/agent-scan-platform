@@ -66,6 +66,10 @@ data(){
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
     initial.reportPreviewData = initial.reportPreviewData || null;
+    initial.agentDetail = null;
+    initial.abomData = null;
+    initial.abomDiff = null;
+    initial.abomBusy = false;
     initial.ruleTestResult = null;
     initial.scannerTestResult = null;
     initial.settingsState = initial.settings || {};
@@ -167,6 +171,28 @@ data(){
       const hash=this.selectedSkill && this.selectedSkill.sha256 || '';
       return hash ? hash.slice(0,12)+'...' : '-';
     },
+    selectedAgentComponents(){
+      return (this.agentDetail && this.agentDetail.components) || (this.components || []).filter(c=>this.recordMatchesAgent(c, this.selectedAsset));
+    },
+    selectedAgentSnapshots(){
+      return (this.agentDetail && this.agentDetail.snapshots) || [];
+    },
+    selectedAgentAbom(){
+      return this.abomData || (this.agentDetail && this.agentDetail.abom) || {nodes:this.selectedAgentComponents, relations:[], summary:{}};
+    },
+    selectedAgentMcpServers(){
+      return (this.mcpServers || []).filter(m=>this.recordMatchesAgent(m, this.selectedAsset));
+    },
+    selectedAgentSkills(){
+      return (this.skills || []).filter(s=>this.recordMatchesAgent(s, this.selectedAsset));
+    },
+    selectedAgentFindings(){
+      return (this.agentDetail && this.agentDetail.findings) || (this.findings || []).filter(f=>this.recordMatchesAgent(f, this.selectedAsset));
+    },
+    selectedAgentConfigHash(){
+      const hash=(this.selectedAsset && this.selectedAsset.latest_config_sha256) || (this.selectedAgentSnapshots[0] && this.selectedAgentSnapshots[0].sha256) || '';
+      return hash ? 'sha256:'+hash.slice(0,12)+'...' : '-';
+    },
     guardLastCheckDisplay(){
       const raw=this.guardStatus && this.guardStatus.last_check_at;
       if(!raw) return '未建立基线';
@@ -238,6 +264,16 @@ data(){
         if(found) this.selectedSkill=found;
         if(this.current==='skill-detail') this.loadSkillDetail(found || {id:skillId});
       }
+      const agentMatch=path.match(/^\/assessment\/agents\/([^/]+)/);
+      if(agentMatch){
+        const agentId=decodeURIComponent(agentMatch[1]);
+        const found=(this.agentAssets || []).find(a=>String(a.id)===agentId || String(a.name)===agentId);
+        if(found) this.selectedAsset=found;
+        if(this.current==='agent-detail') this.loadAgentDetail(found || {id:agentId});
+      }
+      if(this.current==='abom' && this.selectedAsset && this.selectedAsset.id){
+        this.loadAgentAbom(this.selectedAsset);
+      }
     },
     async loadBootstrap(){
       try {
@@ -268,7 +304,7 @@ data(){
     },
     describeError(err){ return err && err.error ? err.error.message+' · '+err.error.correlation_id : String(err && err.message || err || '未知错误'); },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -548,6 +584,72 @@ data(){
         this.toastMsg('只读重探测完成：'+(res.status || (res.probe&&res.probe.status) || 'DONE'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
+    },
+    recordMatchesAgent(record, agent){
+      if(!record || !agent) return false;
+      const adapter=String(agent.adapter || agent.name || '').toLowerCase();
+      const name=String(agent.name || '').toLowerCase();
+      const id=String(agent.id || '').toLowerCase();
+      const path=String(agent.path || '').toLowerCase();
+      const recordAgent=String(record.agent || record.adapter || '').toLowerCase();
+      if(recordAgent && (recordAgent===adapter || name.includes(recordAgent) || recordAgent.includes(adapter))) return true;
+      if(id && String(record.agent_id || record.source_agent_id || '').toLowerCase()===id) return true;
+      const haystack=[record.path, record.source, record.config, record.component, record.server, record.name, record.title].map(x=>String(x||'').toLowerCase()).join(' ');
+      if(adapter && !['generic','unknown'].includes(adapter) && haystack.includes(adapter)) return true;
+      if(path.startsWith('<target>/') && haystack.includes('<target>/')) return true;
+      if(path.startsWith('<project>/') && haystack.includes('<project>/')) return true;
+      const homePrefix=path.startsWith('~/') ? path.split('/').slice(0,2).join('/') : '';
+      if(homePrefix && haystack.includes(homePrefix)) return true;
+      if(path && haystack && !['<project>','<target>','local'].includes(path) && (haystack.includes(path) || path.includes(haystack))) return true;
+      return false;
+    },
+    async loadAgentDetail(agent){
+      if(!agent || !agent.id) return;
+      this.abomBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/agents/'+encodeURIComponent(agent.id));
+        this.agentDetail=res;
+        this.selectedAsset=Object.assign({}, agent, res.item || {});
+        this.mergeRecords('agentAssets', [this.selectedAsset]);
+        if(res.components) this.components=res.components.concat((this.components||[]).filter(c=>!res.components.some(n=>n.id===c.id)));
+        if(res.findings) this.mergeRecords('findings', res.findings);
+        if(res.evidence) this.mergeRecords('evidenceItems', res.evidence);
+        this.abomData=res.abom || this.abomData;
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.abomBusy=false; }
+    },
+    async loadAgentAbom(agent){
+      const target=agent || this.selectedAsset;
+      if(!target || !target.id) return;
+      this.abomBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/agents/'+encodeURIComponent(target.id)+'/abom');
+        this.abomData=res;
+        if(res.nodes) this.components=res.nodes.concat((this.components||[]).filter(c=>!res.nodes.some(n=>n.id===c.id)));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.abomBusy=false; }
+    },
+    async loadAgentAbomDiff(agent){
+      const target=agent || this.selectedAsset;
+      if(!target || !target.id) return;
+      this.abomBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/agents/'+encodeURIComponent(target.id)+'/abom/diff');
+        this.abomDiff=res;
+        this.toastMsg('ABOM 对比完成：新增 '+((res.summary&&res.summary.added)||0)+'，变化 '+((res.summary&&res.summary.changed)||0));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.abomBusy=false; }
+    },
+    async exportAgentAbom(agent){
+      const target=agent || this.selectedAsset;
+      if(!target || !target.id) return;
+      this.abomBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/agents/'+encodeURIComponent(target.id)+'/abom/export');
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('ABOM JSON 已导出：'+(res.artifact&&res.artifact.id || 'READY'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.abomBusy=false; }
     },
     async runReadonlyMcpCheck(){
       this.mcpBusy=true; this.apiError='';
@@ -1089,7 +1191,7 @@ data(){
       a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     },
-    openAgent(a){this.selectedAsset=a;this.agentTab='概览';this.current='agent-detail';window.scrollTo(0,0);},
+    openAgent(a){this.selectedAsset=a;this.agentTab='概览';this.current='agent-detail';this.pushRoute('agent-detail');window.scrollTo(0,0);this.loadAgentDetail(a);},
     openTask(t){this.selectedTask=t;this.taskTab='执行概览';this.current='task-detail';window.scrollTo(0,0);},
     openSkill(s){this.selectedSkill=s;this.skillTab='概览';this.current='skill-detail';this.pushRoute('skill-detail');window.scrollTo(0,0);this.loadSkillDetail(s);},
     openFinding(f){this.selectedFinding=f;this.findingTab='概览';this.current='finding-detail';window.scrollTo(0,0);},

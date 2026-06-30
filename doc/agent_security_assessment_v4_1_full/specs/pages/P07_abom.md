@@ -40,6 +40,7 @@
 
 - `GET /api/v1/agents/{id}/abom`
 - `GET /api/v1/agents/{id}/abom/diff`
+- `GET /api/v1/agents/{id}/abom/export`
 
 接口返回必须统一包装：
 
@@ -104,6 +105,8 @@
 - 长任务不得在请求线程中直接执行；必须创建 task 后由本地任务执行器处理。
 - 查询接口必须支持分页、排序和筛选。
 - 所有返回数据必须经过脱敏，尤其是环境变量、Token、Authorization Header、绝对路径和命令参数。
+- ABOM 必须从 `agent_instance`、`discovery_hit`、`mcp_server`、`mcp_tool`、`skill`、`finding`、`evidence`、`config_snapshot` 派生，不得返回固定原型关系图。
+- `abom/export` 只生成本系统 artifact，不启动 Agent、不启动 stdio MCP、不读取额外敏感文件、不修改已安装 Agent。
 
 ## 9. SQLite 数据要求
 

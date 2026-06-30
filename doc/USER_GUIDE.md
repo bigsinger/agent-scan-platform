@@ -216,6 +216,28 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 3. 环境变量只显示 Key，值保持 `<REDACTED>`。
 4. stdio Server 检查后仍保持“待审批”，不会因静态检查而放行。
 
+## 5.2 Agent ABOM / 攻击面
+
+位置：
+
+```text
+左侧导航 → Agent 资产 → 详情 → 组件/ABOM
+左侧导航 → ABOM / 攻击面
+```
+
+用途：
+
+- 从本系统已发现的 Agent、配置、MCP Server、Tool、Skill、Finding、Evidence 和 Guard 快照记录生成 ABOM。
+- 展示组件清单、关系图、风险节点、快照对比和导出 JSON。
+- 帮助企业 POC 复核“这个 Agent 实际加载了哪些能力、来自哪里、有哪些风险”。
+
+安全边界：
+
+1. 只读取本系统 SQLite 和已生成 artifact。
+2. 不启动 Agent、不启动 stdio MCP、不执行 Tool。
+3. 不读取原始敏感文件内容；路径和证据沿用已有脱敏记录。
+4. 导出 ABOM 只写入 `data/artifacts/`。
+
 ## 6. Skill 安全扫描
 
 位置：
