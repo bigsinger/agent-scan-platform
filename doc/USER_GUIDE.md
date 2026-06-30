@@ -608,6 +608,7 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 - 重试任务：任务列表、任务详情和失败 Job 行的“重试”会调用 `/api/v1/tasks/{id}/retry`，基于原任务创建新的 `QUEUED` 测评记录，保留 `source_task_id` / `retry_of` 和 `task.retry_queued` 事件，便于审计和复现。
 - 取消任务：把任务状态写为 `CANCELLED`，记录本地审计；当前实现不杀已安装 Agent 进程。
 - 刷新事件：从 SQLite `scan_event` 读取任务事件流。
+- 风险 / 证据页签：按当前任务 `assessment_id`、Finding `evidence_ids` 和 Evidence `finding_id` 展示真实扫描结果，可直接进入风险详情、确认风险、创建复测、预览或下载脱敏证据。
 - 生成报告：基于指定任务生成 HTML/JSON 报告制品。
 
 重试和取消都只影响本系统 SQLite 任务记录，不启动、不终止、不修改 Codex、Hermes、Claude Code、Cursor 或 stdio MCP Server。

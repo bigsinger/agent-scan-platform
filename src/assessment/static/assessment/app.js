@@ -222,6 +222,26 @@ data(){
       const hash=this.selectedSkill && this.selectedSkill.sha256 || '';
       return hash ? hash.slice(0,12)+'...' : '-';
     },
+    selectedTaskFindings(){
+      const task=this.selectedTask || {};
+      const taskId=String(task.id || '');
+      const findingIds=new Set((task.finding_ids || []).map(String));
+      return (this.findings || []).filter(f=>{
+        const id=String(f.id || '');
+        return (taskId && (f.assessment_id===taskId || f.task_id===taskId)) || findingIds.has(id);
+      });
+    },
+    selectedTaskEvidence(){
+      const task=this.selectedTask || {};
+      const taskId=String(task.id || '');
+      const findingIds=new Set(this.selectedTaskFindings.map(f=>String(f.id || '')));
+      const evidenceIds=new Set(this.selectedTaskFindings.flatMap(f=>Array.isArray(f.evidence_ids) ? f.evidence_ids.map(String) : (f.evidence_ids ? [String(f.evidence_ids)] : [])));
+      return (this.evidenceItems || []).filter(e=>{
+        const id=String(e.id || '');
+        const findingId=String(e.finding_id || '');
+        return (taskId && e.assessment_id===taskId) || findingIds.has(findingId) || evidenceIds.has(id);
+      });
+    },
     selectedAgentComponents(){
       return (this.agentDetail && this.agentDetail.components) || (this.components || []).filter(c=>this.recordMatchesAgent(c, this.selectedAsset));
     },

@@ -104,3 +104,17 @@ def test_task_retry_ui_is_api_backed():
     assert "canRetryTask(t)" in html
     assert "async retryTask" in app_js
     assert "'/api/v1/tasks/'+encodeURIComponent(task.id)+'/retry'" in app_js
+
+
+def test_task_detail_findings_and_evidence_tabs_are_data_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "v-else-if=\"taskTab==='风险'\"" in html
+    assert "v-for=\"f in selectedTaskFindings\"" in html
+    assert "v-else-if=\"taskTab==='证据'\"" in html
+    assert "v-for=\"e in selectedTaskEvidence\"" in html
+    assert "async retryTask" in app_js
+    assert "selectedTaskFindings()" in app_js
+    assert "selectedTaskEvidence()" in app_js
+    assert "assessment_id" in app_js
+    assert "evidence_ids" in app_js

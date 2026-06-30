@@ -560,6 +560,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.asses
 
 前端任务列表、任务详情页和失败 Job 行的“重试”按钮均调用同一个 `/api/v1/tasks/{id}/retry`，企业验收时可通过新任务 ID、事件流和 `audit_event` 交叉确认没有触碰外部 Agent 进程。
 
+任务详情页的“风险”和“证据”页签只读取当前 SQLite 中按 `assessment_id`、`finding_id`、`evidence_ids` 关联的 Finding/Evidence，不回读客户 Agent 原始目录。验收时可先运行快速扫描，再在任务详情中核对风险、证据、风险详情、证据下载和报告内容是否一致。
+
 能力管理健康检查：
 
 ```powershell
