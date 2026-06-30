@@ -99,6 +99,8 @@ data(){
     initial.adapterSelfTestResult = null;
     initial.agentScanCompat = initial.agentScanCompat || {version:'0.5.12-compatible', source_state:'LOCAL_BRIDGE_ONLY', compatibility:{status:'NOT_RUN', passed:0, warnings:0, failed:0, total:0}};
     initial.agentScanSelfTestResult = null;
+    initial.selectedProfile = initial.selectedProfile || (initial.profiles && initial.profiles[0]) || {};
+    initial.profileValidation = null;
     initial.settingsState = initial.settings || {};
     initial.settingsValidation = [];
     initial.settingsTestResult = null;
@@ -344,6 +346,7 @@ data(){
           if(!this.selectedCase || !(this.selectedCase.id || this.selectedCase.name)) this.selectedCase=(this.redCases && this.redCases[0]) || (this.caseLibrary && this.caseLibrary[0]) || {};
           if(this.selectedCase && this.selectedCase.id) this.form.redteamCaseId=this.selectedCase.id;
           if(!this.selectedRedteamRun || !this.selectedRedteamRun.id) this.selectedRedteamRun=(this.redteamRuns && this.redteamRuns[0]) || {};
+          if(!this.selectedProfile || !(this.selectedProfile.id || this.selectedProfile.name)) this.selectedProfile=(this.profiles && this.profiles[0]) || {};
           this.settingsState=payload.state.settings || this.settingsState || {};
           this.settingsValidation=(this.settingsState && this.settingsState.validation_errors) || [];
           await this.refreshExecutionCenter({silent:true});
@@ -600,6 +603,83 @@ data(){
       this.current='quick-scan';
     },
     viewAdapter(a){this.adapterSelfTestResult=a && a.last_self_test_status ? {adapter_id:a.id, status:a.last_self_test_status, checked_at:a.last_self_test_at, version:a.version, install_status:a.install_status, checks:[]} : this.adapterSelfTestResult; this.toastMsg(a.name+' 适配器覆盖已定位');this.current='adapters';},
+    profileId(profile){ return profile && (profile.id || profile.name); },
+    useProfile(profile){
+      const target=profile || this.selectedProfile || {};
+      this.form.profileId=this.profileId(target) || 'standard-complete';
+      this.go('create');
+      this.toastMsg('已选择测评模板：'+(target.name || target.id || this.form.profileId));
+    },
+    async createProfileDraft(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/profiles', {
+          name:'本机测评模板草稿 '+new Date().toLocaleString('zh-CN', {hour12:false}),
+          desc:'本地只读测评模板，可复制后按客户范围调整规则、预算和报告格式。',
+          rules:(this.ruleRows && this.ruleRows.length) || 84,
+          cases:0,
+          mode:'local-readonly',
+          safe_mode:'local-readonly',
+          mcp_policy:'per-server-consent',
+          remote_analysis:false,
+          report_formats:['HTML','JSON']
+        });
+        if(res.profile){ this.mergeRecords('profiles', [res.profile]); this.selectedProfile=res.profile; }
+        this.toastMsg('模板草稿已写入 SQLite：'+(res.profile&&res.profile.id || 'DRAFT'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async cloneProfile(profile){
+      const target=profile || this.selectedProfile;
+      const id=this.profileId(target);
+      if(!id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/profiles/'+encodeURIComponent(id)+'/clone', {});
+        if(res.profile){ this.mergeRecords('profiles', [res.profile]); this.selectedProfile=res.profile; }
+        this.toastMsg('模板已复制为草稿：'+(res.profile&&res.profile.id || 'DRAFT'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async openProfile(profile){
+      const target=profile || this.selectedProfile;
+      const id=this.profileId(target);
+      if(!id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/profiles/'+encodeURIComponent(id));
+        this.selectedProfile=res.item || target;
+        this.profileValidation=res.validation || null;
+        this.toastMsg('模板详情已从 SQLite/API 读取');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async validateProfile(profile){
+      const target=profile || this.selectedProfile;
+      const id=this.profileId(target);
+      if(!id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/profiles/'+encodeURIComponent(id)+'/validate', {});
+        this.profileValidation=res.validation || null;
+        if(res.profile){ this.mergeRecords('profiles', [res.profile]); this.selectedProfile=res.profile; }
+        this.toastMsg('模板校验完成：'+(this.profileValidation&&this.profileValidation.status || 'UNKNOWN'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async publishProfile(profile){
+      const target=profile || this.selectedProfile;
+      const id=this.profileId(target);
+      if(!id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/profiles/'+encodeURIComponent(id)+'/publish', {});
+        this.profileValidation=res.validation || this.profileValidation;
+        if(res.profile){ this.mergeRecords('profiles', [res.profile]); this.selectedProfile=res.profile; }
+        this.toastMsg(res.status==='PUBLISHED' ? '模板已发布：'+id : '模板发布前校验未通过');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
     async selfTestAdapter(adapter, options){
       if(!adapter || !(adapter.id || adapter.name)) return null;
       const silent=options && options.silent;

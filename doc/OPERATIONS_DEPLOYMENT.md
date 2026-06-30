@@ -143,6 +143,30 @@ $selfTest.self_test.download
 
 该自测只读取本地兼容桥接源码和仓库内回归样本，验证 E001、E004、W019、DM-05 等关键兼容码、deterministic 规则引擎、发现结果、SQLite/artifact 写入和云连接边界。它不会访问 Snyk 云 API，不需要 Token，不启动已安装 Agent 或 stdio MCP Server，不修改 Codex/Hermes/Claude Code/OpenClaw 配置。
 
+测评模板校验：
+
+```powershell
+$profile = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/profiles `
+  -Body (@{
+    name = "enterprise-local-template"
+    rules = 84
+    cases = 0
+    safe_mode = "local-readonly"
+    mcp_policy = "per-server-consent"
+    remote_analysis = $false
+    report_formats = @("HTML", "JSON")
+  } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$validation = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($profile.profile.id)/validate"
+$validation.validation.status
+$validation.validation.download
+```
+
+模板创建、复制、校验和发布只写 `assessment_profile`、`compatibility_test`、审计事件和 `data/artifacts/assessment-profile-validation`。它不会扫描目标目录，不启动 Agent/MCP，不修改已安装 Codex/Hermes/Claude Code/Cursor 配置。企业 POC 建议先用该接口固化客户测评 Profile，再执行快速扫描或周期扫描。
+
 MCP / Tool 只读静态检查：
 
 ```powershell

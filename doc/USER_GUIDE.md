@@ -107,6 +107,45 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 - Evidence 证据。
 - HTML/JSON 报告。
 
+## 3.1 测评模板
+
+位置：
+
+```text
+左侧导航 → 测评模板
+```
+
+用途：
+
+- 固化规则数量、用例包、执行预算、MCP 审批策略、安全模式和报告格式。
+- 复制内置基线模板生成客户专属草稿。
+- 对草稿执行本地校验，确认 `safe_mode`、`mcp_policy`、脱敏策略、报告格式和并发预算符合交付边界。
+- 发布校验通过的模板，后续任务保存模板版本引用。
+
+页面操作已经接入真实 API：
+
+```powershell
+$profile = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/profiles `
+  -Body (@{
+    name = "enterprise-local-template"
+    rules = 84
+    cases = 0
+    safe_mode = "local-readonly"
+    mcp_policy = "per-server-consent"
+    remote_analysis = $false
+    report_formats = @("HTML", "JSON")
+  } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$validation = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($profile.profile.id)/validate"
+$clone = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($profile.profile.id)/clone"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.profile.id)/publish"
+```
+
+校验会写入 `compatibility_test` 和 `assessment-profile-validation` artifact，只检查本系统模板配置，不启动扫描、不启动 MCP、不修改 Codex/Hermes 或任何已安装 Agent。
+
 ## 4. 本机发现页面
 
 位置：

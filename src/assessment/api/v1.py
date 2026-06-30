@@ -83,6 +83,7 @@ TABLE_KEYS = {
     "/discovery-runs": "discovery_run",
     "/discovery-hits": "discovery_hit",
     "/components": "component",
+    "/profiles": "assessment_profile",
     "/scanners": "scanner_plugin",
     "/schedules": "schedule",
     "/integrations": "integration",
@@ -546,14 +547,30 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["dry_run"] = dry_run
         result["run"] = dry_run.get("run")
     elif path == "/profiles":
-        result["profile"] = upsert_named_record(store, state, "assessment_profile", "profiles", body, "prof", status="DRAFT")
+        result["profile"] = create_assessment_profile(store, state, body)
+    elif path.startswith("/profiles/") and path.endswith("/clone"):
+        profile_id = path.split("/")[-2]
+        result["profile"] = clone_assessment_profile(store, state, profile_id, body)
     elif path.startswith("/profiles/") and path.endswith("/validate"):
         profile_id = path.split("/")[-2]
-        result["validation"] = {"status": "PASS", "profile_id": profile_id, "validation_errors": []}
+        result["validation"] = validate_assessment_profile(store, state, profile_id)
     elif path.startswith("/profiles/") and path.endswith("/publish"):
         profile_id = path.split("/")[-2]
-        result["profile"] = update_structured_record(store, state, "assessment_profile", "profiles", profile_id, {"status": "已发布", "published_at": utc_now()})
-        result["status"] = "PUBLISHED"
+        validation = validate_assessment_profile(store, state, profile_id)
+        result["validation"] = validation
+        if validation["status"] == "FAIL":
+            result["status"] = "VALIDATION_FAILED"
+            result["profile"] = resolve_assessment_profile(store, state, profile_id) or {"id": profile_id}
+        else:
+            result["profile"] = update_structured_record(
+                store,
+                state,
+                "assessment_profile",
+                "profiles",
+                profile_id,
+                {"status": "已发布", "published_at": utc_now(), "validation_status": validation["status"]},
+            )
+            result["status"] = "PUBLISHED"
     elif path == "/rules":
         result["rule"] = upsert_named_record(store, state, "rule", "ruleRows", body, "rule", status=str(body.get("status") or "DRAFT"))
     elif path.startswith("/rules/") and path.endswith("/test"):
@@ -740,7 +757,10 @@ def get_item_route(path: str, state: dict) -> dict | None:
         if parts[2:] == ["preview"]:
             return {"item": item, "preview": report_preview(item)}
     if len(parts) >= 2 and parts[0] == "profiles":
-        return {"item": get_store().get_record("assessment_profile", parts[1]) or find_item(state.get("profiles", []), parts[1])}
+        profile = resolve_assessment_profile(get_store(), state, parts[1])
+        if profile:
+            return {"item": profile, "validation": latest_profile_validation(get_store(), str(profile.get("id") or parts[1]))}
+        return {"item": {"id": parts[1], "status": "NOT_FOUND"}}
     if len(parts) >= 2 and parts[0] == "rules":
         return {"item": get_store().get_record("rule", parts[1]) or find_item(rule_catalog(), parts[1]) or find_item(state.get("ruleRows", []), parts[1])}
     if len(parts) >= 2 and parts[0] == "scanners":
@@ -4115,6 +4135,222 @@ def upsert_named_record(store: Any, state: dict, table: str, state_key: str, bod
     return updated
 
 
+def create_assessment_profile(store: Any, state: dict, body: dict) -> dict:
+    profile = normalize_assessment_profile(body)
+    updated = store.upsert_record("assessment_profile", profile, status=str(profile.get("status") or "DRAFT"))
+    merge_state_record(state, "profiles", updated)
+    store.audit_event(
+        "post.profiles",
+        "assessment_profile",
+        updated["id"],
+        {"status": updated.get("status"), "safe_mode": updated.get("safe_mode"), "mutates_installed_agents": False},
+    )
+    return updated
+
+
+def clone_assessment_profile(store: Any, state: dict, profile_id: str, body: dict) -> dict:
+    source = resolve_assessment_profile(store, state, profile_id) or {"id": profile_id, "name": profile_id}
+    clone_body = {
+        **source,
+        **body,
+        "id": body.get("id") or new_id("prof"),
+        "name": body.get("name") or f"{source.get('name') or profile_id} · 复制",
+        "status": "DRAFT",
+        "source_profile_id": source.get("id") or profile_id,
+        "published_at": "",
+        "created_at": utc_now(),
+    }
+    return create_assessment_profile(store, state, clone_body)
+
+
+def resolve_assessment_profile(store: Any, state: dict, profile_id: str) -> dict | None:
+    return store.get_record("assessment_profile", profile_id) or find_item(state.get("profiles", []), profile_id)
+
+
+def normalize_assessment_profile(values: dict | None) -> dict:
+    values = values or {}
+    name = str(values.get("name") or values.get("id") or f"local-profile-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")
+    profile_id = str(values.get("id") or stable_profile_id(name))
+    rule_ids = [str(item.get("id")) for item in rule_catalog() if item.get("id")]
+    rules_value = values.get("rules") if values.get("rules") is not None else min(len(rule_ids), 84)
+    cases_value = values.get("cases") if values.get("cases") is not None else 0
+    safe_mode = normalize_profile_safe_mode(str(values.get("safe_mode") or values.get("mode") or "local-readonly"))
+    record = {
+        "id": profile_id,
+        "name": name,
+        "desc": str(values.get("desc") or values.get("description") or "本地只读测评模板草稿"),
+        "description": str(values.get("description") or values.get("desc") or "本地只读测评模板草稿"),
+        "rules": rules_value,
+        "rules_count": coerce_positive_int(rules_value, default=min(len(rule_ids), 84)),
+        "rule_ids": values.get("rule_ids") or rule_ids[: min(len(rule_ids), 84)],
+        "cases": cases_value,
+        "casepacks": values.get("casepacks") or [],
+        "mode": str(values.get("mode") or safe_mode),
+        "safe_mode": safe_mode,
+        "mcp_policy": str(values.get("mcp_policy") or values.get("stdio_mcp") or "per-server-consent"),
+        "remote_analysis": bool(values.get("remote_analysis", False)),
+        "report_formats": values.get("report_formats") or ["HTML", "JSON"],
+        "max_parallel_jobs": coerce_positive_int(values.get("max_parallel_jobs"), default=2),
+        "timeout_seconds": coerce_positive_int(values.get("timeout_seconds"), default=7200),
+        "evidence_redaction": str(values.get("evidence_redaction") or "structured"),
+        "raw_sensitive_evidence": str(values.get("raw_sensitive_evidence") or "do-not-store"),
+        "version": str(values.get("version") or "4.1.0-draft"),
+        "status": str(values.get("status") or "DRAFT"),
+        "source_profile_id": values.get("source_profile_id", ""),
+        "mutates_installed_agents": False,
+        "created_at": values.get("created_at") or utc_now(),
+        "updated_at": utc_now(),
+    }
+    return record
+
+
+def stable_profile_id(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", name.strip()).strip("-").lower()
+    if slug:
+        return slug[:80]
+    return "prof_" + stable_hash(name, 16)
+
+
+def normalize_profile_safe_mode(value: str) -> str:
+    text = value.lower().replace("_", "-")
+    if "dry" in text:
+        return "dry-run"
+    if "sandbox" in text:
+        return "sandbox"
+    return "local-readonly"
+
+
+def coerce_positive_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, str):
+        match = re.search(r"\d+", value)
+        if not match:
+            return default
+        value = match.group(0)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, parsed)
+
+
+def validate_assessment_profile(store: Any, state: dict, profile_id: str) -> dict:
+    raw = resolve_assessment_profile(store, state, profile_id)
+    errors: list[str] = []
+    warnings: list[str] = []
+    if raw is None:
+        errors.append("profile not found")
+        raw = {"id": profile_id, "name": profile_id}
+    profile = normalize_assessment_profile(raw)
+
+    if not str(profile.get("name") or "").strip():
+        errors.append("name is required")
+    if coerce_positive_int(profile.get("rules_count"), 0) <= 0 and not profile.get("rule_ids"):
+        errors.append("at least one rule is required")
+    if profile.get("safe_mode") not in {"local-readonly", "dry-run", "sandbox"}:
+        errors.append("safe_mode must be local-readonly, dry-run, or sandbox")
+    if profile.get("mcp_policy") not in {"per-server-consent", "never-start"}:
+        errors.append("mcp_policy must be per-server-consent or never-start")
+    if profile.get("remote_analysis"):
+        warnings.append("remote_analysis is enabled; enterprise local mode should keep cloud analysis disabled unless explicitly approved")
+    if profile.get("raw_sensitive_evidence") != "do-not-store":
+        warnings.append("raw_sensitive_evidence should remain do-not-store for default enterprise delivery")
+    if not profile.get("report_formats"):
+        errors.append("at least one report format is required")
+    if coerce_positive_int(profile.get("max_parallel_jobs"), 0) < 1 or coerce_positive_int(profile.get("max_parallel_jobs"), 0) > 8:
+        errors.append("max_parallel_jobs must be between 1 and 8")
+    if coerce_positive_int(profile.get("timeout_seconds"), 0) < 60:
+        warnings.append("timeout_seconds below 60 may interrupt real scans")
+
+    status = "FAIL" if errors else ("WARN" if warnings else "PASS")
+    result = {
+        "id": new_id("pval"),
+        "profile_id": profile.get("id") or profile_id,
+        "status": status,
+        "validation_errors": errors,
+        "warnings": warnings,
+        "checks": [
+            {"id": "profile.name", "status": "PASS" if profile.get("name") else "FAIL"},
+            {"id": "profile.rules", "status": "PASS" if coerce_positive_int(profile.get("rules_count"), 0) > 0 or profile.get("rule_ids") else "FAIL"},
+            {"id": "profile.safe_mode", "status": "PASS" if profile.get("safe_mode") in {"local-readonly", "dry-run", "sandbox"} else "FAIL"},
+            {"id": "profile.mcp_policy", "status": "PASS" if profile.get("mcp_policy") in {"per-server-consent", "never-start"} else "FAIL"},
+            {"id": "profile.redaction", "status": "PASS" if profile.get("raw_sensitive_evidence") == "do-not-store" else "WARN"},
+        ],
+        "safe_mode": profile.get("safe_mode"),
+        "remote_analysis": bool(profile.get("remote_analysis")),
+        "mutates_installed_agents": False,
+        "checked_at": utc_now(),
+    }
+    artifact_payload = {
+        "schema": "agent-security-assessment-profile-validation@4.1",
+        "profile": sanitize_profile_for_export(profile),
+        "validation": result,
+        "boundary": "模板校验只检查本系统 profile 配置，不启动扫描、不修改已安装 Agent。",
+    }
+    artifact = store.write_artifact(
+        "assessment-profile-validation",
+        json.dumps(artifact_payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"profile_id": str(profile.get("id") or profile_id), "safe_mode": "local-readonly"},
+    )
+    result["artifact"] = artifact
+    result["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    store.upsert_record(
+        "compatibility_test",
+        {
+            **result,
+            "subject_type": "assessment_profile",
+            "subject_id": profile.get("id") or profile_id,
+            "fixture": "profile-policy",
+            "result_json": result,
+            "run_at": result["checked_at"],
+        },
+        status=status,
+    )
+    updated_profile = dict(profile)
+    updated_profile["validation_status"] = status
+    updated_profile["validation_errors"] = errors
+    updated_profile["validation_warnings"] = warnings
+    updated_profile["last_validated_at"] = result["checked_at"]
+    updated_profile["last_validation_artifact_id"] = artifact["id"]
+    store.upsert_record("assessment_profile", updated_profile, status=str(updated_profile.get("status") or "DRAFT"))
+    merge_state_record(state, "profiles", updated_profile)
+    store.audit_event("post.profiles.validate", "assessment_profile", str(profile.get("id") or profile_id), {"status": status, "errors": len(errors), "warnings": len(warnings), "artifact_id": artifact["id"]})
+    return result
+
+
+def latest_profile_validation(store: Any, profile_id: str) -> dict | None:
+    tests = [
+        item
+        for item in store.list_records("compatibility_test", limit=500)
+        if item.get("subject_type") == "assessment_profile" and str(item.get("subject_id")) == str(profile_id)
+    ]
+    return tests[0] if tests else None
+
+
+def sanitize_profile_for_export(profile: dict) -> dict:
+    allowed = {
+        "id",
+        "name",
+        "desc",
+        "rules",
+        "rules_count",
+        "cases",
+        "mode",
+        "safe_mode",
+        "mcp_policy",
+        "remote_analysis",
+        "report_formats",
+        "max_parallel_jobs",
+        "timeout_seconds",
+        "evidence_redaction",
+        "raw_sensitive_evidence",
+        "version",
+        "status",
+        "mutates_installed_agents",
+    }
+    return {key: profile.get(key) for key in allowed if key in profile}
+
+
 def validate_redteam_case(store: Any, state: dict, case_id: str) -> dict:
     case = store.get_record("redteam_case", case_id) or find_item(state.get("caseLibrary", []), case_id) or find_item(state.get("redCases", []), case_id)
     errors: list[str] = []
@@ -4956,6 +5192,7 @@ def runtime_state() -> dict:
         if path == "/rules" and not real_items:
             real_items = rule_catalog()
         state[key] = enrich_items(key, real_items)
+    state["profiles"] = combine_items(real_items_for_path("/profiles"), state.get("profiles", []))
 
     state["completeness"] = completeness_rows()
     state["sqliteStatus"] = store.database_status()

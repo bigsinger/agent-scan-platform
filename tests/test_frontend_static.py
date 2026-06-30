@@ -66,3 +66,21 @@ def test_dashboard_health_self_test_ui_is_api_backed():
     assert "healthSelfTestResult" in html
     assert "async runHealthSelfTest" in app_js
     assert "/api/v1/health/self-test" in app_js
+
+
+def test_profile_template_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "已创建模板草稿" not in html
+    assert "模板详情已打开" not in html
+    assert "@click=\"createProfileDraft\"" in html
+    assert "@click=\"cloneProfile(p)\"" in html
+    assert "@click=\"openProfile(p)\"" in html
+    assert "@click=\"validateProfile(p)\"" in html
+    assert "@click=\"publishProfile(selectedProfile)\"" in html
+    assert "async createProfileDraft" in app_js
+    assert "async cloneProfile" in app_js
+    assert "async openProfile" in app_js
+    assert "async validateProfile" in app_js
+    assert "async publishProfile" in app_js
+    assert "/api/v1/profiles" in app_js

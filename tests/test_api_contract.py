@@ -54,6 +54,58 @@ def test_system_health_self_test_is_real_and_persists_artifact(monkeypatch, tmp_
     assert store.get_record("artifact", payload["artifact"]["id"]) is not None
 
 
+def test_assessment_profile_lifecycle_is_api_backed_and_audited(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "profiles.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    created = client.post(
+        "/api/v1/profiles",
+        json={
+            "name": "enterprise-local-template",
+            "desc": "enterprise local readonly profile",
+            "rules": 84,
+            "cases": 0,
+            "safe_mode": "local-readonly",
+            "mcp_policy": "per-server-consent",
+            "remote_analysis": False,
+            "report_formats": ["HTML", "JSON"],
+        },
+    )
+    assert created.status_code == 200
+    profile = created.json()["profile"]
+    assert profile["status"] == "DRAFT"
+    assert profile["mutates_installed_agents"] is False
+    assert store.get_record("assessment_profile", profile["id"]) is not None
+
+    validated = client.post(f"/api/v1/profiles/{profile['id']}/validate", json={})
+    assert validated.status_code == 200
+    validation = validated.json()["validation"]
+    assert validation["status"] == "PASS"
+    assert validation["mutates_installed_agents"] is False
+    assert "fixture" not in validation
+    assert validation["artifact"]["kind"] == "assessment-profile-validation"
+    assert store.get_record("compatibility_test", validation["id"]) is not None
+    assert store.get_record("artifact", validation["artifact"]["id"]) is not None
+
+    cloned = client.post(f"/api/v1/profiles/{profile['id']}/clone", json={})
+    assert cloned.status_code == 200
+    clone = cloned.json()["profile"]
+    assert clone["status"] == "DRAFT"
+    assert clone["source_profile_id"] == profile["id"]
+
+    published = client.post(f"/api/v1/profiles/{clone['id']}/publish", json={})
+    assert published.status_code == 200
+    assert published.json()["status"] == "PUBLISHED"
+    assert published.json()["validation"]["status"] == "PASS"
+    assert published.json()["profile"]["status"] == "已发布"
+
+    detail = client.get(f"/api/v1/profiles/{clone['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["item"]["id"] == clone["id"]
+    assert detail.json()["validation"]["subject_type"] == "assessment_profile"
+
+
 def test_empty_runtime_state_does_not_expose_prototype_seed(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "empty-runtime.db")
     store.initialize()
