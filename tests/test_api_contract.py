@@ -24,6 +24,36 @@ def test_core_health_and_dashboard():
     assert "guard" in dashboard.json()
 
 
+def test_system_health_self_test_is_real_and_persists_artifact(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "system-health.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.post("/api/v1/health/self-test", json={})
+    assert response.status_code == 200
+    payload = response.json()["self_test"]
+
+    assert payload["status"] == "PASS"
+    assert payload["schema"] == "agent-security-system-health-self-test@4.1"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["safety_boundary"]["agent_runtime_started"] is False
+    assert payload["safety_boundary"]["stdio_mcp_started"] is False
+    assert "fixture" not in payload
+    assert {check["id"] for check in payload["checks"]} >= {
+        "sqlite_status",
+        "sqlite_integrity",
+        "static_assets",
+        "rule_catalog",
+        "execution_supervisor",
+        "agent_safety_boundary",
+        "artifact_write",
+    }
+    assert payload["artifact"]["kind"] == "system-health-self-test"
+    assert payload["download"].endswith("/download")
+    assert store.get_record("system_health_check", payload["id"]) is not None
+    assert store.get_record("artifact", payload["artifact"]["id"]) is not None
+
+
 def test_empty_runtime_state_does_not_expose_prototype_seed(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "empty-runtime.db")
     store.initialize()

@@ -77,7 +77,12 @@ http://127.0.0.1:8000/assessment
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+$selfTest = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
+$selfTest.self_test.status
+$selfTest.self_test.download
 ```
+
+`/api/v1/health/self-test` 会执行企业 POC 前建议的本地控制面自检：SQLite 状态、SQLite 完整性、本地静态资源、规则目录、执行中心和 artifact 写入能力。该接口只写本系统 SQLite 与 `data/artifacts/system-health-self-test`，不会启动或修改 Codex、Hermes、Claude Code、Cursor、MCP Server 或任何已安装 Agent。
 
 只读 Guard 检查：
 

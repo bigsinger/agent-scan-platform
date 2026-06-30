@@ -103,6 +103,7 @@ data(){
     initial.settingsValidation = [];
     initial.settingsTestResult = null;
     initial.settingsImportText = '';
+    initial.healthSelfTestResult = null;
     initial.opsBusy = false;
     return initial;
   },
@@ -399,6 +400,17 @@ data(){
         const res=await this.apiPost('/api/v1/execution-supervisor/normal-mode', {reason:'local operator resumed from UI'});
         this.applyExecutionSupervisor(res);
         this.toastMsg('已退出执行安全模式：恢复领取新 Job');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async runHealthSelfTest(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/health/self-test', {});
+        this.healthSelfTestResult=res.self_test || null;
+        if(this.healthSelfTestResult && this.healthSelfTestResult.sqlite) this.sqliteStatus=Object.assign({}, this.sqliteStatus || {}, this.healthSelfTestResult.sqlite);
+        if(this.healthSelfTestResult && this.healthSelfTestResult.executor) this.supervisorStatus=this.healthSelfTestResult.executor;
+        this.toastMsg('系统自检完成：'+(this.healthSelfTestResult && this.healthSelfTestResult.status || 'UNKNOWN'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },

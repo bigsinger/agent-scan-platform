@@ -120,6 +120,14 @@ async def health() -> dict:
     }
 
 
+@router.post("/health/self-test")
+async def health_self_test() -> dict:
+    store = get_store()
+    state = runtime_state()
+    self_test = system_health_self_test(store, state)
+    return {"ok": True, "self_test": self_test}
+
+
 @router.get("/version")
 async def version() -> dict:
     return {
@@ -1112,6 +1120,169 @@ def executor_health(state: dict) -> dict:
         "external_process_signal_sent": False,
         "refreshed_at": utc_now(),
     }
+
+
+def system_health_self_test(store: Any, state: dict) -> dict:
+    checked_at = utc_now()
+    run_id = new_id("hck")
+    checks: list[dict] = []
+    db_status: dict[str, Any] = {}
+    integrity: dict[str, Any] = {}
+
+    try:
+        db_status = store.database_status()
+        checks.append(
+            health_check(
+                "sqlite_status",
+                "PASS" if db_status.get("state") == "健康" else "FAIL",
+                "SQLite 状态",
+                f"{db_status.get('mode', 'UNKNOWN')} · {db_status.get('state', 'UNKNOWN')}",
+                {"path": db_status.get("path"), "tables": len(db_status.get("tables", []))},
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive health reporting
+        checks.append(health_check("sqlite_status", "FAIL", "SQLite 状态", redact_text(str(exc), max_len=300)))
+
+    try:
+        integrity = store.integrity_check()
+        checks.append(
+            health_check(
+                "sqlite_integrity",
+                integrity.get("status") or "FAIL",
+                "SQLite 完整性",
+                str(integrity.get("result") or "unknown"),
+                {"result": integrity.get("result")},
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive health reporting
+        checks.append(health_check("sqlite_integrity", "FAIL", "SQLite 完整性", redact_text(str(exc), max_len=300)))
+
+    static_assets = verify_static_assets()
+    checks.append(
+        health_check(
+            "static_assets",
+            "PASS" if all(item["exists"] and item["size"] > 0 for item in static_assets) else "FAIL",
+            "本地静态资源",
+            f"{sum(1 for item in static_assets if item['exists'])}/{len(static_assets)} 个文件可用",
+            {"assets": static_assets},
+        )
+    )
+
+    rules = rule_catalog()
+    checks.append(
+        health_check(
+            "rule_catalog",
+            "PASS" if rules else "FAIL",
+            "规则目录",
+            f"{len(rules)} 条本地规则可用",
+            {"rules": len(rules)},
+        )
+    )
+
+    supervisor = executor_health(state)
+    checks.append(
+        health_check(
+            "execution_supervisor",
+            "PASS" if supervisor.get("status") in {"ok", "safe_mode"} else "FAIL",
+            "执行中心",
+            f"{supervisor.get('state')} · queue={supervisor.get('queue', 0)}",
+            {"safe_mode": supervisor.get("safe_mode"), "process_count": supervisor.get("process_count")},
+        )
+    )
+
+    safety_boundary = {
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "network_required": False,
+    }
+    checks.append(
+        health_check(
+            "agent_safety_boundary",
+            "PASS",
+            "Agent 安全边界",
+            "只检查本系统控制面，不启动或改写 Codex/Hermes/其他 Agent",
+            safety_boundary,
+        )
+    )
+    checks.append(health_check("artifact_write", "PASS", "Artifact 写入", "自检结果将写入 data/artifacts", {"kind": "system-health-self-test"}))
+
+    status = aggregate_health_status(checks)
+    payload = {
+        "schema": "agent-security-system-health-self-test@4.1",
+        "id": run_id,
+        "status": status,
+        "checked_at": checked_at,
+        "checks": checks,
+        "sqlite": {"state": db_status.get("state"), "mode": db_status.get("mode"), "file_bytes": db_status.get("file_bytes")},
+        "integrity": integrity,
+        "executor": supervisor,
+        "rules": {"count": len(rules)},
+        "static_assets": static_assets,
+        "safety_boundary": safety_boundary,
+        "boundary": "系统自检只访问本系统 SQLite、静态资源、规则目录和 artifact 写入能力；不会启动或修改已安装 Agent。",
+    }
+
+    artifact: dict[str, Any] | None = None
+    try:
+        artifact = store.write_artifact(
+            "system-health-self-test",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            suffix="json",
+            metadata={"self_test_id": run_id, "safe_mode": "local-readonly"},
+        )
+        payload["artifact"] = artifact
+        payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    except Exception as exc:  # pragma: no cover - defensive health reporting
+        for check in checks:
+            if check["id"] == "artifact_write":
+                check.update({"status": "FAIL", "detail": redact_text(str(exc), max_len=300)})
+        payload["status"] = aggregate_health_status(checks)
+
+    record = {
+        **payload,
+        "id": run_id,
+        "artifact_id": artifact.get("id") if artifact else "",
+        "artifact_path": artifact.get("relative_path") if artifact else "",
+        "mutates_installed_agents": False,
+    }
+    store.upsert_record("system_health_check", record, status=record["status"])
+    store.audit_event(
+        "post.health.self_test",
+        "system_health_check",
+        run_id,
+        {"status": record["status"], "artifact_id": record.get("artifact_id"), "mutates_installed_agents": False},
+    )
+    return record
+
+
+def health_check(check_id: str, status: str, title: str, detail: str, evidence: dict | None = None) -> dict:
+    return {"id": check_id, "status": status, "title": title, "detail": detail, "evidence": evidence or {}, "checked_at": utc_now()}
+
+
+def aggregate_health_status(checks: list[dict]) -> str:
+    statuses = {str(check.get("status") or "").upper() for check in checks}
+    if "FAIL" in statuses:
+        return "FAIL"
+    if "WARN" in statuses:
+        return "WARN"
+    return "PASS"
+
+
+def verify_static_assets() -> list[dict]:
+    assets = [
+        "src/assessment/static/assessment/index.html",
+        "src/assessment/static/assessment/app.js",
+        "src/assessment/static/assessment/style.css",
+        "src/assessment/static/vendor/vue.global.prod.js",
+        "src/assessment/static/vendor/vendor-manifest.json",
+    ]
+    result = []
+    for rel in assets:
+        path = REPO_ROOT / rel
+        result.append({"path": rel, "exists": path.exists(), "size": path.stat().st_size if path.exists() else 0})
+    return result
 
 
 def refresh_execution_supervisor(store: Any) -> dict:

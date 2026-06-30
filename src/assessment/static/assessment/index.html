@@ -80,12 +80,18 @@
     <div class="card">
       <div class="card-head"><h2>运行健康</h2><button class="btn sm" @click="go('execution')">执行中心</button></div>
       <table><thead><tr><th>组件</th><th>版本/实例</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        <tr><td>FastAPI Control</td><td>1 process</td><td><span class="badge low">健康</span></td><td><button class="btn sm" @click="toastMsg('健康检查通过')">自检</button></td></tr>
+        <tr><td>FastAPI Control</td><td>1 process</td><td><span :class="['badge',statusClass(healthSelfTestResult&&healthSelfTestResult.status||'PASS')]">{{healthSelfTestResult&&healthSelfTestResult.status||'健康'}}</span></td><td><button class="btn sm" :disabled="opsBusy" @click="runHealthSelfTest">自检</button></td></tr>
         <tr><td>TaskSupervisor</td><td>2/2 slots</td><td><span class="badge low">健康</span></td><td><button class="btn sm" @click="go('execution')">详情</button></td></tr>
         <tr><td>agent-scan Bridge</td><td>0.5.12</td><td><span class="badge low">固定</span></td><td><button class="btn sm" @click="go('agent-scan')">兼容</button></td></tr>
         <tr><td>SQLite WAL</td><td>schema 4</td><td><span class="badge low">健康</span></td><td><button class="btn sm" @click="go('sqlite')">维护</button></td></tr>
         <tr><td>Snyk Cloud Analysis</td><td>optional</td><td><span class="badge gray">关闭</span></td><td><button class="btn sm" @click="go('agent-scan')">边界</button></td></tr>
       </tbody></table>
+      <div v-if="healthSelfTestResult" :class="['callout',healthSelfTestResult.status==='PASS'?'green':healthSelfTestResult.status==='FAIL'?'red':'amber']">
+        <b>最近自检：</b>{{healthSelfTestResult.status}} · {{healthSelfTestResult.checked_at}}
+        <div class="chips" style="margin-top:8px"><span v-for="c in healthSelfTestResult.checks" :class="['badge',statusClass(c.status)]">{{c.title}}：{{c.status}}</span></div>
+        <div class="tiny muted" style="margin-top:8px">边界：{{healthSelfTestResult.boundary}}</div>
+        <a v-if="healthSelfTestResult.download" class="link" :href="healthSelfTestResult.download" target="_blank" rel="noopener">下载自检 artifact</a>
+      </div>
     </div>
   </div>
 

@@ -23,6 +23,37 @@ http://127.0.0.1:8000/assessment
 
 `tests\fixtures\sample_agent_project` 仍保留为开发和回归测试样本，不作为企业客户默认验收入口。
 
+## 1.1 系统自检
+
+位置：
+
+```text
+左侧导航 → 测评总览 → 运行健康 → FastAPI Control 自检
+```
+
+用途：
+
+- 检查 SQLite 状态与 `PRAGMA integrity_check`。
+- 检查本地 Vue、CSS、vendor manifest 等静态资源是否存在。
+- 检查本地规则目录是否可加载。
+- 检查执行中心状态。
+- 验证本系统 `data/artifacts` 写入能力并生成自检 JSON artifact。
+
+安全边界：
+
+1. 不启动 Codex、Hermes、Claude Code、Cursor 或其他已安装 Agent。
+2. 不启动 stdio MCP Server。
+3. 不修改任何 Agent 配置、Skill 文件或安装目录。
+4. 只写入本系统 SQLite、审计事件和 `data/artifacts/system-health-self-test` JSON artifact。
+
+命令行方式：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
+```
+
+返回 `PASS` 表示本地控制面、SQLite、静态资源、规则目录和 artifact 写入链路可用；返回 `WARN` 或 `FAIL` 时优先查看 `checks` 明细和下载的 artifact。
+
 ## 2. 可以扫描什么
 
 支持目标：

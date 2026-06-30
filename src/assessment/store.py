@@ -236,6 +236,7 @@ GENERIC_TABLES = [
     "guard_event",
     "defense_recommendation",
     "module_setting",
+    "system_health_check",
 ]
 
 ALLOWED_TABLES = set(GENERIC_TABLES)
