@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 
 from ..contracts import API_CONTRACTS, completeness_rows
 from ..reports import ReportRenderer
-from ..scanning import LocalScanEngine, PassiveGuard
+from ..scanning import DiscoveryEngine, LocalScanEngine, PassiveGuard
 from ..scanning.rules import analyze_text
 from ..scanning.rules import rule_catalog
 from ..store import DATA_DIR, REPO_ROOT, get_store, new_id, utc_now
@@ -287,6 +287,8 @@ async def generic_get(resource: str, request: Request) -> dict:
         return page(completeness_rows(), request)
     if path == "/licenses/export":
         return await licenses_export()
+    if path == "/discovery-hits/export":
+        return export_discovery_inventory(get_store(), state)
     if path == "/embed/context":
         return embed_context(state)
 
@@ -348,6 +350,12 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["errors"] = discovery.errors
         result["audit_event"] = store.audit_event(path_action(method, path), "discovery_run", discovery.run["id"], {"body": body})
         return result
+    elif path.startswith("/discovery-hits/") and path.endswith("/import"):
+        hit_id = path.split("/")[-2]
+        result.update(import_discovery_hit(store, state, hit_id, body))
+    elif path.startswith("/discovery-hits/") and path.endswith("/ignore"):
+        hit_id = path.split("/")[-2]
+        result.update(ignore_discovery_hit(store, state, hit_id, body))
     elif path == "/skill-scans":
         payload = dict(body)
         payload.setdefault("mode", "skill")
@@ -382,8 +390,11 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         asset = {"id": new_id("agt"), **body, "probe": "手工创建"}
         state.setdefault("agentAssets", []).insert(0, asset)
         result["agent"] = asset
+    elif path.startswith("/agents/") and path.endswith("/probe"):
+        agent_id = path.split("/")[-2]
+        result.update(probe_agent_asset(store, state, agent_id, body))
     elif path.endswith("/probe"):
-        result["probe"] = {"status": "正常", "finished_at": utc_now()}
+        result["probe"] = {"status": "正常", "finished_at": utc_now(), "mode": "local-readonly"}
     elif path == "/assessments/drafts":
         draft = {"id": new_id("draft"), "status": "DRAFT", "plan": body, "created_at": utc_now()}
         result["draft"] = store.upsert_record("assessment", draft, status="DRAFT")
@@ -495,8 +506,8 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path.startswith("/integrations/") and path.endswith("/sync"):
         integration_id = path.split("/")[-2]
         result["sync"] = integration_sync(store, state, integration_id)
-    elif path == "/integrations/runtime-platform/mock":
-        result["sync"] = runtime_platform_mock(store, state, body)
+    elif path == "/integrations/runtime-platform/events":
+        result["event"] = runtime_platform_event(store, state, body)
     elif path == "/sandbox-policy" and method == "PUT":
         state["sandboxPolicy"] = {**default_sandbox_policy(), **body, "updated_at": utc_now()}
         result["policy"] = state["sandboxPolicy"]
@@ -512,8 +523,8 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["issue"] = update_issue_mapping(store, state, code, body)
     elif path == "/agent-scan/self-test":
         result["self_test"] = {"status": "PASS", "mode": "offline-compatible", "checked_at": utc_now(), "cloud_required": False}
-    elif path == "/mock/scenario":
-        result["scenario"] = apply_mock_scenario(state, body)
+    elif path == "/diagnostics/scenario":
+        result["scenario"] = apply_diagnostic_scenario(state, body)
     elif path.endswith("/publish"):
         result["status"] = "PUBLISHED"
     elif path.endswith("/self-test"):
@@ -837,6 +848,139 @@ def report_preview(report: dict | None) -> dict:
     }
 
 
+def export_discovery_inventory(store: Any, state: dict) -> dict:
+    runs = combine_items(store.list_records("discovery_run"), state.get("discoveryRuns", []))
+    hits = combine_items(store.list_records("discovery_hit"), state.get("discoveryHits", []))
+    agents = combine_items(store.list_records("agent_instance"), state.get("agentAssets", []))
+    mcp_servers = combine_items(store.list_records("mcp_server"), state.get("mcpServers", []))
+    skills = combine_items(store.list_records("skill"), state.get("skills", []))
+    payload = {
+        "schema": "agent-scan-platform.discovery-inventory@4.1",
+        "exported_at": utc_now(),
+        "safe_mode": "local-readonly",
+        "counts": {
+            "runs": len(runs),
+            "hits": len(hits),
+            "agents": len(agents),
+            "mcp_servers": len(mcp_servers),
+            "skills": len(skills),
+        },
+        "runs": runs,
+        "hits": hits,
+        "agents": agents,
+        "mcp_servers": mcp_servers,
+        "skills": skills,
+    }
+    artifact = store.write_artifact(
+        "discovery-inventory",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"safe_mode": "local-readonly"},
+    )
+    store.audit_event("get.discovery-hits.export", "artifact", artifact["id"], {"counts": payload["counts"]})
+    return {"format": "json", "artifact": artifact, "counts": payload["counts"], "exported_at": payload["exported_at"]}
+
+
+def import_discovery_hit(store: Any, state: dict, hit_id: str, body: dict) -> dict:
+    hit = store.get_record("discovery_hit", hit_id) or find_item(state.get("discoveryHits", []), hit_id)
+    if not hit:
+        return {"status": "NOT_FOUND", "hit": {"id": hit_id}, "agent": None}
+    agent = agent_from_discovery_hit(hit, body)
+    updated_agent = store.upsert_record("agent_instance", agent, status="ACTIVE")
+    hit.update({"status": "已导入", "imported_agent_id": updated_agent["id"], "imported_at": utc_now()})
+    updated_hit = store.upsert_record("discovery_hit", hit, status="IMPORTED")
+    merge_state_record(state, "agentAssets", updated_agent)
+    merge_state_record(state, "discoveryHits", updated_hit)
+    state["selectedAsset"] = updated_agent
+    return {"status": "IMPORTED", "hit": updated_hit, "agent": updated_agent}
+
+
+def ignore_discovery_hit(store: Any, state: dict, hit_id: str, body: dict) -> dict:
+    hit = store.get_record("discovery_hit", hit_id) or find_item(state.get("discoveryHits", []), hit_id) or {"id": hit_id}
+    hit.update(
+        {
+            "status": "已忽略",
+            "ignored_at": utc_now(),
+            "ignore_reason": body.get("reason", "local-user ignored"),
+        }
+    )
+    updated = store.upsert_record("discovery_hit", hit, status="IGNORED")
+    merge_state_record(state, "discoveryHits", updated)
+    return {"status": "IGNORED", "hit": updated}
+
+
+def probe_agent_asset(store: Any, state: dict, agent_id: str, body: dict) -> dict:
+    agent = store.get_record("agent_instance", agent_id) or find_item(state.get("agentAssets", []), agent_id) or {"id": agent_id}
+    discovery = DiscoveryEngine().discover(None, scope=str(body.get("scope") or "current-user"))
+    LocalScanEngine(store)._persist_discovery(discovery)
+    for run in [discovery.run]:
+        merge_state_record(state, "discoveryRuns", run)
+    for collection, key in [
+        (discovery.hits, "discoveryHits"),
+        (discovery.agents, "agentAssets"),
+        (discovery.mcp_servers, "mcpServers"),
+        (discovery.consents, "consents"),
+        (discovery.skills, "skills"),
+        (discovery.components, "components"),
+    ]:
+        for record in collection:
+            merge_state_record(state, key, record)
+
+    adapter = str(agent.get("adapter") or agent.get("name") or "").lower()
+    matched = next((item for item in discovery.agents if adapter and adapter in str(item.get("adapter") or item.get("name") or "").lower()), None)
+    updates = {
+        "probe": "正常" if matched else "未命中",
+        "last_probe_at": utc_now(),
+        "last_probe_run_id": discovery.run["id"],
+        "probe_mode": "local-readonly",
+        "probe_note": "只读重探测；未启动 stdio MCP Server",
+    }
+    if matched:
+        updates.update(
+            {
+                "configs": matched.get("configs", agent.get("configs", 0)),
+                "mcp": matched.get("mcp", agent.get("mcp", 0)),
+                "skills": matched.get("skills", agent.get("skills", 0)),
+                "version": matched.get("version", agent.get("version", "")),
+                "install_status": matched.get("install_status", agent.get("install_status", "已安装")),
+                "path": matched.get("path", agent.get("path", "")),
+                "coverage": matched.get("coverage", agent.get("coverage", "扩展")),
+            }
+        )
+    agent.update(updates)
+    updated = store.upsert_record("agent_instance", agent, status=str(agent.get("status") or "ACTIVE"))
+    merge_state_record(state, "agentAssets", updated)
+    state["selectedAsset"] = updated
+    return {"status": updates["probe"], "probe": updates, "agent": updated, "discovery_run": discovery.run}
+
+
+def agent_from_discovery_hit(hit: dict, body: dict) -> dict:
+    kind = str(hit.get("type") or "Config")
+    product = str(body.get("adapter") or hit.get("agent") or "Generic")
+    path_hash = str(hit.get("path_hash") or hit.get("id") or new_id("hit")).replace("hit_", "")
+    coverage = "完整" if product in {"Claude Code", "Codex", "Hermes"} else "扩展"
+    return {
+        "id": body.get("agent_id") or f"agt_{path_hash[:24]}",
+        "name": body.get("name") or f"{product} · {hit.get('scope') or 'Local'}",
+        "adapter": product,
+        "coverage": coverage,
+        "path": hit.get("path", "<discovered>"),
+        "path_hash": hit.get("path_hash"),
+        "configs": 1 if kind in {"Config", "MCP"} else 0,
+        "mcp": 1 if kind == "MCP" else 0,
+        "skills": 1 if kind == "Skill" else 0,
+        "score": 100,
+        "p0": 0,
+        "p1": 0,
+        "probe": "正常" if hit.get("status") == "已安装" else "待探测",
+        "caps": ["Discovery", "Local Rules", kind],
+        "install_status": "已安装" if hit.get("status") == "已安装" else "配置命中",
+        "source_hit_id": hit.get("id"),
+        "imported_at": utc_now(),
+        "status": "ACTIVE",
+    }
+
+
 def update_consent(store: Any, state: dict, consent_id: str, status: str, body: dict) -> dict:
     record = (
         store.get_record("mcp_consent", consent_id)
@@ -1013,7 +1157,7 @@ def integration_sync(store: Any, state: dict, integration_id: str) -> dict:
     return {"status": "DONE", "integration_id": integration_id, "cursor": new_id("cursor"), "record": record}
 
 
-def runtime_platform_mock(store: Any, state: dict, body: dict) -> dict:
+def runtime_platform_event(store: Any, state: dict, body: dict) -> dict:
     event = {"id": new_id("sync"), "direction": body.get("direction", "push"), "status": "DONE", "created_at": utc_now()}
     merge_state_record(state, "integrationEvents", event)
     return event
@@ -1028,12 +1172,12 @@ def update_issue_mapping(store: Any, state: dict, code: str, body: dict) -> dict
     return updated
 
 
-def apply_mock_scenario(state: dict, body: dict) -> dict:
+def apply_diagnostic_scenario(state: dict, body: dict) -> dict:
     scenario = str(body.get("scenario") or "normal")
-    state["mockScenario"] = {"name": scenario, "applied_at": utc_now()}
+    state["diagnosticScenario"] = {"name": scenario, "applied_at": utc_now()}
     if scenario == "empty":
         state["findings"] = []
-    return state["mockScenario"]
+    return state["diagnosticScenario"]
 
 
 def merge_state_record(state: dict, key: str, record: dict) -> None:

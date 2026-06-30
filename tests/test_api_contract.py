@@ -106,12 +106,47 @@ def test_capability_management_actions_are_persisted():
     assert integration_test.json()["test"]["status"] == "PASS"
     integration_sync = client.post("/api/v1/integrations/runtime-platform/sync", json={})
     assert integration_sync.json()["sync"]["status"] == "DONE"
+    platform_event = client.post("/api/v1/integrations/runtime-platform/events", json={"direction": "push"})
+    assert platform_event.json()["event"]["status"] == "DONE"
 
     settings = client.put("/api/v1/settings", json={"default_profile": "standard-complete", "timezone": "Asia/Shanghai"})
     assert settings.json()["settings"]["default_profile"] == "standard-complete"
     assert client.post("/api/v1/settings/test", json={}).json()["test"]["status"] == "PASS"
+    assert client.post("/api/v1/diagnostics/scenario", json={"scenario": "normal"}).json()["scenario"]["name"] == "normal"
     assert client.get("/api/v1/licenses/export").json()["format"] == "notice-json"
     assert client.get("/api/v1/completeness/export").json()["format"] == "json"
+
+
+def test_discovery_hit_asset_actions_are_persisted():
+    discovery = client.post(
+        "/api/v1/discovery-runs",
+        json={"path": "tests/fixtures/sample_agent_project", "scope": "fixture"},
+    )
+    assert discovery.status_code == 200
+    hit = discovery.json()["hits"][0]
+
+    imported = client.post(f"/api/v1/discovery-hits/{hit['id']}/import", json={})
+    assert imported.status_code == 200
+    assert imported.json()["status"] == "IMPORTED"
+    agent = imported.json()["agent"]
+    assert agent["source_hit_id"] == hit["id"]
+    assert agent["status"] == "ACTIVE"
+
+    probe = client.post(f"/api/v1/agents/{agent['id']}/probe", json={})
+    assert probe.status_code == 200
+    assert probe.json()["probe"]["probe_mode"] == "local-readonly"
+    assert probe.json()["agent"]["last_probe_at"]
+
+    ignored = client.post(f"/api/v1/discovery-hits/{hit['id']}/ignore", json={"reason": "contract test"})
+    assert ignored.status_code == 200
+    assert ignored.json()["status"] == "IGNORED"
+    assert ignored.json()["hit"]["status"] == "已忽略"
+
+    exported = client.get("/api/v1/discovery-hits/export")
+    assert exported.status_code == 200
+    assert exported.json()["format"] == "json"
+    assert exported.json()["artifact"]["relative_path"].endswith(".json")
+    assert exported.json()["counts"]["hits"] >= 1
 
 
 def test_representative_spec_endpoints():

@@ -291,6 +291,16 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/settings/test
 ```
 
+发现资产运维操作只写本系统数据库和制品目录，不会修改 Codex/Hermes/Claude Code 安装目录：
+
+```powershell
+$discovery = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/discovery-runs -Body (@{ scope = "current-user" } | ConvertTo-Json) -ContentType "application/json"
+$hit = $discovery.hits[0]
+$asset = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/import"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/agents/$($asset.agent.id)/probe"
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
+```
+
 计划任务操作只写本系统 SQLite，不会直接启动已安装 Agent。立即执行会生成本地任务记录：
 
 ```powershell

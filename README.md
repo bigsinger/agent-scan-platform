@@ -70,6 +70,17 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/guard/check
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 ```
 
+发现清单与资产操作：
+
+```powershell
+$discovery = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/discovery-runs -Body (@{ scope = "current-user" } | ConvertTo-Json) -ContentType "application/json"
+$hit = $discovery.hits[0]
+$asset = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/import"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/agents/$($asset.agent.id)/probe"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/ignore" -Body (@{ reason = "本地忽略" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
+```
+
 报告与 SQLite 运维：
 
 ```powershell

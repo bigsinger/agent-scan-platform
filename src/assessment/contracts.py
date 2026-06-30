@@ -64,8 +64,8 @@ D09|报告预览|/assessment/reports/{id}/preview|详情页|prototype/pages/D09_
 D10|测评模板详情|/assessment/profiles/{id}|详情页|prototype/pages/D10_template_detail.html|specs/pages/D10_template_detail.md
 D11|规则详情|/assessment/rules/{id}|详情页|prototype/pages/D11_rule_detail.html|specs/pages/D11_rule_detail.md
 D12|扫描器详情|/assessment/scanners/{id}|详情页|prototype/pages/D12_scanner_detail.html|specs/pages/D12_scanner_detail.md
-D13|主平台嵌入演示|/assessment/embed-demo|详情页|prototype/pages/D13_platform_embed.html|specs/pages/D13_platform_embed.md
-D14|API / Mock 调试台|/assessment/api-debug|详情页|prototype/pages/D14_api_debug.html|specs/pages/D14_api_debug.md
+D13|主平台嵌入联调|/assessment/platform-embed|详情页|prototype/pages/D13_platform_embed.html|specs/pages/D13_platform_embed.md
+D14|API / 状态调试台|/assessment/api-debug|详情页|prototype/pages/D14_api_debug.html|specs/pages/D14_api_debug.md
 """.strip()
 
 
@@ -82,6 +82,9 @@ POST /api/v1/assessments
 POST /api/v1/discovery-runs
 GET /api/v1/discovery-runs/{id}
 GET /api/v1/discovery-runs/{id}/events
+GET /api/v1/discovery-hits/export
+POST /api/v1/discovery-hits/{id}/import
+POST /api/v1/discovery-hits/{id}/ignore
 GET /api/v1/agents
 GET /api/v1/agents/{id}
 POST /api/v1/agents/{id}/probe
@@ -189,9 +192,9 @@ GET /api/v1/rules/{id}
 POST /api/v1/rules/{id}/publish
 GET /api/v1/scanners/{id}
 GET /api/v1/embed/context
-POST /api/v1/integrations/runtime-platform/mock
+POST /api/v1/integrations/runtime-platform/events
 GET /api/v1/openapi.json
-POST /api/v1/mock/scenario
+POST /api/v1/diagnostics/scenario
 """.strip()
 
 
@@ -199,7 +202,7 @@ PAGE_API_MAP = {
     "P01": ["GET /api/v1/dashboard", "GET /api/v1/health", "GET /api/v1/tasks?limit=5"],
     "P02": ["POST /api/v1/quick-scans", "POST /api/v1/uploads", "GET /api/v1/quick-scans/recent"],
     "P03": ["POST /api/v1/assessments/drafts", "POST /api/v1/assessments/plan", "POST /api/v1/assessments"],
-    "P04": ["POST /api/v1/discovery-runs", "GET /api/v1/discovery-runs/{id}", "GET /api/v1/discovery-runs/{id}/events"],
+    "P04": ["POST /api/v1/discovery-runs", "GET /api/v1/discovery-runs/{id}", "GET /api/v1/discovery-hits/export", "POST /api/v1/discovery-hits/{id}/import", "POST /api/v1/discovery-hits/{id}/ignore"],
     "P05": ["GET /api/v1/agents", "GET /api/v1/agents/{id}", "POST /api/v1/agents/{id}/probe"],
     "P06": ["GET /api/v1/agents/{id}", "GET /api/v1/agents/{id}/components", "GET /api/v1/agents/{id}/snapshots"],
     "P07": ["GET /api/v1/agents/{id}/abom", "GET /api/v1/agents/{id}/abom/diff"],
@@ -242,8 +245,8 @@ PAGE_API_MAP = {
     "D10": ["GET /api/v1/profiles/{id}", "POST /api/v1/profiles/{id}/validate"],
     "D11": ["GET /api/v1/rules/{id}", "POST /api/v1/rules/{id}/test", "POST /api/v1/rules/{id}/publish"],
     "D12": ["GET /api/v1/scanners/{id}", "POST /api/v1/scanners/{id}/self-test"],
-    "D13": ["GET /api/v1/embed/context", "POST /api/v1/integrations/runtime-platform/mock"],
-    "D14": ["GET /api/v1/openapi.json", "POST /api/v1/mock/scenario"],
+    "D13": ["GET /api/v1/embed/context", "POST /api/v1/integrations/runtime-platform/events"],
+    "D14": ["GET /api/v1/openapi.json", "POST /api/v1/diagnostics/scenario"],
 }
 
 

@@ -109,7 +109,7 @@ data(){
     },
     keyForPath(path){
       if(!path || path==='/' || path==='/assessment') return 'dashboard';
-      const exact={'/assessment/quick-scan':'quick-scan','/assessment/new':'create','/assessment/discovery':'discovery','/assessment/agents':'agents','/assessment/abom':'abom','/assessment/adapters':'adapters','/assessment/profiles':'profiles','/assessment/agent-scan':'agent-scan','/assessment/tasks':'tasks','/assessment/mcp':'mcp','/assessment/mcp-consent':'consents','/assessment/consents':'consents','/assessment/skills':'skills','/assessment/redteam':'redteam','/assessment/redteam-cases':'cases','/assessment/cases':'cases','/assessment/python-exec':'execution','/assessment/execution':'execution','/assessment/sandbox':'sandbox','/assessment/findings':'findings','/assessment/evidence':'evidence','/assessment/attack-paths':'attack-paths','/assessment/reports':'reports','/assessment/retests':'retests','/assessment/rules':'rules','/assessment/scanners':'scanners','/assessment/schedules':'schedules','/assessment/integrations':'integrations','/assessment/settings':'settings','/assessment/sqlite':'sqlite','/assessment/licenses':'licenses','/assessment/completeness':'completeness','/assessment/embed-demo':'integrations','/assessment/api-debug':'completeness'};
+      const exact={'/assessment/quick-scan':'quick-scan','/assessment/new':'create','/assessment/discovery':'discovery','/assessment/agents':'agents','/assessment/abom':'abom','/assessment/adapters':'adapters','/assessment/profiles':'profiles','/assessment/agent-scan':'agent-scan','/assessment/tasks':'tasks','/assessment/mcp':'mcp','/assessment/mcp-consent':'consents','/assessment/consents':'consents','/assessment/skills':'skills','/assessment/redteam':'redteam','/assessment/redteam-cases':'cases','/assessment/cases':'cases','/assessment/python-exec':'execution','/assessment/execution':'execution','/assessment/sandbox':'sandbox','/assessment/findings':'findings','/assessment/evidence':'evidence','/assessment/attack-paths':'attack-paths','/assessment/reports':'reports','/assessment/retests':'retests','/assessment/rules':'rules','/assessment/scanners':'scanners','/assessment/schedules':'schedules','/assessment/integrations':'integrations','/assessment/settings':'settings','/assessment/sqlite':'sqlite','/assessment/licenses':'licenses','/assessment/completeness':'completeness','/assessment/platform-embed':'integrations','/assessment/api-debug':'completeness'};
       if(exact[path]) return exact[path];
       if(path.startsWith('/assessment/agents/')) return 'agent-detail';
       if(path.startsWith('/assessment/tasks/')) return 'task-detail';
@@ -273,6 +273,47 @@ data(){
         this.toastMsg('本机发现完成：'+((res.agents||[]).length)+' 个 Agent，'+((res.hits||[]).length)+' 个命中');
       } catch (err) { this.apiError = this.describeError(err); }
       finally { this.discoveryRunning=false; }
+    },
+    async exportDiscovery(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/discovery-hits/export');
+        this.downloadJson(res, 'agent-scan-platform-discovery-inventory.json');
+        this.toastMsg('发现清单已导出：'+(res.artifact&&res.artifact.id || '完成'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async importDiscoveryHit(hit){
+      if(!hit || !hit.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/discovery-hits/'+encodeURIComponent(hit.id)+'/import', {});
+        if(res.hit) this.mergeRecords('discoveryHits', [res.hit]);
+        if(res.agent){ this.mergeRecords('agentAssets', [res.agent]); this.selectedAsset=res.agent; }
+        this.toastMsg(res.status==='IMPORTED' ? '已导入资产：'+(res.agent&&res.agent.name || hit.agent) : '导入失败：未找到命中');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async ignoreDiscoveryHit(hit){
+      if(!hit || !hit.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/discovery-hits/'+encodeURIComponent(hit.id)+'/ignore', {reason:'local-user ignored'});
+        if(res.hit) this.mergeRecords('discoveryHits', [res.hit]);
+        this.toastMsg('发现命中已标记忽略：'+(hit.agent || hit.id));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async probeAgent(agent){
+      if(!agent || !agent.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/agents/'+encodeURIComponent(agent.id)+'/probe', {});
+        if(res.agent){ this.mergeRecords('agentAssets', [res.agent]); this.selectedAsset=res.agent; }
+        if(res.discovery_run){ this.mergeRecords('discoveryRuns', [res.discovery_run]); }
+        this.toastMsg('只读重探测完成：'+(res.status || (res.probe&&res.probe.status) || 'DONE'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
     },
     async runGuardCheck(){
       this.quickBusy=true; this.apiError='';

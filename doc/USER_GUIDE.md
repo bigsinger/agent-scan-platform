@@ -103,6 +103,13 @@ http://127.0.0.1:8000/assessment
 3. “MCP / Tool 检测”：Server、传输方式、配置来源、风险。
 4. “MCP 启动审批”：所有 stdio Server 默认待审批。
 
+发现命中支持真实状态操作：
+
+- “导入资产”：把发现命中转换为 `agent_instance` 记录，并写入 SQLite。
+- “忽略”：把命中标记为已忽略，保留审计，不删除原始发现记录。
+- “导出清单”：生成脱敏 JSON 制品，包含 discovery run、hit、Agent、MCP 和 Skill 摘要。
+- Agent 资产页“探测”：只读重跑本机发现，刷新该资产的配置、MCP、Skill 和版本摘要，不启动 stdio MCP。
+
 ## 4.1 只读 Guard 防御监测
 
 位置：
@@ -315,6 +322,24 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/api/v1/discovery-runs `
   -Body $body `
   -ContentType "application/json"
+```
+
+导入、忽略、导出和重探测：
+
+```powershell
+$discovery = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/discovery-runs `
+  -Body (@{ scope = "current-user" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$hit = $discovery.hits[0]
+$asset = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/import"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/agents/$($asset.agent.id)/probe"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/ignore" `
+  -Body (@{ reason = "本地忽略" } | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
 ```
 
 ### 查询风险

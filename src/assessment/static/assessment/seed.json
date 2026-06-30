@@ -345,9 +345,9 @@
     },
     {
       "id": "fixture",
-      "name": "演示 Fixture",
+      "name": "回归样本",
       "icon": "⚡",
-      "desc": "使用内置风险样本，快速体验完整结果。",
+      "desc": "使用内置回归风险样本，校验完整结果链路。",
       "tags": [
         "OpenClaw",
         "Hermes",
@@ -1388,11 +1388,11 @@
       "id": "ev_003",
       "time": "10:06:01",
       "type": "tool_call",
-      "text": "越界 read_file 调用被 Dry-run Mock",
+      "text": "越界 read_file 调用被受控空执行阻断",
       "redaction": "参数脱敏",
       "level": "high",
       "collector": "prompt-redteam",
-      "content": "{\"tool\":\"read_file\",\"path\":\"**REDACTED**/.ssh/config\",\"decision\":\"mock\"}"
+      "content": "{\"tool\":\"read_file\",\"path\":\"**REDACTED**/.ssh/config\",\"decision\":\"controlled-dry-run\"}"
     },
     {
       "id": "ev_004",
@@ -2482,12 +2482,12 @@
     },
     {
       "id": "D13",
-      "page": "主平台嵌入演示",
-      "route": "/assessment/embed-demo",
+      "page": "主平台嵌入联调",
+      "route": "/assessment/platform-embed",
       "group": "详情页",
       "prototype": "prototype/pages/D13_platform_embed.html",
       "spec": "specs/pages/D13_platform_embed.md",
-      "api": "GET /api/v1/embed/context；POST /api/v1/integrations/runtime-platform/mock",
+      "api": "GET /api/v1/embed/context；POST /api/v1/integrations/runtime-platform/events",
       "entity": "详情实体, audit_event",
       "audit": "已覆盖",
       "contract": "已覆盖",
@@ -2496,12 +2496,12 @@
     },
     {
       "id": "D14",
-      "page": "API / Mock 调试台",
+      "page": "API / 状态调试台",
       "route": "/assessment/api-debug",
       "group": "详情页",
       "prototype": "prototype/pages/D14_api_debug.html",
       "spec": "specs/pages/D14_api_debug.md",
-      "api": "GET /api/v1/openapi.json；POST /api/v1/mock/scenario",
+      "api": "GET /api/v1/openapi.json；POST /api/v1/diagnostics/scenario",
       "entity": "详情实体, audit_event",
       "audit": "已覆盖",
       "contract": "已覆盖",

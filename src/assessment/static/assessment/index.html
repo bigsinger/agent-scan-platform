@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent 安全测评能力模块 V4.1</title>
-<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.7">
+<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.8">
 </head>
 <body>
 <div id="boot-status" class="boot-status"><div class="boot-card"><strong>Agent 安全测评模块正在启动</strong><p>如果页面长时间无响应，请检查本地 Vue 静态资源、浏览器 Console 或模板编译错误。</p></div></div>
@@ -239,7 +239,7 @@ production.write</textarea></div></div></div>
 <!-- P04 DISCOVERY -->
 <div v-if="current==='discovery'">
   <div class="card">
-    <div class="card-head"><div><h2>本机 Agent 发现</h2><div class="desc">组合 agent-scan Discoverers、well-known paths 和 V4 专用 OpenClaw/Hermes 扩展。发现阶段不启动 stdio MCP。</div></div><div><button class="btn" @click="toastMsg('发现清单已导出')">导出清单</button> <button class="btn primary" @click="runDiscovery">{{discoveryRunning?'停止发现':'开始发现'}}</button></div></div>
+    <div class="card-head"><div><h2>本机 Agent 发现</h2><div class="desc">组合 agent-scan Discoverers、well-known paths 和 V4 专用 OpenClaw/Hermes 扩展。发现阶段不启动 stdio MCP。</div></div><div><button class="btn" :disabled="opsBusy" @click="exportDiscovery">导出清单</button> <button class="btn primary" @click="runDiscovery">{{discoveryRunning?'停止发现':'开始发现'}}</button></div></div>
     <div class="grid g4">
       <div class="metric"><div class="metric-label">用户范围</div><div class="metric-value">1</div><div class="metric-foot">当前用户</div></div>
       <div class="metric"><div class="metric-label">Agent 命中</div><div class="metric-value">{{discoveryHits.filter(x=>x.type==='Agent').length}}</div></div>
@@ -257,7 +257,7 @@ production.write</textarea></div></div></div>
   <div class="card">
     <div class="card-head"><h2>发现命中</h2><div class="toolbar"><input class="search" placeholder="搜索类型 / 路径"><select><option>全部</option><option>Agent</option><option>Config</option><option>Skill</option><option>MCP</option></select></div></div>
     <div class="table-wrap"><table><thead><tr><th>类型</th><th>产品</th><th>路径（脱敏）</th><th>作用域</th><th>来源</th><th>状态</th><th>操作</th></tr></thead><tbody>
-      <tr v-for="x in discoveryHits"><td><span class="badge blue">{{x.type}}</span></td><td>{{x.agent}}</td><td class="mono">{{x.path}}</td><td>{{x.scope}}</td><td>{{x.source}}</td><td><span :class="['badge',x.status==='可导入'?'low':x.status==='权限跳过'?'medium':'gray']">{{x.status}}</span></td><td><button class="btn sm" @click="toastMsg('已导入 '+x.agent)">导入资产</button><button class="btn sm" @click="toastMsg('已加入忽略列表')">忽略</button></td></tr>
+      <tr v-for="x in discoveryHits"><td><span class="badge blue">{{x.type}}</span></td><td>{{x.agent}}</td><td class="mono">{{x.path}}</td><td>{{x.scope}}</td><td>{{x.source}}</td><td><span :class="['badge',x.status==='可导入'||x.status==='已导入'||x.status==='已安装'?'low':x.status==='权限跳过'?'medium':'gray']">{{x.status}}</span></td><td><button class="btn sm" :disabled="opsBusy||x.status==='已忽略'" @click="importDiscoveryHit(x)">导入资产</button><button class="btn sm" :disabled="opsBusy||x.status==='已忽略'" @click="ignoreDiscoveryHit(x)">忽略</button></td></tr>
     </tbody></table></div>
     <div v-if="discoveryErrors.length" class="callout amber">权限/解析跳过：{{discoveryErrors.length}} 项。示例：{{discoveryErrors[0].path}} · {{discoveryErrors[0].error}}</div>
     <div class="callout">权限不足的目录只记录“跳过”，不会错误标记为配置解析失败；所有发现路径在页面和导出前脱敏。</div>
@@ -271,7 +271,7 @@ production.write</textarea></div></div></div>
     <div class="card-head"><div><h2>Agent 资产</h2><div class="desc">本机发现、显式路径、主平台同步和上传快照统一形成轻量测评资产。</div></div><div><button class="btn" @click="go('discovery')">发现本机</button> <button class="btn primary" @click="go('create')">＋ 创建测评</button></div></div>
     <div class="toolbar"><input class="search" placeholder="搜索名称 / 路径 / ID"><select><option>全部 Agent</option><option>OpenClaw</option><option>Hermes</option><option>Claude Code</option><option>Codex</option></select><select><option>全部支持级别</option><option>完整</option><option>扩展</option><option>部分</option></select><select><option>全部探测状态</option><option>正常</option><option>配置变化</option><option>需重探测</option></select></div>
     <div class="table-wrap"><table><thead><tr><th>Agent</th><th>Adapter</th><th>安装/来源</th><th>配置</th><th>MCP / Skills</th><th>最近评分</th><th>风险</th><th>探测</th><th>操作</th></tr></thead><tbody>
-      <tr v-for="a in agentAssets"><td><span class="link" @click="openAgent(a)">{{a.name}}</span><div class="tiny muted mono">{{a.id}}</div></td><td>{{a.adapter}}<div class="tiny muted">{{a.coverage}}</div></td><td class="mono">{{a.path}}</td><td>{{a.configs}}</td><td>{{a.mcp}} / {{a.skills}}</td><td><b>{{a.score}}</b></td><td><span class="badge critical">{{a.p0}}</span> <span class="badge high">{{a.p1}}</span></td><td><span :class="['badge',a.probe==='正常'?'low':'medium']">{{a.probe}}</span></td><td><button class="btn sm" @click="openAgent(a)">详情</button><button class="btn sm" @click="go('create')">测评</button><button class="btn sm" @click="toastMsg('重新探测已启动')">探测</button></td></tr>
+      <tr v-for="a in agentAssets"><td><span class="link" @click="openAgent(a)">{{a.name}}</span><div class="tiny muted mono">{{a.id}}</div></td><td>{{a.adapter}}<div class="tiny muted">{{a.coverage}}</div></td><td class="mono">{{a.path}}</td><td>{{a.configs}}</td><td>{{a.mcp}} / {{a.skills}}</td><td><b>{{a.score}}</b></td><td><span class="badge critical">{{a.p0}}</span> <span class="badge high">{{a.p1}}</span></td><td><span :class="['badge',a.probe==='正常'?'low':'medium']">{{a.probe}}</span></td><td><button class="btn sm" @click="openAgent(a)">详情</button><button class="btn sm" @click="quickAgent(a)">测评</button><button class="btn sm" :disabled="opsBusy" @click="probeAgent(a)">探测</button></td></tr>
     </tbody></table></div>
   </div>
 </div>
@@ -280,7 +280,7 @@ production.write</textarea></div></div></div>
 <!-- P06 AGENT DETAIL -->
 <div v-if="current==='agent-detail'">
   <div class="card">
-    <div class="card-head"><div><button class="btn sm" @click="go('agents')">← 返回</button><h2 style="display:inline;margin-left:8px">{{selectedAsset.name}}</h2><div class="desc" style="margin-left:70px">{{selectedAsset.adapter}} · {{selectedAsset.path}}</div></div><div><button class="btn" @click="toastMsg('配置快照已刷新')">重新探测</button><button class="btn primary" @click="go('create')">创建测评</button></div></div>
+    <div class="card-head"><div><button class="btn sm" @click="go('agents')">← 返回</button><h2 style="display:inline;margin-left:8px">{{selectedAsset.name}}</h2><div class="desc" style="margin-left:70px">{{selectedAsset.adapter}} · {{selectedAsset.path}}</div></div><div><button class="btn" :disabled="opsBusy" @click="probeAgent(selectedAsset)">重新探测</button><button class="btn primary" @click="quickAgent(selectedAsset)">创建测评</button></div></div>
     <div class="grid g5"><div class="metric"><div class="metric-label">安全评分</div><div class="metric-value">{{selectedAsset.score}}</div></div><div class="metric"><div class="metric-label">配置</div><div class="metric-value">{{selectedAsset.configs}}</div></div><div class="metric"><div class="metric-label">MCP</div><div class="metric-value">{{selectedAsset.mcp}}</div></div><div class="metric"><div class="metric-label">Skills</div><div class="metric-value">{{selectedAsset.skills}}</div></div><div class="metric"><div class="metric-label">开放风险</div><div class="metric-value">{{selectedAsset.p0+selectedAsset.p1}}</div></div></div>
     <div class="tabs"><button v-for="x in ['概览','配置范围','组件/ABOM','MCP','Skills','任务历史','风险','配置快照']" :class="['tab',{active:agentTab===x}]" @click="agentTab=x">{{x}}</button></div>
     <div v-if="agentTab==='概览'" class="grid g2"><div class="kv"><div>Asset ID</div><div class="mono">{{selectedAsset.id}}</div><div>Adapter</div><div>{{selectedAsset.adapter}}</div><div>支持</div><div>{{selectedAsset.coverage}}</div><div>探测状态</div><div>{{selectedAsset.probe}}</div><div>最近探测</div><div>2026-06-26 09:58</div><div>配置 Hash</div><div class="mono">sha256:96b1...0c2d</div></div><div><h3>能力覆盖</h3><div class="chips"><span class="chip" v-for="c in selectedAsset.caps">{{c}}</span></div><div class="callout green">本机配置已完成适配器回归验证。动态执行仍受 Plan 和审批约束。</div></div></div>
@@ -784,6 +784,6 @@ remote_analysis: false</div></div></div></div>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.7"></script>
+<script src="/static/assessment/app.js?v=4.1.8"></script>
 </body>
 </html>
