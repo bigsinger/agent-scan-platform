@@ -40,6 +40,8 @@
 - `GET /api/v1/adapters/hermes`
 - `POST /api/v1/adapters/hermes/self-test`
 
+当前实现要求：Hermes 自测必须通过本机只读发现和 `hermes --version` 获取版本信息；不得进入 Hermes 交互会话，不得修改 Hermes 配置、Skill 或 Checkpoint。返回结果必须包含 `checks`、`artifact`、`mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`。
+
 接口返回必须统一包装：
 
 ```json

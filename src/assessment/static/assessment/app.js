@@ -96,6 +96,7 @@ data(){
     initial.abomBusy = false;
     initial.ruleTestResult = null;
     initial.scannerTestResult = null;
+    initial.adapterSelfTestResult = null;
     initial.settingsState = initial.settings || {};
     initial.settingsValidation = [];
     initial.settingsTestResult = null;
@@ -408,12 +409,12 @@ data(){
     },
     statusClass(s){
       if(s==='已完成') return 'low';
-      if(s==='COMPLETED'||s==='READY'||s==='ACTIVE') return 'low';
+      if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS') return 'low';
       if(s==='运行中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED') return 'blue';
-      if(s==='等待审批'||s==='部分完成') return 'medium';
+      if(s==='等待审批'||s==='部分完成'||s==='WARN'||s==='NOT_RUN'||s==='未运行') return 'medium';
       if(s==='PENDING'||s==='OPEN') return 'medium';
-      if(s==='失败'||s==='FAILED') return 'critical';
+      if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED') return 'critical';
       return 'gray';
     },
     mergeRecords(key, items){
@@ -581,7 +582,47 @@ data(){
       else { this.quickMode='machine'; this.toastMsg('已选择 '+a.name+'，将扫描本机发现资产'); }
       this.current='quick-scan';
     },
-    viewAdapter(a){this.toastMsg(a.name+' 适配器覆盖已定位');this.current='adapters';},
+    viewAdapter(a){this.adapterSelfTestResult=a && a.last_self_test_status ? {adapter_id:a.id, status:a.last_self_test_status, checked_at:a.last_self_test_at, version:a.version, install_status:a.install_status, checks:[]} : this.adapterSelfTestResult; this.toastMsg(a.name+' 适配器覆盖已定位');this.current='adapters';},
+    async selfTestAdapter(adapter, options){
+      if(!adapter || !(adapter.id || adapter.name)) return null;
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const id=adapter.id || adapter.name;
+        const res=await this.apiPost('/api/v1/adapters/'+encodeURIComponent(id)+'/self-test', {});
+        const test=res.self_test || {};
+        this.adapterSelfTestResult=test;
+        if(res.adapter) this.mergeRecords('agents', [res.adapter]);
+        if(test.adapter) this.mergeRecords('agents', [test.adapter]);
+        if(test.discovered_agents) this.mergeRecords('agentAssets', test.discovered_agents);
+        if(!silent) this.toastMsg((adapter.name || id)+' 自测完成：'+(test.status || 'DONE'));
+        return test;
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+        throw err;
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async selfTestAllAdapters(){
+      const list=(this.agents || []).slice(0, 12);
+      if(!list.length) return;
+      this.opsBusy=true; this.apiError='';
+      let pass=0, warn=0, fail=0;
+      try {
+        for(const adapter of list){
+          const test=await this.selfTestAdapter(adapter, {silent:true});
+          if(test && test.status==='PASS') pass++;
+          else if(test && test.status==='WARN') warn++;
+          else fail++;
+        }
+        this.toastMsg('适配器自测完成：PASS '+pass+'，WARN '+warn+'，FAIL '+fail);
+      } catch (err) {
+        this.apiError=this.describeError(err);
+      } finally {
+        this.opsBusy=false;
+      }
+    },
     async precheckQuickScan(){
       this.quickBusy=true; this.apiError='';
       try {

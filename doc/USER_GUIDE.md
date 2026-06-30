@@ -192,6 +192,43 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 3. 页面展示的执行数据来自本系统 SQLite；没有记录时显示空态。
 4. 所有操作都标记 `mutates_installed_agents=false`。
 
+## 4.4 Agent 适配器真实自测
+
+位置：
+
+```text
+左侧导航 → Agent 适配器
+```
+
+用途：
+
+- 对 Codex、Hermes、Claude Code、OpenClaw 等适配器执行本机只读自测。
+- 复用本机发现能力识别已安装 Agent、配置、MCP 和 Skill。
+- 生成 `adapter-self-test` JSON artifact，记录检查项、发现运行、版本、安装状态和安全边界。
+- 把最近自测结果写入本系统 SQLite 的 `adapter` 记录，并在页面展示 PASS/WARN/FAIL。
+
+Codex 与 Hermes 的重点行为：
+
+- Codex：通过 PATH/WindowsApps `codex.exe` 路径和包名版本识别，兼容 `app/Codex.exe` 与 `app/resources/codex.exe`，不启动 Codex 交互运行时。
+- Hermes：通过 `hermes --version` 读取版本输出，不进入 Hermes 会话，不改 Hermes 配置。
+
+安全边界：
+
+1. 自测不启动 Agent 交互运行时。
+2. 自测不启动 stdio MCP Server。
+3. 自测不修改 `~/.codex`、Hermes、Claude Code、OpenClaw 或 MCP 配置。
+4. 自测只写入本系统 SQLite 和 `data/artifacts/`。
+5. 某台机器未安装某个 Agent 时结果为 WARN，不会伪造 PASS。
+
+常用 API：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/codex/self-test
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/hermes/self-test
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/claude-code/self-test
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/openclaw/self-test
+```
+
 ## 5. MCP 启动审批
 
 位置：

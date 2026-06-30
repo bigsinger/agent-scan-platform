@@ -560,6 +560,10 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path.startswith("/scanners/") and path.endswith("/self-test"):
         scanner_id = path.split("/")[-2]
         result["self_test"] = scanner_self_test(store, scanner_id)
+    elif path.startswith("/adapters/") and path.endswith("/self-test"):
+        adapter_id = path.split("/")[-2]
+        result["self_test"] = adapter_self_test(store, state, adapter_id, body)
+        result["adapter"] = result["self_test"].get("adapter")
     elif path == "/schedules":
         result["schedule"] = save_schedule(store, state, body)
     elif path.startswith("/schedules/") and path.endswith("/run-now"):
@@ -1305,25 +1309,340 @@ def embed_context(state: dict) -> dict:
     }
 
 
+ADAPTER_PRODUCTS = {
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes",
+    "claude-code": "Claude Code",
+    "codex": "Codex",
+}
+
+
+def canonical_adapter_id(adapter_id: str) -> str:
+    value = re.sub(r"[\s_]+", "-", str(adapter_id or "").strip().lower())
+    aliases = {
+        "claudecode": "claude-code",
+        "claude": "claude-code",
+        "claude-code": "claude-code",
+        "claude-code-local": "claude-code",
+        "codex-cli": "codex",
+        "open-claw": "openclaw",
+    }
+    return aliases.get(value, value)
+
+
+def adapter_product_name(adapter_id: str) -> str:
+    canonical = canonical_adapter_id(adapter_id)
+    return ADAPTER_PRODUCTS.get(canonical, str(adapter_id or "Unknown"))
+
+
+def adapter_identity_matches(item: dict, adapter_id: str) -> bool:
+    canonical = canonical_adapter_id(adapter_id)
+    product = adapter_product_name(canonical).lower()
+    candidates = [
+        item.get("id"),
+        item.get("name"),
+        item.get("adapter"),
+        item.get("product"),
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if canonical_adapter_id(text) == canonical:
+            return True
+        if text.lower() == product:
+            return True
+    return False
+
+
 def find_adapter(state: dict, adapter_id: str) -> dict:
     adapter = find_item(state.get("agents", []), adapter_id)
     if adapter:
         return adapter
-    names = {
-        "openclaw": "OpenClaw",
-        "hermes": "Hermes",
-        "claude-code": "Claude Code",
-        "codex": "Codex",
-    }
-    name = names.get(adapter_id, adapter_id)
+    adapter = next((item for item in state.get("agents", []) if adapter_identity_matches(item, adapter_id)), None)
+    if adapter:
+        return adapter
+    canonical = canonical_adapter_id(adapter_id)
+    name = adapter_product_name(canonical)
     return {
-        "id": adapter_id,
+        "id": canonical,
         "name": name,
         "status": "ACTIVE",
-        "coverage": "完整" if adapter_id in {"claude-code", "codex"} else "扩展",
+        "coverage": "完整" if canonical in {"claude-code", "codex"} else "扩展",
         "capabilities": ["Discovery", "MCP", "Skill", "Local Rules"],
-        "self_test": "PASS",
+        "self_test": "NOT_RUN",
     }
+
+
+def adapter_self_test(store: Any, state: dict, adapter_id: str, body: dict | None = None) -> dict:
+    requested_id = str(adapter_id or "").strip()
+    canonical = canonical_adapter_id(requested_id)
+    product = adapter_product_name(canonical)
+    checked_at = utc_now()
+    adapter = dict(find_adapter(state, requested_id))
+    adapter["id"] = str(adapter.get("id") or requested_id or canonical)
+    scope = str((body or {}).get("scope") or f"adapter-self-test:{canonical}")
+    discovery_error = ""
+    discovery = None
+    try:
+        discovery = LocalScanEngine(store).run_discovery({"scope": scope, "paths": adapter_discovery_paths(canonical), "probe_installed": True})
+        merge_discovery_result_into_state(state, discovery)
+    except Exception as exc:  # pragma: no cover - defensive path validated through API error handling.
+        discovery_error = redact_text(str(exc), max_len=500)
+
+    product_hits = adapter_product_hits(discovery.hits if discovery else [], product)
+    product_agents = adapter_product_hits(discovery.agents if discovery else [], product)
+    product_mcp = adapter_product_hits(discovery.mcp_servers if discovery else [], product)
+    product_skills = adapter_product_hits(discovery.skills if discovery else [], product)
+    installed_hits = [hit for hit in product_hits if str(hit.get("type") or "").lower() == "agent"]
+    version = first_non_empty(
+        [item.get("version") for item in [*product_agents, *installed_hits]],
+        adapter.get("version"),
+    )
+    install_status = (
+        first_non_empty([item.get("install_status") for item in product_agents], "")
+        or ("已安装" if installed_hits else "配置命中" if product_hits else "未发现")
+    )
+    command_sources = sorted({str(hit.get("source")) for hit in installed_hits if "--version" in str(hit.get("source") or "")})
+    checks = [
+        adapter_check("adapter_catalog", "PASS", "适配器定义", f"{product} 适配器已加载。", {"adapter_id": adapter["id"], "canonical": canonical}),
+        adapter_check(
+            "readonly_discovery",
+            "FAIL" if discovery_error else "PASS",
+            "只读发现",
+            discovery_error or "已完成本机 well-known path 和版本命令探测，未启动 stdio MCP Server。",
+            {"scope": scope, "run_id": discovery.run.get("id") if discovery else ""},
+        ),
+        adapter_check(
+            "installed_agent_probe",
+            "PASS" if installed_hits else "WARN",
+            "安装探测",
+            f"发现 {len(installed_hits)} 个安装命中，{len(product_hits)} 个产品相关命中。",
+            {"install_status": install_status, "version": version, "sources": command_sources},
+        ),
+        adapter_check(
+            "configuration_coverage",
+            "PASS" if (product_mcp or product_skills or len(product_hits) > len(installed_hits)) else "WARN",
+            "配置覆盖",
+            f"MCP {len(product_mcp)} 个，Skill {len(product_skills)} 个，配置/路径命中 {max(0, len(product_hits) - len(installed_hits))} 个。",
+            {"mcp": len(product_mcp), "skills": len(product_skills), "hits": len(product_hits)},
+        ),
+        adapter_check(
+            "runtime_safety_boundary",
+            "PASS",
+            "运行边界",
+            "未启动 Agent 交互运行时，未启动 stdio MCP Server，未写入已安装 Agent 目录。",
+            {"agent_runtime_started": False, "stdio_mcp_started": False, "mutates_installed_agents": False},
+        ),
+    ]
+    product_specific = adapter_product_specific_check(canonical, installed_hits, product_hits, command_sources, version)
+    if product_specific:
+        checks.append(product_specific)
+
+    if any(check["status"] == "FAIL" for check in checks):
+        status = "FAIL"
+    elif installed_hits or product_hits:
+        status = "PASS"
+    else:
+        status = "WARN"
+
+    discovery_summary = {
+        "run_id": discovery.run.get("id") if discovery else "",
+        "hit_count": len(discovery.hits) if discovery else 0,
+        "agent_count": len(discovery.agents) if discovery else 0,
+        "mcp_count": len(discovery.mcp_servers) if discovery else 0,
+        "skill_count": len(discovery.skills) if discovery else 0,
+        "error_count": len(discovery.errors) if discovery else 1,
+        "product_hits": len(product_hits),
+        "product_agents": len(product_agents),
+        "product_mcp": len(product_mcp),
+        "product_skills": len(product_skills),
+    }
+    payload = {
+        "schema": "agent-security-adapter-self-test@4.1",
+        "adapter_id": adapter["id"],
+        "canonical_adapter_id": canonical,
+        "product": product,
+        "status": status,
+        "checked_at": checked_at,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "version_command_started": bool(command_sources),
+        "version_command_sources": command_sources,
+        "version": version,
+        "install_status": install_status,
+        "discovery": discovery_summary,
+        "discovered_agents": sanitize_adapter_agents(product_agents),
+        "checks": checks,
+    }
+    artifact = store.write_artifact(
+        "adapter-self-test",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"adapter_id": adapter["id"], "canonical_adapter_id": canonical, "status": status, "safe_mode": "local-readonly"},
+    )
+    payload["artifact"] = artifact
+    payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+
+    adapter_record = {
+        **adapter,
+        "name": product,
+        "canonical_id": canonical,
+        "status": "ACTIVE" if status in {"PASS", "WARN"} else "DEGRADED",
+        "self_test": status,
+        "last_self_test_status": status,
+        "last_self_test_at": checked_at,
+        "last_self_test_artifact_id": artifact["id"],
+        "last_self_test_download": payload["download"],
+        "version": version or adapter.get("version", ""),
+        "install_status": install_status,
+        "discovered_agents": len(product_agents),
+        "discovered_hits": len(product_hits),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+    updated_adapter = store.upsert_record("adapter", adapter_record, status=adapter_record["status"])
+    merge_state_record(state, "agents", updated_adapter)
+    payload["adapter"] = updated_adapter
+    store.audit_event(
+        "post.adapters.self-test",
+        "adapter",
+        updated_adapter["id"],
+        {"status": status, "product": product, "artifact_id": artifact["id"], "safe_mode": "local-readonly", "mutates_installed_agents": False},
+    )
+    return payload
+
+
+def merge_discovery_result_into_state(state: dict, discovery: Any) -> None:
+    for run in [discovery.run]:
+        merge_state_record(state, "discoveryRuns", run)
+    for collection, key in [
+        (discovery.hits, "discoveryHits"),
+        (discovery.agents, "agentAssets"),
+        (discovery.mcp_servers, "mcpServers"),
+        (discovery.consents, "consents"),
+        (discovery.skills, "skills"),
+        (discovery.components, "components"),
+        (discovery.errors, "discoveryErrors"),
+    ]:
+        for record in collection:
+            merge_state_record(state, key, record)
+    if discovery.agents:
+        state["selectedAsset"] = discovery.agents[0]
+    if discovery.skills:
+        state["selectedSkill"] = discovery.skills[0]
+
+
+def adapter_discovery_paths(canonical: str) -> list[str]:
+    home = Path.home()
+    local_appdata = Path(os.environ.get("LOCALAPPDATA") or (home / "AppData" / "Local"))
+    roaming_appdata = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming"))
+    paths = {
+        "codex": [
+            home / ".codex" / "config.toml",
+            home / ".codex" / "AGENTS.md",
+            home / ".codex" / "skills",
+            home / ".codex" / "rules",
+        ],
+        "hermes": [
+            local_appdata / "hermes" / "config.yaml",
+            local_appdata / "hermes" / ".env",
+            local_appdata / "hermes" / "skills",
+            local_appdata / "hermes" / "config",
+            home / ".hermes",
+        ],
+        "claude-code": [
+            home / ".claude",
+            home / ".claude.json",
+            roaming_appdata / "Claude",
+        ],
+        "openclaw": [
+            home / ".openclaw",
+            home / ".agents" / "skills",
+            local_appdata / "OpenClaw",
+        ],
+    }.get(canonical, [])
+    return [str(path) for path in paths]
+
+
+def adapter_product_hits(items: list[dict], product: str) -> list[dict]:
+    expected = normalize_product_text(product)
+    matches = []
+    for item in items:
+        material = " ".join(
+            str(item.get(key) or "")
+            for key in ["agent", "adapter", "name", "product", "path", "source", "config"]
+        )
+        if expected and expected in normalize_product_text(material):
+            matches.append(item)
+    return matches
+
+
+def normalize_product_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def first_non_empty(values: list[Any], fallback: Any = "") -> Any:
+    for value in values:
+        if value:
+            return value
+    return fallback
+
+
+def adapter_check(check_id: str, status: str, title: str, detail: str, evidence: dict | None = None) -> dict:
+    return {
+        "id": check_id,
+        "status": status,
+        "title": title,
+        "detail": detail,
+        "evidence": evidence or {},
+        "checked_at": utc_now(),
+    }
+
+
+def adapter_product_specific_check(canonical: str, installed_hits: list[dict], product_hits: list[dict], command_sources: list[str], version: str) -> dict | None:
+    if canonical == "hermes":
+        return adapter_check(
+            "hermes_version_command",
+            "PASS" if any("hermes --version" in source for source in command_sources) else "WARN",
+            "Hermes 版本命令",
+            "Hermes 安装探测使用 `hermes --version` 输出；未执行 Hermes 交互会话。",
+            {"version": version, "sources": command_sources},
+        )
+    if canonical == "codex":
+        windows_app_hit = any("WindowsApps" in str(hit.get("source") or hit.get("path") or "") or "Codex.exe" in str(hit.get("path") or "") for hit in installed_hits)
+        return adapter_check(
+            "codex_windowsapps_package",
+            "PASS" if windows_app_hit else "WARN",
+            "Codex WindowsApps 包",
+            "Codex 通过 WindowsApps Codex.exe 路径和包名版本识别；未启动 Codex.exe。",
+            {"version": version, "installed_hits": len(installed_hits)},
+        )
+    if canonical == "claude-code":
+        return adapter_check(
+            "claude_code_config_scope",
+            "PASS" if product_hits else "WARN",
+            "Claude Code 配置范围",
+            "检查 ~/.claude、~/.claude.json、项目 MCP/Skill 等只读发现命中。",
+            {"hits": len(product_hits), "installed_hits": len(installed_hits)},
+        )
+    if canonical == "openclaw":
+        return adapter_check(
+            "openclaw_config_scope",
+            "PASS" if product_hits else "WARN",
+            "OpenClaw 配置范围",
+            "检查 ~/.openclaw、Skills、Plugins、Gateway 配置等只读发现命中。",
+            {"hits": len(product_hits), "installed_hits": len(installed_hits)},
+        )
+    return None
+
+
+def sanitize_adapter_agents(agents: list[dict]) -> list[dict]:
+    allowed = {"id", "name", "adapter", "coverage", "path", "configs", "mcp", "skills", "probe", "version", "install_status", "status"}
+    result = []
+    for agent in agents[:12]:
+        result.append({key: agent.get(key) for key in allowed if key in agent})
+    return result
 
 
 def inspect_mcp_server(store: Any, state: dict, server_id: str, body: dict) -> dict:

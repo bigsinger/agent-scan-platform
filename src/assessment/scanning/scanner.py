@@ -240,7 +240,10 @@ class LocalScanEngine:
             paths.extend(Path(str(path)).expanduser() for path in raw_paths if path)
         elif raw_paths:
             paths.append(Path(str(raw_paths)).expanduser())
-        result = self.discovery.discover(paths or None, scope=str(payload.get("scope") or "current-user"))
+        probe_installed = payload.get("probe_installed")
+        if probe_installed is not None:
+            probe_installed = bool(probe_installed)
+        result = self.discovery.discover(paths or None, scope=str(payload.get("scope") or "current-user"), probe_installed=probe_installed)
         self._persist_discovery(result)
         state = self.store.get_state()
         merge_front(state, "discoveryRuns", [result.run])

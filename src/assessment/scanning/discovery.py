@@ -72,6 +72,7 @@ CONFIG_NAMES = {
 
 CODEX_EXE_CANDIDATES = (
     Path("C:/Program Files/WindowsApps/OpenAI.Codex_26.616.10790.0_x64__2p2nqsd0c76g0/app/Codex.exe"),
+    Path("C:/Program Files/WindowsApps/OpenAI.Codex_26.616.10790.0_x64__2p2nqsd0c76g0/app/resources/codex.exe"),
     Path.home() / "AppData" / "Local" / "Microsoft" / "WindowsApps" / "Codex.exe",
 )
 
@@ -79,8 +80,10 @@ MAX_DISCOVERY_FILES_PER_ROOT = 300
 
 
 class DiscoveryEngine:
-    def discover(self, paths: list[Path] | None = None, scope: str = "current-user") -> DiscoveryResult:
+    def discover(self, paths: list[Path] | None = None, scope: str = "current-user", probe_installed: bool | None = None) -> DiscoveryResult:
         explicit = bool(paths)
+        if probe_installed is None:
+            probe_installed = not explicit
         run = {
             "id": new_id("disc"),
             "status": "COMPLETED",
@@ -90,7 +93,7 @@ class DiscoveryEngine:
             "note": "只读发现；未启动 stdio MCP Server",
         }
         result = DiscoveryResult(run=run)
-        if not explicit:
+        if probe_installed:
             self._probe_installed_agents(result)
         roots = self._candidate_roots(paths or [])
         seen: set[str] = set()
@@ -493,12 +496,22 @@ def probe_command_version(product: str, command: str, args: list[str], timeout: 
 
 
 def first_existing_codex_path() -> Path | None:
+    for command in ("codex", "Codex.exe"):
+        executable = shutil.which(command)
+        if executable:
+            return Path(executable)
     for candidate in CODEX_EXE_CANDIDATES:
         if candidate.exists():
             return candidate
     windows_apps = Path("C:/Program Files/WindowsApps")
     try:
-        matches = sorted(windows_apps.glob("OpenAI.Codex_*/app/Codex.exe"), reverse=True)
+        matches = sorted(
+            [
+                *windows_apps.glob("OpenAI.Codex_*/app/Codex.exe"),
+                *windows_apps.glob("OpenAI.Codex_*/app/resources/codex.exe"),
+            ],
+            reverse=True,
+        )
     except OSError:
         matches = []
     return matches[0] if matches else None

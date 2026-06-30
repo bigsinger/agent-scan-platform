@@ -41,6 +41,15 @@
 - `GET /api/v1/adapters`
 - `POST /api/v1/adapters/{id}/self-test`
 
+当前实现要求：
+
+- `POST /api/v1/adapters/{id}/self-test` 必须执行本机只读发现，不得返回固定 `fixture` 或固定 PASS。
+- Codex 适配器应识别 PATH/WindowsApps `codex.exe` 路径和包名版本，兼容 `app/Codex.exe` 与 `app/resources/codex.exe`，但不得启动 Codex 交互运行时。
+- Hermes 适配器应通过 `hermes --version` 读取版本信息，但不得进入 Hermes 会话或修改 Hermes 配置。
+- 自测结果必须包含 `checks`、`discovery`、`artifact`、`safe_mode=local-readonly`、`mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`。
+- 未安装或未命中某个适配器时返回 `WARN`，用于真实反映本机状态，不允许伪造通过。
+- 页面必须展示最近自测状态、检查项和 artifact 下载入口。
+
 接口返回必须统一包装：
 
 ```json

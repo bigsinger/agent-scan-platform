@@ -13,7 +13,7 @@ REMOTE_PATTERN = re.compile(r"https?://|//unpkg|//cdn|//cdnjs|fonts\.googleapis"
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--html", required=True)
-    parser.add_argument("--expect-pages", type=int, default=34)
+    parser.add_argument("--expect-pages", type=int, default=48)
     args = parser.parse_args()
 
     html_path = Path(args.html)

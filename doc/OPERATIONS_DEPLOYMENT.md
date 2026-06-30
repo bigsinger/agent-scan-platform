@@ -111,6 +111,20 @@ Invoke-RestMethod -Method Post `
 
 执行中心安全模式只写入本系统 `module_setting`，用于停止或恢复领取新 Job；不会发送 kill 信号，不会启动或停止 Codex/Hermes/Claude Code/MCP 进程。
 
+Agent 适配器真实自测：
+
+```powershell
+$codex = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/codex/self-test
+$hermes = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/hermes/self-test
+
+$codex.self_test.status
+$codex.self_test.download
+$hermes.self_test.status
+$hermes.self_test.download
+```
+
+适配器自测会复用本机只读发现能力。Codex 通过 PATH/WindowsApps `codex.exe` 路径和包名版本识别，兼容 `app/Codex.exe` 与 `app/resources/codex.exe`；Hermes 通过 `hermes --version` 读取版本信息。该流程不会启动 Codex/Hermes 交互运行时，不启动 stdio MCP Server，不修改已安装 Agent 配置，只写本系统 SQLite 与 `data/artifacts/adapter-self-test` JSON artifact。未安装或未命中特定 Agent 时返回 `WARN`，用于真实反映客户机器状态。
+
 MCP / Tool 只读静态检查：
 
 ```powershell
@@ -178,7 +192,8 @@ PYTHONPATH=src python -m uvicorn assessment.main:app --host 127.0.0.1 --port 800
 2. 准备一个包含 `.mcp.json`、`AGENTS.md`、`.agents/skills/*/SKILL.md` 的测试目录。
 3. 用快速扫描指定该目录，确认发现、风险、证据、报告闭环。
 4. 再扫描客户真实 Agent 项目目录。
-5. 如果需要多人访问，使用企业现有网关提供登录、TLS、审计和访问控制。
+5. 在“Agent 适配器”页分别运行 Codex、Hermes、Claude Code、OpenClaw 自测，确认机器上已安装 Agent 的版本、配置命中和 artifact 证据。
+6. 如果需要多人访问，使用企业现有网关提供登录、TLS、审计和访问控制。
 
 Skill 专项 POC 可以单独验证：
 

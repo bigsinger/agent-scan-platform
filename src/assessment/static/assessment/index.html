@@ -309,13 +309,24 @@ production.write</textarea></div></div></div>
 <!-- P08 ADAPTERS -->
 <div v-if="current==='adapters'">
   <div class="card">
-    <div class="card-head"><div><h2>Agent 适配器中心</h2><div class="desc">发现路径、配置解析、组件归一化、产品专项规则、回归样本与未知版本降级。</div></div><button class="btn" @click="toastMsg('已开始全部适配器自测')">全部自测</button></div>
+    <div class="card-head"><div><h2>Agent 适配器中心</h2><div class="desc">发现路径、配置解析、组件归一化、产品专项规则、回归样本与未知版本降级。</div></div><button class="btn" :disabled="opsBusy" @click="selfTestAllAdapters">{{opsBusy?'自测中':'全部自测'}}</button></div>
     <div class="grid g4">
       <div v-for="a in agents" class="agent-card" :style="{'--accent':a.color,'--soft':a.soft}">
         <div style="display:flex;justify-content:space-between"><div class="agent-logo">{{a.icon}}</div><span :class="['badge',a.coverage==='完整'?'low':'medium']">{{a.coverage}}</span></div>
         <h3>{{a.name}}</h3><div class="desc">{{a.desc}}</div>
-        <div class="kv" style="grid-template-columns:95px 1fr;margin-top:10px"><div>发现器</div><div>{{a.discoverer}}</div><div>回归</div><div>{{a.fixtures}}</div><div>版本</div><div>{{a.version}}</div><div>最近自测</div><div><span class="badge low">通过</span></div></div>
-        <div class="agent-actions"><button class="btn primary sm" @click="viewAdapter(a)">覆盖详情</button><button class="btn sm" @click="toastMsg(a.name+' 回归自测通过')">自测</button></div>
+        <div class="kv" style="grid-template-columns:95px 1fr;margin-top:10px"><div>发现器</div><div>{{a.discoverer}}</div><div>回归</div><div>{{a.fixtures}}</div><div>版本</div><div>{{a.version||'待探测'}}</div><div>最近自测</div><div><span :class="['badge',statusClass(a.last_self_test_status||a.self_test||'未运行')]">{{a.last_self_test_status||a.self_test||'未运行'}}</span><div v-if="a.last_self_test_at" class="tiny muted">{{a.last_self_test_at}}</div></div></div>
+        <div class="agent-actions"><button class="btn primary sm" @click="viewAdapter(a)">覆盖详情</button><button class="btn sm" :disabled="opsBusy" @click="selfTestAdapter(a)">自测</button></div>
+      </div>
+    </div>
+  </div>
+  <div v-if="adapterSelfTestResult" class="card">
+    <div class="card-head"><div><h2>最近适配器自测</h2><div class="desc">{{adapterSelfTestResult.product||adapterSelfTestResult.adapter_id}} · {{adapterSelfTestResult.safe_mode||'local-readonly'}}</div></div><span :class="['badge',statusClass(adapterSelfTestResult.status)]">{{adapterSelfTestResult.status}}</span></div>
+    <div class="grid g2">
+      <div>
+        <div class="kv"><div>版本</div><div>{{adapterSelfTestResult.version||'未识别'}}</div><div>安装状态</div><div>{{adapterSelfTestResult.install_status||'未发现'}}</div><div>发现运行</div><div class="mono">{{adapterSelfTestResult.discovery&&adapterSelfTestResult.discovery.run_id||'-'}}</div><div>命中</div><div>Agent {{adapterSelfTestResult.discovery&&adapterSelfTestResult.discovery.product_agents||0}} / Hit {{adapterSelfTestResult.discovery&&adapterSelfTestResult.discovery.product_hits||0}} / MCP {{adapterSelfTestResult.discovery&&adapterSelfTestResult.discovery.product_mcp||0}} / Skill {{adapterSelfTestResult.discovery&&adapterSelfTestResult.discovery.product_skills||0}}</div><div>安全边界</div><div>不启动 Agent，不启动 stdio MCP，不修改已安装目录</div><div>Artifact</div><div><a v-if="adapterSelfTestResult.download" :href="adapterSelfTestResult.download" target="_blank">下载 JSON</a><span v-else>-</span></div></div>
+      </div>
+      <div>
+        <table><thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead><tbody><tr v-for="c in (adapterSelfTestResult.checks||[])" :key="c.id"><td>{{c.title||c.id}}</td><td><span :class="['badge',statusClass(c.status)]">{{c.status}}</span></td><td>{{c.detail}}</td></tr><tr v-if="!(adapterSelfTestResult.checks||[]).length"><td colspan="3" class="muted">点击自测后展示真实检查项。</td></tr></tbody></table>
       </div>
     </div>
   </div>

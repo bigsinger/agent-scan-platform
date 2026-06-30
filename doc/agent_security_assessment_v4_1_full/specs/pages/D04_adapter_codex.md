@@ -41,6 +41,8 @@
 - `GET /api/v1/adapters/codex`
 - `POST /api/v1/adapters/codex/self-test`
 
+当前实现要求：Codex 自测必须通过本机只读发现识别 PATH/WindowsApps `codex.exe` 路径和包名版本，兼容 `app/Codex.exe` 与 `app/resources/codex.exe`；不得启动 Codex 交互运行时，不得修改 `~/.codex`、项目 `.codex` 或 `.agents/skills`。返回结果必须包含 `checks`、`artifact`、`mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`。
+
 接口返回必须统一包装：
 
 ```json

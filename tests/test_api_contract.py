@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from assessment.api import v1 as api_v1
 from assessment.contracts import API_CONTRACTS
 from assessment.main import app
+from assessment.scanning import discovery as discovery_mod
+from assessment.scanning.models import DiscoveryResult
 from assessment.store import AssessmentStore
 
 
@@ -100,6 +102,88 @@ def test_openapi_contains_v4_1_contract_endpoints():
     for _, api_path in API_CONTRACTS:
         path = api_path.split("?", 1)[0]
         assert path in paths, path
+
+
+def test_adapter_self_test_uses_discovery_and_persists_evidence(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "adapter-self-test.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    class FakeLocalScanEngine:
+        def __init__(self, store):
+            self.store = store
+
+        def run_discovery(self, payload):
+            assert payload["probe_installed"] is True
+            assert any(".codex" in path.lower() for path in payload["paths"])
+            result = DiscoveryResult(
+                run={
+                    "id": "disc_adapter_codex",
+                    "status": "COMPLETED",
+                    "scope": payload["scope"],
+                    "hit_count": 1,
+                    "agent_count": 1,
+                    "mcp_count": 0,
+                    "skill_count": 0,
+                    "error_count": 0,
+                }
+            )
+            result.hits.append(
+                {
+                    "id": "hit_codex_windowsapps",
+                    "type": "Agent",
+                    "agent": "Codex",
+                    "path": "<program-files>/OpenAI.Codex_26.616.10790.0_x64/app/Codex.exe",
+                    "path_hash": "codex_path_hash",
+                    "source": "WindowsApps package",
+                    "status": "已安装",
+                    "version": "26.616.10790.0",
+                }
+            )
+            result.agents.append(
+                {
+                    "id": "agt_codex_local",
+                    "name": "Codex · Local",
+                    "adapter": "Codex",
+                    "coverage": "完整",
+                    "path": "<program-files>/OpenAI.Codex/app/Codex.exe",
+                    "configs": 1,
+                    "mcp": 0,
+                    "skills": 0,
+                    "version": "26.616.10790.0",
+                    "install_status": "已安装",
+                    "status": "ACTIVE",
+                }
+            )
+            return result
+
+    monkeypatch.setattr(api_v1, "LocalScanEngine", FakeLocalScanEngine)
+
+    response = client.post("/api/v1/adapters/codex/self-test", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    self_test = payload["self_test"]
+    assert self_test["status"] == "PASS"
+    assert self_test["mutates_installed_agents"] is False
+    assert self_test["agent_runtime_started"] is False
+    assert self_test["stdio_mcp_started"] is False
+    assert self_test["discovery"]["run_id"] == "disc_adapter_codex"
+    assert self_test["artifact"]["kind"] == "adapter-self-test"
+    assert any(check["id"] == "codex_windowsapps_package" for check in self_test["checks"])
+    stored = store.get_record("adapter", "codex")
+    assert stored["last_self_test_status"] == "PASS"
+    assert store.get_record("artifact", self_test["artifact"]["id"]) is not None
+
+
+def test_codex_discovery_accepts_windowsapps_resource_shim(monkeypatch, tmp_path):
+    exe = tmp_path / "OpenAI.Codex_26.623.9142.0_x64__2p2nqsd0c76g0" / "app" / "resources" / "codex.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("", encoding="utf-8")
+    monkeypatch.setattr(discovery_mod, "CODEX_EXE_CANDIDATES", ())
+    monkeypatch.setattr(discovery_mod.shutil, "which", lambda command: str(exe) if command.lower() in {"codex", "codex.exe"} else None)
+
+    assert discovery_mod.first_existing_codex_path() == exe
+    assert discovery_mod.parse_codex_package_version(exe) == "26.623.9142.0"
 
 
 def test_write_api_updates_state_and_audit():
