@@ -41,3 +41,18 @@ def test_adapter_self_test_ui_is_api_backed():
     assert "async selfTestAdapter" in app_js
     assert "async selfTestAllAdapters" in app_js
     assert "/api/v1/adapters/" in app_js
+
+
+def test_agent_scan_compat_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "上游源码哈希验证通过" not in html
+    assert "兼容自测完成：64/64 通过" not in html
+    assert "64/64" not in html
+    assert 'data-testid="agent-scan-self-test"' in html
+    assert "@click=\"refreshAgentScanCompat()\"" in html
+    assert "@click=\"runAgentScanSelfTest\"" in html
+    assert "agentScanSelfTestResult" in html
+    assert "async refreshAgentScanCompat" in app_js
+    assert "async runAgentScanSelfTest" in app_js
+    assert "/api/v1/agent-scan/self-test" in app_js

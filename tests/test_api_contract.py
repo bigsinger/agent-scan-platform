@@ -175,6 +175,34 @@ def test_adapter_self_test_uses_discovery_and_persists_evidence(monkeypatch, tmp
     assert store.get_record("artifact", self_test["artifact"]["id"]) is not None
 
 
+def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "agent-scan-self-test.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.post("/api/v1/agent-scan/self-test", json={})
+    assert response.status_code == 200
+    payload = response.json()["self_test"]
+
+    assert payload["status"] == "PASS"
+    assert payload["cloud_required"] is False
+    assert payload["mutates_installed_agents"] is False
+    assert payload["agent_runtime_started"] is False
+    assert payload["stdio_mcp_started"] is False
+    assert {"E001", "E004", "W019", "DM-05"}.issubset(set(payload["issue_codes"]["matched"]))
+    assert payload["discovery"]["mcp"] >= 1
+    assert payload["discovery"]["skills"] >= 1
+    assert payload["artifact"]["kind"] == "agent-scan-compat-self-test"
+
+    stored = store.get_record("agent_scan_compat", "agent_scan_compat_local")
+    assert stored["last_self_test_status"] == "PASS"
+    assert store.get_record("artifact", payload["artifact"]["id"]) is not None
+
+    compat = client.get("/api/v1/agent-scan/compat")
+    assert compat.status_code == 200
+    assert compat.json()["last_self_test_status"] == "PASS"
+
+
 def test_codex_discovery_accepts_windowsapps_resource_shim(monkeypatch, tmp_path):
     exe = tmp_path / "OpenAI.Codex_26.623.9142.0_x64__2p2nqsd0c76g0" / "app" / "resources" / "codex.exe"
     exe.parent.mkdir(parents=True)

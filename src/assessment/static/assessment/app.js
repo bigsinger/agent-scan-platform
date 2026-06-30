@@ -97,6 +97,8 @@ data(){
     initial.ruleTestResult = null;
     initial.scannerTestResult = null;
     initial.adapterSelfTestResult = null;
+    initial.agentScanCompat = initial.agentScanCompat || {version:'0.5.12-compatible', source_state:'LOCAL_BRIDGE_ONLY', compatibility:{status:'NOT_RUN', passed:0, warnings:0, failed:0, total:0}};
+    initial.agentScanSelfTestResult = null;
     initial.settingsState = initial.settings || {};
     initial.settingsValidation = [];
     initial.settingsTestResult = null;
@@ -327,6 +329,9 @@ data(){
       if(this.current==='settings'){
         this.loadSettings();
       }
+      if(this.current==='agent-scan'){
+        this.refreshAgentScanCompat({silent:true});
+      }
     },
     async loadBootstrap(){
       try {
@@ -398,7 +403,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -617,6 +622,32 @@ data(){
           else fail++;
         }
         this.toastMsg('适配器自测完成：PASS '+pass+'，WARN '+warn+'，FAIL '+fail);
+      } catch (err) {
+        this.apiError=this.describeError(err);
+      } finally {
+        this.opsBusy=false;
+      }
+    },
+    async refreshAgentScanCompat(options){
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/agent-scan/compat');
+        this.agentScanCompat=res || {};
+        if(!silent) this.toastMsg('本地桥接验证：'+(this.agentScanCompat.source_state || 'READY'));
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async runAgentScanSelfTest(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/agent-scan/self-test', {});
+        this.agentScanSelfTestResult=res.self_test || {};
+        if(res.compat) this.agentScanCompat=res.compat;
+        this.toastMsg('agent-scan 兼容自测：'+(this.agentScanSelfTestResult.status || 'DONE'));
       } catch (err) {
         this.apiError=this.describeError(err);
       } finally {

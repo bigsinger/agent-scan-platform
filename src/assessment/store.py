@@ -229,6 +229,7 @@ GENERIC_TABLES = [
     "database_backup",
     "backup_record",
     "third_party_component",
+    "agent_scan_compat",
     "issue_mapping",
     "compatibility_test",
     "feature_requirement",

@@ -229,6 +229,38 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/claude-code
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/openclaw/self-test
 ```
 
+## 4.5 agent-scan 兼容中心
+
+位置：
+
+```text
+左侧导航 → agent-scan 兼容
+```
+
+用途：
+
+- 验证本地 `agent-scan` 兼容桥接层的源码哈希。
+- 检查 E001、E004、W019、DM-05 等关键 Issue Code 到本地规则的映射。
+- 使用仓库内回归样本执行只读发现和 deterministic 规则命中测试。
+- 生成 `agent-scan-compat-self-test` JSON artifact，记录发现结果、命中规则、兼容码和安全边界。
+
+安全边界：
+
+1. 不访问 Snyk 云 API。
+2. 不需要 Snyk Token。
+3. 不启动已安装 Agent。
+4. 不启动 stdio MCP Server。
+5. 不修改 Codex、Hermes、Claude Code、OpenClaw 或 MCP 配置。
+6. 只写入本系统 SQLite 和 `data/artifacts/`。
+
+常用 API：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/compat
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agent-scan/self-test
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/issues
+```
+
 ## 5. MCP 启动审批
 
 位置：

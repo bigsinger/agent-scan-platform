@@ -40,6 +40,14 @@
 - `GET /api/v1/agent-scan/compat`
 - `POST /api/v1/agent-scan/self-test`
 
+当前实现要求：
+
+- `GET /api/v1/agent-scan/compat` 必须返回本地兼容桥接状态、源码哈希、规则数量、Issue Code 映射数量和最近自测状态，不得写死 `64/64` 或固定 Commit 通过。
+- `POST /api/v1/agent-scan/self-test` 必须执行本地只读兼容自测，至少覆盖本地桥接哈希、规则目录、E001/E004/W019/DM-05 映射、回归样本发现、deterministic 规则命中、云连接边界和运行安全边界。
+- 自测必须生成 `agent-scan-compat-self-test` JSON artifact，并写入 `agent_scan_compat`、`artifact`、`audit_event`。
+- 自测不得访问 Snyk 云 API，不得要求 Token，不得启动已安装 Agent 或 stdio MCP Server，不得修改 Codex/Hermes/Claude Code/OpenClaw 配置。
+- 页面必须展示最近自测状态、检查项、兼容码命中和 artifact 下载入口。
+
 接口返回必须统一包装：
 
 ```json

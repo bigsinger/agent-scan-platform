@@ -125,6 +125,19 @@ $hermes.self_test.download
 
 适配器自测会复用本机只读发现能力。Codex 通过 PATH/WindowsApps `codex.exe` 路径和包名版本识别，兼容 `app/Codex.exe` 与 `app/resources/codex.exe`；Hermes 通过 `hermes --version` 读取版本信息。该流程不会启动 Codex/Hermes 交互运行时，不启动 stdio MCP Server，不修改已安装 Agent 配置，只写本系统 SQLite 与 `data/artifacts/adapter-self-test` JSON artifact。未安装或未命中特定 Agent 时返回 `WARN`，用于真实反映客户机器状态。
 
+agent-scan 兼容中心自测：
+
+```powershell
+$compat = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/compat
+$selfTest = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agent-scan/self-test
+
+$selfTest.self_test.status
+$selfTest.self_test.issue_codes.matched
+$selfTest.self_test.download
+```
+
+该自测只读取本地兼容桥接源码和仓库内回归样本，验证 E001、E004、W019、DM-05 等关键兼容码、deterministic 规则引擎、发现结果、SQLite/artifact 写入和云连接边界。它不会访问 Snyk 云 API，不需要 Token，不启动已安装 Agent 或 stdio MCP Server，不修改 Codex/Hermes/Claude Code/OpenClaw 配置。
+
 MCP / Tool 只读静态检查：
 
 ```powershell

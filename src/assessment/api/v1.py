@@ -598,7 +598,8 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         code = path.split("/")[-1]
         result["issue"] = update_issue_mapping(store, state, code, body)
     elif path == "/agent-scan/self-test":
-        result["self_test"] = {"status": "PASS", "mode": "offline-compatible", "checked_at": utc_now(), "cloud_required": False}
+        result["self_test"] = agent_scan_self_test(store, state, body)
+        result["compat"] = result["self_test"].get("compat")
     elif path == "/diagnostics/scenario":
         result["scenario"] = apply_diagnostic_scenario(state, body)
     elif path.endswith("/publish"):
@@ -821,30 +822,271 @@ def mutate_task_status(state: dict, path: str, status: str) -> None:
 
 
 def agent_scan_compat() -> dict:
+    store = get_store()
+    compat = store.get_record("agent_scan_compat", "agent_scan_compat_local") or {}
+    rules = rule_catalog()
+    mappings = issue_mappings_for_store(store, store.get_state())
+    bridge_hash = agent_scan_bridge_hash()
     return {
+        "id": "agent_scan_compat_local",
         "name": "snyk/agent-scan compatible bridge",
         "version": "0.5.12-compatible",
         "mode": "offline-local",
         "cloud_required": False,
         "cloud_analysis": "optional-disabled",
-        "supported_issue_codes": ["E001", "E004", "W019", "DM-05"],
-        "checks": [
-            {"id": "local-discovery", "status": "PASS"},
-            {"id": "mcp-consent-gate", "status": "PASS"},
-            {"id": "redaction", "status": "PASS"},
-            {"id": "sqlite-writer", "status": "PASS"},
-        ],
+        "vendored_source_present": (REPO_ROOT / "third_party" / "snyk_agent_scan").exists(),
+        "vendored_source_path": "third_party/snyk_agent_scan",
+        "source_state": "LOCAL_BRIDGE_ONLY",
+        "local_bridge_sha256": bridge_hash.get("sha256"),
+        "local_bridge_files": bridge_hash.get("files", []),
+        "supported_issue_codes": sorted({str(item.get("code") or item.get("id")) for item in mappings if item.get("status") != "DISABLED"}),
+        "rule_count": len(rules),
+        "mapping_count": len(mappings),
+        "last_self_test_status": compat.get("last_self_test_status") or "NOT_RUN",
+        "last_self_test_at": compat.get("last_self_test_at") or "",
+        "last_self_test_artifact_id": compat.get("last_self_test_artifact_id") or "",
+        "last_self_test_download": compat.get("last_self_test_download") or "",
+        "compatibility": {
+            "status": compat.get("last_self_test_status") or "NOT_RUN",
+            "passed": compat.get("passed_checks", 0),
+            "warnings": compat.get("warning_checks", 0),
+            "failed": compat.get("failed_checks", 0),
+            "total": compat.get("total_checks", 0),
+        },
+        "checks": compat.get("checks", []),
     }
 
 
-def issue_mappings(state: dict) -> list[dict]:
-    defaults = [
+def default_issue_mappings() -> list[dict]:
+    return [
         {"id": "E001", "code": "E001", "rule": "MCP-PI-001", "severity": "高危 P1", "status": "ACTIVE", "source": "agent-scan"},
         {"id": "E004", "code": "E004", "rule": "SKILL-PI-001", "severity": "高危 P1", "status": "ACTIVE", "source": "agent-scan"},
         {"id": "W019", "code": "W019", "rule": "MCP-CMD-001", "severity": "高危 P1", "status": "ACTIVE", "source": "agent-scan"},
         {"id": "DM-05", "code": "DM-05", "rule": "SECRET-KEY-001", "severity": "严重 P0", "status": "ACTIVE", "source": "local"},
     ]
-    return combine_items(get_store().list_records("issue_mapping"), state.get("issueMappings", defaults))
+
+
+def issue_mappings_for_store(store: Any, state: dict) -> list[dict]:
+    state_and_defaults = combine_items(state.get("issueMappings", []), default_issue_mappings())
+    return combine_items(store.list_records("issue_mapping"), state_and_defaults)
+
+
+def issue_mappings(state: dict) -> list[dict]:
+    return issue_mappings_for_store(get_store(), state)
+
+
+def agent_scan_bridge_hash() -> dict:
+    files = [
+        REPO_ROOT / "src" / "assessment" / "api" / "v1.py",
+        REPO_ROOT / "src" / "assessment" / "scanning" / "discovery.py",
+        REPO_ROOT / "src" / "assessment" / "scanning" / "scanner.py",
+        REPO_ROOT / "src" / "assessment" / "scanning" / "rules.py",
+        REPO_ROOT / "THIRD_PARTY_NOTICES.md",
+    ]
+    entries = []
+    material = []
+    for path in files:
+        if not path.exists():
+            continue
+        digest = file_digest(path)
+        relative = str(path.relative_to(REPO_ROOT)).replace("\\", "/")
+        entries.append({"path": relative, "sha256": digest})
+        material.append(relative + ":" + digest)
+    return {"sha256": stable_hash("\n".join(material), 64), "files": entries}
+
+
+def agent_scan_self_test(store: Any, state: dict, body: dict | None = None) -> dict:
+    checked_at = utc_now()
+    sample_root = Path(str((body or {}).get("sample_path") or (REPO_ROOT / "tests" / "fixtures" / "sample_agent_project"))).expanduser()
+    rules = rule_catalog()
+    mappings = issue_mappings_for_store(store, state)
+    mapping_by_code = {str(item.get("code") or item.get("id")): item for item in mappings if item.get("status") != "DISABLED"}
+    required = {"E001": "MCP-PI-001", "E004": "SKILL-PI-001", "W019": "MCP-CMD-001", "DM-05": "SECRET-KEY-001"}
+    missing_mappings = [
+        {"code": code, "rule": rule_id}
+        for code, rule_id in required.items()
+        if str(mapping_by_code.get(code, {}).get("rule") or "") != rule_id
+    ]
+    discovery = None
+    discovery_error = ""
+    if sample_root.exists():
+        try:
+            discovery = LocalScanEngine(store).run_discovery({"path": str(sample_root), "scope": "agent-scan-compat-self-test", "probe_installed": False})
+            merge_discovery_result_into_state(state, discovery)
+        except Exception as exc:  # pragma: no cover - defensive runtime guard.
+            discovery_error = redact_text(str(exc), max_len=500)
+    matches = analyze_agent_scan_sample(sample_root) if sample_root.exists() else []
+    matched_rules = sorted({match.rule_id for match in matches})
+    matched_codes = sorted({agent_scan_compatible_code(match.rule_id) for match in matches})
+    required_codes = set(required.keys())
+    missing_codes = sorted(required_codes - set(matched_codes))
+    bridge_hash = agent_scan_bridge_hash()
+    checks = [
+        agent_scan_check(
+            "local_bridge_hash",
+            "PASS" if bridge_hash.get("sha256") else "FAIL",
+            "本地桥接哈希",
+            "已对本地兼容桥接相关源码计算稳定哈希；未依赖上游 CLI 输出。",
+            {"sha256": bridge_hash.get("sha256"), "files": bridge_hash.get("files", [])},
+        ),
+        agent_scan_check(
+            "rule_catalog",
+            "PASS" if len(rules) >= 8 else "FAIL",
+            "本地规则目录",
+            f"加载 {len(rules)} 条本地 deterministic 规则。",
+            {"rule_count": len(rules), "rules": [item.get("id") for item in rules]},
+        ),
+        agent_scan_check(
+            "issue_mapping_coverage",
+            "PASS" if not missing_mappings else "FAIL",
+            "Issue Code 映射",
+            f"已覆盖 {len(required) - len(missing_mappings)}/{len(required)} 个关键 agent-scan 兼容码。",
+            {"required": required, "missing": missing_mappings},
+        ),
+        agent_scan_check(
+            "fixture_discovery",
+            "FAIL" if discovery_error else ("PASS" if discovery and discovery.hits else "WARN"),
+            "回归样本发现",
+            discovery_error or f"样本发现命中 {len(discovery.hits) if discovery else 0} 个，MCP {len(discovery.mcp_servers) if discovery else 0} 个，Skill {len(discovery.skills) if discovery else 0} 个。",
+            {
+                "sample_root": safe_display_path(sample_root, REPO_ROOT),
+                "run_id": discovery.run.get("id") if discovery else "",
+                "hits": len(discovery.hits) if discovery else 0,
+                "mcp": len(discovery.mcp_servers) if discovery else 0,
+                "skills": len(discovery.skills) if discovery else 0,
+            },
+        ),
+        agent_scan_check(
+            "deterministic_rule_engine",
+            "PASS" if not missing_codes and len(matches) >= 4 else "FAIL",
+            "规则引擎兼容",
+            f"样本命中 {len(matches)} 条规则，兼容码 {', '.join(matched_codes) or '无'}。",
+            {"matched_rules": matched_rules, "matched_codes": matched_codes, "missing_codes": missing_codes},
+        ),
+        agent_scan_check(
+            "cloud_boundary",
+            "PASS",
+            "云连接边界",
+            "本地兼容自测不访问 Snyk 云 API，不需要 Token，也不上传样本内容。",
+            {"cloud_required": False, "network_used": False, "token_required": False},
+        ),
+        agent_scan_check(
+            "runtime_safety_boundary",
+            "PASS",
+            "运行边界",
+            "未启动已安装 Agent，未启动 stdio MCP Server，未修改 Codex/Hermes/Claude/OpenClaw 配置。",
+            {"agent_runtime_started": False, "stdio_mcp_started": False, "mutates_installed_agents": False},
+        ),
+    ]
+    status = "FAIL" if any(check["status"] == "FAIL" for check in checks) else ("WARN" if any(check["status"] == "WARN" for check in checks) else "PASS")
+    payload = {
+        "schema": "agent-security-agent-scan-compat-self-test@4.1",
+        "id": new_id("asct"),
+        "status": status,
+        "mode": "offline-local",
+        "checked_at": checked_at,
+        "cloud_required": False,
+        "cloud_analysis": "disabled",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "sample_root": safe_display_path(sample_root, REPO_ROOT),
+        "bridge": {
+            "sha256": bridge_hash.get("sha256"),
+            "files": bridge_hash.get("files", []),
+            "vendored_source_present": (REPO_ROOT / "third_party" / "snyk_agent_scan").exists(),
+        },
+        "discovery": {
+            "run_id": discovery.run.get("id") if discovery else "",
+            "hits": len(discovery.hits) if discovery else 0,
+            "mcp": len(discovery.mcp_servers) if discovery else 0,
+            "skills": len(discovery.skills) if discovery else 0,
+            "errors": len(discovery.errors) if discovery else (1 if discovery_error else 0),
+        },
+        "rules": {"count": len(rules), "matched": matched_rules},
+        "issue_codes": {"supported": sorted(mapping_by_code.keys()), "matched": matched_codes, "missing": missing_codes},
+        "checks": checks,
+        "matches": [
+            {
+                "rule_id": match.rule_id,
+                "code": agent_scan_compatible_code(match.rule_id),
+                "severity": match.severity,
+                "path": match.display_path,
+                "line": match.line,
+                "snippet": match.snippet,
+            }
+            for match in matches[:50]
+        ],
+    }
+    artifact = store.write_artifact(
+        "agent-scan-compat-self-test",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"status": status, "safe_mode": "local-readonly", "cloud_required": False},
+    )
+    payload["artifact"] = artifact
+    payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    passed = len([check for check in checks if check["status"] == "PASS"])
+    warnings = len([check for check in checks if check["status"] == "WARN"])
+    failed = len([check for check in checks if check["status"] == "FAIL"])
+    compat_record = {
+        "id": "agent_scan_compat_local",
+        "name": "snyk/agent-scan compatible bridge",
+        "version": "0.5.12-compatible",
+        "status": "ACTIVE" if status in {"PASS", "WARN"} else "DEGRADED",
+        "last_self_test_status": status,
+        "last_self_test_at": checked_at,
+        "last_self_test_artifact_id": artifact["id"],
+        "last_self_test_download": payload["download"],
+        "passed_checks": passed,
+        "warning_checks": warnings,
+        "failed_checks": failed,
+        "total_checks": len(checks),
+        "local_bridge_sha256": bridge_hash.get("sha256"),
+        "cloud_required": False,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "checks": checks,
+    }
+    updated = store.upsert_record("agent_scan_compat", compat_record, status=str(compat_record["status"]))
+    payload["compat"] = updated
+    store.audit_event(
+        "post.agent-scan.self-test",
+        "agent_scan_compat",
+        updated["id"],
+        {"status": status, "artifact_id": artifact["id"], "safe_mode": "local-readonly", "cloud_required": False, "mutates_installed_agents": False},
+    )
+    return payload
+
+
+def analyze_agent_scan_sample(root: Path) -> list[Any]:
+    matches = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.stat().st_size > 1024 * 1024:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        matches.extend(analyze_text(path, text, root))
+    return matches
+
+
+def agent_scan_compatible_code(rule_id: str) -> str:
+    if rule_id == "MCP-PI-001":
+        return "E001"
+    if rule_id == "MCP-CMD-001":
+        return "W019"
+    if rule_id == "SKILL-PI-001":
+        return "E004"
+    if rule_id.startswith("SECRET"):
+        return "DM-05"
+    return rule_id
+
+
+def agent_scan_check(check_id: str, status: str, title: str, detail: str, evidence: dict | None = None) -> dict:
+    return {"id": check_id, "status": status, "title": title, "detail": detail, "evidence": evidence or {}, "checked_at": utc_now()}
 
 
 def executor_health(state: dict) -> dict:
