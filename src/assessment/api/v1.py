@@ -310,7 +310,7 @@ async def generic_get(resource: str, request: Request) -> dict:
     if path == "/agent-scan/patches":
         return {"items": [{"id": "0001-local-pipeline", "status": "通过"}, {"id": "0002-adapters", "status": "通过"}], "total": 2}
     if path == "/execution-supervisor":
-        return {"state": "running", "slots": {"running": 2, "available": 0, "max": 2}, "queue": 3}
+        return {"supervisor": executor_health(state), "jobs": state.get("jobs", []), "processes": state.get("processes", [])}
     if path == "/executor/health":
         return executor_health(state)
     if path == "/sandbox-policy/export":
@@ -584,6 +584,12 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["settings"] = save_module_settings(store, state, body)
     elif path == "/settings/test":
         result["test"] = test_module_settings(store, state, body)
+    elif path == "/execution-supervisor/refresh":
+        result.update(refresh_execution_supervisor(store))
+    elif path == "/execution-supervisor/safe-mode":
+        result.update(enter_execution_safe_mode(store, body))
+    elif path == "/execution-supervisor/normal-mode":
+        result.update(leave_execution_safe_mode(store, body))
     elif path.startswith("/agent-scan/issues/") and method == "PUT":
         code = path.split("/")[-1]
         result["issue"] = update_issue_mapping(store, state, code, body)
@@ -840,13 +846,98 @@ def issue_mappings(state: dict) -> list[dict]:
 def executor_health(state: dict) -> dict:
     processes = state.get("processes", [])
     running = len([item for item in processes if item.get("status") == "RUNNING"])
+    setting = get_store().get_record("module_setting", "execution_supervisor_mode") or {}
+    safe_mode_enabled = setting.get("mode") == "SAFE_MODE"
+    queued_statuses = {"QUEUED", "WAITING_CONSENT", "PENDING"}
+    queued = len([item for item in state.get("jobs", []) if item.get("status") in queued_statuses or item.get("state") in queued_statuses])
     return {
-        "status": "ok",
+        "status": "safe_mode" if safe_mode_enabled else "ok",
+        "state": "SAFE_MODE" if safe_mode_enabled else ("ACTIVE" if running else "IDLE"),
         "supervisor": "single-process-local",
         "slots": {"running": running, "max": 2, "available": max(0, 2 - running)},
-        "queue": len(state.get("jobs", [])),
+        "queue": queued,
+        "process_count": len(processes),
+        "safe_mode": safe_mode_enabled,
+        "safe_mode_since": setting.get("enabled_at"),
+        "safe_mode_reason": setting.get("reason", ""),
         "worker_policy": "scan workers return DTO; parent writes SQLite",
         "stdio_mcp": "consent-required",
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
+        "refreshed_at": utc_now(),
+    }
+
+
+def refresh_execution_supervisor(store: Any) -> dict:
+    state = runtime_state()
+    supervisor = executor_health(state)
+    store.audit_event(
+        "post.execution_supervisor.refresh",
+        "execution_supervisor",
+        "local",
+        {
+            "process_count": supervisor["process_count"],
+            "queue": supervisor["queue"],
+            "safe_mode": supervisor["safe_mode"],
+            "mutates_installed_agents": False,
+        },
+    )
+    return {
+        "supervisor": supervisor,
+        "jobs": state.get("jobs", []),
+        "processes": state.get("processes", []),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+
+
+def enter_execution_safe_mode(store: Any, body: dict) -> dict:
+    record = {
+        "id": "execution_supervisor_mode",
+        "key": "execution_supervisor_mode",
+        "mode": "SAFE_MODE",
+        "status": "ACTIVE",
+        "reason": body.get("reason") or "local operator requested safe mode",
+        "enabled_at": utc_now(),
+        "stops_new_jobs": True,
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
+        "boundary": "只更新本系统执行调度状态，不发送 kill 信号，不修改已安装 Agent 或 MCP 配置。",
+    }
+    setting = store.upsert_record("module_setting", record, status="ACTIVE")
+    supervisor = executor_health(runtime_state())
+    store.audit_event("post.execution_supervisor.safe_mode", "module_setting", setting["id"], record)
+    return {
+        "supervisor": supervisor,
+        "setting": setting,
+        "safe_mode": "scheduler-no-new-jobs",
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
+    }
+
+
+def leave_execution_safe_mode(store: Any, body: dict) -> dict:
+    record = {
+        "id": "execution_supervisor_mode",
+        "key": "execution_supervisor_mode",
+        "mode": "NORMAL",
+        "status": "INACTIVE",
+        "reason": body.get("reason") or "local operator resumed scheduler",
+        "disabled_at": utc_now(),
+        "stops_new_jobs": False,
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
+        "boundary": "只恢复本系统调度状态，不启动 Agent，不启动 stdio MCP，不修改本机 Agent 文件。",
+    }
+    setting = store.upsert_record("module_setting", record, status="INACTIVE")
+    supervisor = executor_health(runtime_state())
+    store.audit_event("post.execution_supervisor.normal_mode", "module_setting", setting["id"], record)
+    return {
+        "supervisor": supervisor,
+        "setting": setting,
+        "safe_mode": "scheduler-resumed",
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
     }
 
 

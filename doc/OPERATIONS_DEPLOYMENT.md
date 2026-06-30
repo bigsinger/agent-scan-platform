@@ -94,6 +94,23 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sandbox-policy/test
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy/export
 ```
 
+Python 执行中心：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/execution-supervisor
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/execution-supervisor/refresh
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/execution-supervisor/safe-mode `
+  -Body (@{ reason = "maintenance window" } | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/execution-supervisor/normal-mode `
+  -Body (@{ reason = "maintenance complete" } | ConvertTo-Json) `
+  -ContentType "application/json"
+```
+
+执行中心安全模式只写入本系统 `module_setting`，用于停止或恢复领取新 Job；不会发送 kill 信号，不会启动或停止 Codex/Hermes/Claude Code/MCP 进程。
+
 MCP / Tool 只读静态检查：
 
 ```powershell

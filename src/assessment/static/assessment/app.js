@@ -61,6 +61,7 @@ data(){
     initial.selectedConsent = initial.selectedConsent || (initial.consents || [])[0] || {};
     initial.sqliteStatus = initial.sqliteStatus || {file_bytes:0, mode:'WAL', state:'未知', pragma:{}};
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
+    initial.supervisorStatus = initial.supervisorStatus || {state:'IDLE', status:'ok', queue:0, process_count:0, slots:{running:0,max:2,available:2}, safe_mode:false};
     initial.sandboxPolicy = Object.assign({
       id:'sandbox_default',
       version:'local-readonly@4.1',
@@ -338,6 +339,7 @@ data(){
           if(!this.selectedRedteamRun || !this.selectedRedteamRun.id) this.selectedRedteamRun=(this.redteamRuns && this.redteamRuns[0]) || {};
           this.settingsState=payload.state.settings || this.settingsState || {};
           this.settingsValidation=(this.settingsState && this.settingsState.validation_errors) || [];
+          await this.refreshExecutionCenter({silent:true});
           this.syncRouteFromLocation();
         }
       } catch (err) {
@@ -356,6 +358,44 @@ data(){
       return data;
     },
     describeError(err){ return err && err.error ? err.error.message+' · '+err.error.correlation_id : String(err && err.message || err || '未知错误'); },
+
+    applyExecutionSupervisor(res){
+      if(!res) return;
+      this.supervisorStatus=res.supervisor || res;
+      if(res.jobs) this.jobs=res.jobs;
+      if(res.processes) this.processes=res.processes;
+    },
+    async refreshExecutionCenter(options){
+      const silent=options && options.silent;
+      if(!silent) { this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=silent ? await this.apiGet('/api/v1/execution-supervisor') : await this.apiPost('/api/v1/execution-supervisor/refresh', {});
+        this.applyExecutionSupervisor(res);
+        if(!silent) this.toastMsg('执行中心已刷新：'+(this.supervisorStatus.process_count||0)+' 条执行记录');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async enterExecutionSafeMode(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/execution-supervisor/safe-mode', {reason:'local operator requested from UI'});
+        this.applyExecutionSupervisor(res);
+        this.toastMsg('已进入执行安全模式：仅停止领取新 Job，不触碰已安装 Agent');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async leaveExecutionSafeMode(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/execution-supervisor/normal-mode', {reason:'local operator resumed from UI'});
+        this.applyExecutionSupervisor(res);
+        this.toastMsg('已退出执行安全模式：恢复领取新 Job');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
 
     go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},

@@ -171,6 +171,27 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 - “恢复默认”：恢复本地只读默认策略。
 - “导出”：导出当前策略和最近判定项。
 
+## 4.3 Python 执行中心
+
+位置：
+
+```text
+左侧导航 → Python 执行中心
+```
+
+用途：
+
+- 从 SQLite 的 `process_execution` 和任务记录聚合执行槽、等待 Job、子进程数量和安全模式状态。
+- “刷新队列”会重新读取本系统执行记录并写入审计事件。
+- “进入安全模式”只写入 `module_setting=execution_supervisor_mode`，表示调度器停止领取新 Job；“退出安全模式”恢复领取新 Job。
+
+安全边界：
+
+1. 刷新不会启动或终止任何外部进程。
+2. 进入或退出安全模式都不会发送 kill 信号，不会停止 Codex、Hermes、Claude Code 或 MCP Server。
+3. 页面展示的执行数据来自本系统 SQLite；没有记录时显示空态。
+4. 所有操作都标记 `mutates_installed_agents=false`。
+
 ## 5. MCP 启动审批
 
 位置：

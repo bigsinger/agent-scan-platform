@@ -39,6 +39,10 @@
 ## 4. API 契约
 
 - `GET /api/v1/executor/health`
+- `GET /api/v1/execution-supervisor`
+- `POST /api/v1/execution-supervisor/refresh`
+- `POST /api/v1/execution-supervisor/safe-mode`
+- `POST /api/v1/execution-supervisor/normal-mode`
 - `GET /api/v1/scanners`
 - `POST /api/v1/scanners/{id}/self-test`
 
@@ -106,6 +110,7 @@
 - 长任务不得在请求线程中直接执行；必须创建 task 后由本地任务执行器处理。
 - 查询接口必须支持分页、排序和筛选。
 - 所有返回数据必须经过脱敏，尤其是环境变量、Token、Authorization Header、绝对路径和命令参数。
+- 当前实现中执行中心从 SQLite 的 `process_execution`、任务和配置记录派生状态。刷新操作只重新聚合本系统记录并写审计；“进入/退出安全模式”只写入 `module_setting=execution_supervisor_mode`，表示暂停或恢复领取新 Job，不发送 kill 信号，不启动或修改 Codex/Hermes/MCP 进程。
 
 ## 9. SQLite 数据要求
 

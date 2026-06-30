@@ -229,6 +229,36 @@ def test_module_settings_are_persisted_validated_exported_and_imported():
     assert imported.json()["settings"]["module_name"] == "Agent 安全测评 Imported"
 
 
+def test_execution_supervisor_is_sqlite_backed_and_safe_mode_is_local_only():
+    status = client.get("/api/v1/execution-supervisor")
+    assert status.status_code == 200
+    supervisor = status.json()["supervisor"]
+    assert supervisor["mutates_installed_agents"] is False
+    assert supervisor["external_process_signal_sent"] is False
+    assert supervisor["process_count"] == len(status.json()["processes"])
+
+    refreshed = client.post("/api/v1/execution-supervisor/refresh", json={})
+    assert refreshed.status_code == 200
+    assert refreshed.json()["mutates_installed_agents"] is False
+    assert refreshed.json()["supervisor"]["external_process_signal_sent"] is False
+
+    safe = client.post("/api/v1/execution-supervisor/safe-mode", json={"reason": "contract test"})
+    assert safe.status_code == 200
+    payload = safe.json()
+    assert payload["supervisor"]["state"] == "SAFE_MODE"
+    assert payload["setting"]["stops_new_jobs"] is True
+    assert payload["mutates_installed_agents"] is False
+    assert payload["external_process_signal_sent"] is False
+
+    normal = client.post("/api/v1/execution-supervisor/normal-mode", json={"reason": "contract test resume"})
+    assert normal.status_code == 200
+    resumed = normal.json()
+    assert resumed["supervisor"]["state"] in {"IDLE", "ACTIVE"}
+    assert resumed["setting"]["stops_new_jobs"] is False
+    assert resumed["mutates_installed_agents"] is False
+    assert resumed["external_process_signal_sent"] is False
+
+
 def test_report_evidence_and_risk_closure_actions():
     scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50}).json()
     report = client.post("/api/v1/reports", json={"assessment_id": scan["assessment"]["id"], "type": "Standard"}).json()["report"]
