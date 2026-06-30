@@ -106,6 +106,7 @@
 - 长任务不得在请求线程中直接执行；必须创建 task 后由本地任务执行器处理。
 - 查询接口必须支持分页、排序和筛选。
 - 所有返回数据必须经过脱敏，尤其是环境变量、Token、Authorization Header、绝对路径和命令参数。
+- 当前实现中 `/api/v1/bootstrap` 与 `/api/v1/dashboard` 只聚合 SQLite 真实记录；当 `agent_instance`、`assessment`、`finding`、`evidence`、`process_execution` 等表为空时，页面展示空态，不再回退到原型 seed 的假资产、假任务或假风险。
 
 ## 9. SQLite 数据要求
 

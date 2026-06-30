@@ -71,6 +71,8 @@ TABLE_KEYS = {
     "/skills": "skill",
     "/assessments": "assessment",
     "/tasks": "task",
+    "/executions": "process_execution",
+    "/executor": "process_execution",
     "/findings": "finding",
     "/evidence": "evidence",
     "/attack-paths": "attack_path",
@@ -512,7 +514,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         state.setdefault("reports", []).insert(0, report)
         result["report"] = report
     elif path == "/retests":
-        retest = create_retest(store, state, str(body.get("finding_id") or "fnd_001"), body)
+        retest = create_retest(store, state, str(body.get("finding_id") or "finding-local-unspecified"), body)
         state.setdefault("retests", []).insert(0, retest)
         result["retest"] = retest
     elif path == "/redteam-runs":
@@ -696,7 +698,8 @@ def get_item_route(path: str, state: dict) -> dict | None:
         if len(parts) == 2:
             return {"item": item}
         if parts[2:] == ["events"]:
-            return {"items": get_store().list_scan_events(parts[1]) or state.get("taskEvents", []), "total": len(state.get("taskEvents", []))}
+            events = get_store().list_scan_events(parts[1]) or state.get("taskEvents", [])
+            return {"items": events, "total": len(events)}
         if parts[2:] == ["artifacts"]:
             artifacts = [a for a in get_store().list_records("artifact") if a.get("metadata", {}).get("assessment_id") == parts[1]]
             return page(artifacts, None)
@@ -2552,6 +2555,8 @@ def create_assessment_draft(store: Any, state: dict, body: dict, source: dict | 
         "safe_mode": body.get("safe_mode") or source.get("safe_mode") or "read_only",
         "mcp_policy": body.get("mcp_policy") or source.get("mcp_policy") or "per-server-consent",
         "remote_analysis": bool(body.get("remote_analysis", source.get("remote_analysis", False))),
+        "business_note": body.get("business_note") or source.get("business_note", ""),
+        "additional_paths": body.get("additional_paths") or source.get("additional_paths", ""),
         "plan": body.get("plan") or body,
         "created_at": utc_now(),
     }
@@ -4072,6 +4077,8 @@ REAL_STATE_PATHS = {
     "tools": "/tools",
     "skills": "/skills",
     "tasks": "/tasks",
+    "jobs": "/executions",
+    "processes": "/executions",
     "findings": "/findings",
     "evidenceItems": "/evidence",
     "reports": "/reports",
@@ -4086,9 +4093,41 @@ REAL_STATE_PATHS = {
 }
 
 
+RUNTIME_LIST_KEYS = {
+    *REAL_STATE_PATHS.keys(),
+    "discoveryErrors",
+    "discoveryLog",
+    "taskEvents",
+    "redCases",
+    "heatmap",
+}
+
+
+RUNTIME_SELECTED_KEYS = {
+    "selectedAsset",
+    "selectedTask",
+    "selectedMcp",
+    "selectedTool",
+    "selectedConsent",
+    "selectedSkill",
+    "selectedCase",
+    "selectedRedteamRun",
+    "selectedFinding",
+    "selectedEvidence",
+    "selectedAttackPath",
+    "selectedPolicyDraft",
+    "selectedReport",
+}
+
+
 def runtime_state() -> dict:
     store = get_store()
     state = store.get_state()
+    for key in RUNTIME_LIST_KEYS:
+        state[key] = []
+    for key in RUNTIME_SELECTED_KEYS:
+        state[key] = {}
+
     for key, path in REAL_STATE_PATHS.items():
         real_items = real_items_for_path(path)
         if path == "/rules" and not real_items:
@@ -4115,6 +4154,13 @@ def runtime_state() -> dict:
         state["selectedAsset"] = state["agentAssets"][0]
     if state.get("tasks"):
         state["selectedTask"] = state["tasks"][0]
+        state["taskEvents"] = store.list_scan_events(state["selectedTask"]["id"])
+    if state.get("mcpServers"):
+        state["selectedMcp"] = state["mcpServers"][0]
+    if state.get("tools"):
+        state["selectedTool"] = state["tools"][0]
+    if state.get("consents"):
+        state["selectedConsent"] = state["consents"][0]
     if state.get("skills"):
         state["selectedSkill"] = state["skills"][0]
     if state.get("caseLibrary"):
@@ -4133,6 +4179,10 @@ def runtime_state() -> dict:
         state["selectedAttackPath"] = state["attackPaths"][0]
     if state.get("policyDrafts"):
         state["selectedPolicyDraft"] = state["policyDrafts"][0]
+    if state.get("reports"):
+        state["selectedReport"] = state["reports"][0]
+    state["heatmap"] = risk_heatmap(state)
+    state["planJson"] = json.dumps(default_runtime_plan(state), ensure_ascii=False, indent=2)
     return state
 
 
@@ -4157,6 +4207,46 @@ def dashboard_metrics(state: dict) -> dict:
     }
 
 
+def risk_heatmap(state: dict) -> list[dict]:
+    findings = state.get("findings", [])
+    if not findings:
+        return []
+    buckets: dict[str, dict[str, int]] = {}
+    for finding in findings:
+        name = str(finding.get("dimension") or finding.get("category") or finding.get("rule") or "本地规则")
+        bucket = buckets.setdefault(name[:32], {"c": 0, "h": 0, "m": 0, "l": 0})
+        severity = str(finding.get("severity") or finding.get("sevClass") or "").lower()
+        if "p0" in severity or "严重" in severity or "critical" in severity:
+            bucket["c"] += 1
+        elif "p1" in severity or "高危" in severity or "high" in severity:
+            bucket["h"] += 1
+        elif "medium" in severity or "中" in severity:
+            bucket["m"] += 1
+        else:
+            bucket["l"] += 1
+    rows = []
+    for name, counts in buckets.items():
+        total = sum(counts.values()) or 1
+        rows.append({"name": name, **counts, "pass": max(0, round(100 - ((counts["c"] * 25 + counts["h"] * 15 + counts["m"] * 7) / total)))})
+    return rows[:12]
+
+
+def default_runtime_plan(state: dict) -> dict:
+    target = state.get("selectedAsset", {})
+    return {
+        "adapter": target.get("adapter") or "auto-detect",
+        "target": target.get("id") or target.get("name") or "local-machine",
+        "profile": "standard-complete@4.1.0",
+        "safe_mode": "local-readonly",
+        "remote_analysis": False,
+        "mutates_installed_agents": False,
+        "stages": ["DISCOVERY", "LOCAL_STATIC", "MCP_CONSENT", "REPORT"],
+        "rules": ["baseline@4.1.0", "local-agent-scan@4.1.0"],
+        "stdio_mcp": "per-server-consent",
+        "limits": {"parallel_jobs": 2, "timeout_seconds": 7200},
+    }
+
+
 def real_items_for_path(path: str) -> list[dict]:
     if path == "/tasks":
         return combine_items(get_store().list_records("task"), get_store().list_records("assessment"))
@@ -4172,6 +4262,8 @@ def real_items_for_path(path: str) -> list[dict]:
         return get_store().list_records("redteam_run")
     if path in {"/backups", "/database/backups"}:
         return combine_items(get_store().list_records("backup_record"), get_store().list_records("database_backup"))
+    if path in {"/executions", "/executor"}:
+        return get_store().list_records("process_execution")
     if path == "/completeness":
         return completeness_rows()
     table = TABLE_KEYS.get(path)

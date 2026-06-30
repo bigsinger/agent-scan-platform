@@ -9,7 +9,8 @@
 - 前端不依赖 CDN，Vue 已 vendoring 到本地并登记 `vendor-manifest.json`。
 - 本地只读扫描：Agent 发现、MCP 配置解析、Skill 扫描、规则命中、脱敏证据、HTML/JSON 报告。
 - stdio MCP Server 默认只生成审批记录，不自动启动。
-- 运行时页面优先读取 SQLite 真实扫描记录；seed 数据仅作为无后端/无数据时的离线兜底。
+- 运行时页面只读取 SQLite 真实扫描记录；API 正常时空库展示空态，不再用原型 seed 填充假资产、假任务或假风险。
+- 旧版本遗留的已知原型 seed 记录会在启动初始化时从本系统 SQLite 清理，不触碰已安装 Agent。
 - 只读 Guard 防御监测：对已发现 Agent 配置、MCP、Skill 做哈希基线与变化检测，只写本系统 SQLite，不修改已安装 Agent。
 
 文档：

@@ -1,7 +1,11 @@
+import json
+
 from fastapi.testclient import TestClient
 
+from assessment.api import v1 as api_v1
 from assessment.contracts import API_CONTRACTS
 from assessment.main import app
+from assessment.store import AssessmentStore
 
 
 client = TestClient(app)
@@ -16,6 +20,67 @@ def test_core_health_and_dashboard():
     assert dashboard.status_code == 200
     assert dashboard.json()["metrics"]["agents"] >= 1
     assert "guard" in dashboard.json()
+
+
+def test_empty_runtime_state_does_not_expose_prototype_seed(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "empty-runtime.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    state = api_v1.runtime_state()
+
+    for key in [
+        "agentAssets",
+        "discoveryHits",
+        "mcpServers",
+        "consents",
+        "tools",
+        "skills",
+        "tasks",
+        "jobs",
+        "processes",
+        "findings",
+        "evidenceItems",
+        "reports",
+        "components",
+        "redteamRuns",
+    ]:
+        assert state[key] == [], key
+    for key in [
+        "selectedAsset",
+        "selectedTask",
+        "selectedMcp",
+        "selectedTool",
+        "selectedConsent",
+        "selectedSkill",
+        "selectedRedteamRun",
+        "selectedFinding",
+        "selectedEvidence",
+    ]:
+        assert state[key] == {}, key
+    runtime_payload = json.dumps(
+        {key: state[key] for key in ["agentAssets", "tasks", "findings", "selectedAsset", "selectedTask", "planJson"]},
+        ensure_ascii=False,
+    )
+    assert "claude-code-repo-demo" not in runtime_payload
+    assert "agt_cc_001" not in runtime_payload
+    assert state["dashboardMetrics"]["agents"] == 0
+    assert state["dashboardMetrics"]["p0_p1"] == 0
+
+
+def test_store_initialization_purges_legacy_prototype_seed_records(tmp_path):
+    store = AssessmentStore(tmp_path / "legacy-seed.db")
+    store.initialize()
+    store.upsert_record("agent_instance", {"id": "agt_cc_001", "name": "claude-code-repo-demo", "adapter": "Claude Code"})
+    store.upsert_record("finding", {"id": "finding_legacy_demo", "target": "claude-code-repo-demo", "title": "legacy prototype risk"})
+
+    store.initialize()
+    state = store.get_state()
+
+    assert store.get_record("agent_instance", "agt_cc_001") is None
+    assert store.get_record("finding", "finding_legacy_demo") is None
+    assert state["agentAssets"] == []
+    assert state["selectedAsset"] == {}
 
 
 def test_all_spec_pages_have_completeness_rows():
@@ -438,9 +503,9 @@ def test_task_lifecycle_actions_are_persisted():
 def test_representative_spec_endpoints():
     endpoints = [
         "/api/v1/agents",
-        "/api/v1/agents/agt_cc_001",
-        "/api/v1/agents/agt_cc_001/components",
-        "/api/v1/agents/agt_cc_001/abom",
+        "/api/v1/agents/agent-local-missing",
+        "/api/v1/agents/agent-local-missing/components",
+        "/api/v1/agents/agent-local-missing/abom",
         "/api/v1/adapters",
         "/api/v1/agent-scan/status",
         "/api/v1/agent-scan/compat",
@@ -450,8 +515,8 @@ def test_representative_spec_endpoints():
         "/api/v1/mcp-consents",
         "/api/v1/skills",
         "/api/v1/assessments",
-        "/api/v1/assessments/asm_v4_001/events",
-        "/api/v1/tasks/asm_v4_001/events",
+        "/api/v1/assessments/assessment-local-missing/events",
+        "/api/v1/tasks/assessment-local-missing/events",
         "/api/v1/execution-supervisor",
         "/api/v1/executor/health",
         "/api/v1/sandbox-policy",

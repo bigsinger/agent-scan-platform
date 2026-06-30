@@ -12,12 +12,33 @@
     return;
   }
   const seed = window.ASSESSMENT_SEED || {};
+  const runtimeListKeys = [
+    'agentAssets','discoveryHits','discoveryErrors','discoveryLog','mcpServers','consents','tools','skills',
+    'tasks','jobs','processes','taskEvents','findings','evidenceItems','reports','components','redteamRuns',
+    'attackPaths','policyDrafts','retests','backupRecords','heatmap'
+  ];
+  const runtimeObjectKeys = [
+    'selectedAsset','selectedTask','selectedMcp','selectedTool','selectedConsent','selectedSkill','selectedCase','selectedRedteamRun',
+    'selectedFinding','selectedEvidence','selectedAttackPath','selectedPolicyDraft','selectedReport'
+  ];
+  const defaultFormState = {adapter:'自动识别', targetPath:'', discoveryPaths:'', snapshotContent:'', assessmentName:'', businessNote:'', redteamTarget:'local-agent-dry-run', redteamCaseId:'', redteamMode:'dry-run'};
+  function resetRuntimeCollections(state) {
+    runtimeListKeys.forEach(key => { state[key] = []; });
+    runtimeObjectKeys.forEach(key => { state[key] = {}; });
+    state.form = Object.assign({}, defaultFormState);
+    state.quickEstimate = Object.assign({configs:0, mcp_servers:0, skills:0, scan_files:0, agents:0, status:'未检查'}, state.quickEstimate || {});
+    state.uploadResult = null;
+    state.skillScanResult = null;
+    state.mcpInspection = null;
+    state.scheduleLastRun = null;
+  }
   try {
     const { createApp } = Vue;
     const prototypeApp = createApp({
 data(){
     const initial = JSON.parse(JSON.stringify(seed));
-    initial.form = Object.assign({adapter:'自动识别', targetPath:'', discoveryPaths:'', snapshotContent:'', redteamTarget:'local-agent-dry-run', redteamCaseId:'', redteamMode:'dry-run'}, initial.form || {});
+    resetRuntimeCollections(initial);
+    initial.form = Object.assign({}, defaultFormState, initial.form || {});
     initial.quickEstimate = Object.assign({configs:0, mcp_servers:0, skills:0, scan_files:0, agents:0, status:'未检查'}, initial.quickEstimate || {});
     initial.quickBusy = false;
     initial.uploadResult = null;
@@ -100,6 +121,24 @@ data(){
     },
     runningTaskCount(){
       return this.tasks.filter(t=>['运行中','等待审批','排队中','RUNNING','WAITING_CONSENT','QUEUED'].includes(t.status) || t.stage==='WAITING_CONSENT').length;
+    },
+    runningProcessCount(){
+      return (this.processes || []).filter(p=>p.status==='RUNNING').length;
+    },
+    queuedJobCount(){
+      return (this.jobs || []).filter(j=>['QUEUED','WAITING_CONSENT','PENDING'].includes(j.status||j.state)).length;
+    },
+    timeoutProcessCount(){
+      return (this.processes || []).filter(p=>String(p.status||'').includes('TIMEOUT')).length;
+    },
+    oomProcessCount(){
+      return (this.processes || []).filter(p=>String(p.status||'').includes('OOM')).length;
+    },
+    truncatedOutputCount(){
+      return (this.processes || []).filter(p=>p.output_truncated).length;
+    },
+    executionSlotMax(){
+      return (this.settingsState && this.settingsState.max_parallel_jobs) || 2;
     },
     sqliteMb(){
       const bytes=this.sqliteStatus && this.sqliteStatus.file_bytes || 0;
@@ -231,7 +270,11 @@ data(){
   },
   methods:{
     routeForKey(key){
-      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':'/assessment/agents/'+(this.selectedAsset&&this.selectedAsset.id||'agt_cc_001'),abom:'/assessment/abom',adapters:'/assessment/adapters',profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':'/assessment/tasks/'+(this.selectedTask&&this.selectedTask.id||'asm_v4_001'),mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':'/assessment/skills/'+(this.selectedSkill&&this.selectedSkill.id||'skill_001'),redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':'/assessment/findings/'+(this.selectedFinding&&this.selectedFinding.id||'fnd_001'),evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness'};
+      const agentDetailPath=this.selectedAsset&&this.selectedAsset.id?'/assessment/agents/'+this.selectedAsset.id:'/assessment/agents';
+      const taskDetailPath=this.selectedTask&&this.selectedTask.id?'/assessment/tasks/'+this.selectedTask.id:'/assessment/tasks';
+      const skillDetailPath=this.selectedSkill&&this.selectedSkill.id?'/assessment/skills/'+this.selectedSkill.id:'/assessment/skills';
+      const findingDetailPath=this.selectedFinding&&this.selectedFinding.id?'/assessment/findings/'+this.selectedFinding.id:'/assessment/findings';
+      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters',profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness'};
       return map[key]||'/assessment';
     },
     keyForPath(path){
@@ -1313,7 +1356,7 @@ data(){
     async saveAssessmentDraft(){
       this.opsBusy=true; this.apiError='';
       try {
-        const res=await this.apiPost('/api/v1/assessments/drafts', {target_id:this.selectedAsset&&this.selectedAsset.id, target_path:this.form.targetPath, adapter:this.form.adapter, profile_id:'standard-complete@4.1.0', wizard:this.wizard, plan_confirmed:this.planConfirmed});
+        const res=await this.apiPost('/api/v1/assessments/drafts', {name:this.form.assessmentName, business_note:this.form.businessNote, target_id:this.selectedAsset&&this.selectedAsset.id, target_path:this.form.targetPath, additional_paths:this.form.discoveryPaths, adapter:this.form.adapter, profile_id:'standard-complete@4.1.0', wizard:this.wizard, plan_confirmed:this.planConfirmed});
         if(res.draft){ this.mergeRecords('tasks', [res.draft]); this.selectedTask=res.draft; }
         this.toastMsg('测评草稿已保存：'+(res.draft&&res.draft.id || 'DRAFT'));
       } catch (err) { this.apiError=this.describeError(err); }
@@ -1352,9 +1395,9 @@ data(){
     async submitAssessment(){
       this.opsBusy=true; this.apiError='';
       try {
-        const res = await this.apiPost('/api/v1/assessments', {target_id:this.selectedAsset&&this.selectedAsset.id, target_path:this.form.targetPath, adapter:this.form.adapter, profile_id:'standard-complete@4.1.0'});
+        const res = await this.apiPost('/api/v1/assessments', {name:this.form.assessmentName, business_note:this.form.businessNote, target_id:this.selectedAsset&&this.selectedAsset.id, target_path:this.form.targetPath, additional_paths:this.form.discoveryPaths, adapter:this.form.adapter, profile_id:'standard-complete@4.1.0'});
         this.mergeScanResponse(res);
-        const t = res.assessment || Object.assign({}, this.tasks[0], {id:'asm_v4_'+Date.now(), name:'新建完整测评', progress:1, status:'运行中', stage:'PRECHECK'});
+        const t = res.assessment || {id:'asm_local_'+Date.now(), name:this.form.assessmentName||'本机 Agent 安全测评', target:this.form.targetPath||'local-machine', progress:0, status:'QUEUED', stage:'PRECHECK'};
         this.mergeRecords('tasks', [t]);this.selectedTask=t;this.wizard=1;this.planConfirmed=false;this.go('task-detail');this.toastMsg('Assessment Plan 已固化并完成本地扫描');
       } catch (err) { this.apiError = this.describeError(err); }
       finally { this.opsBusy=false; }

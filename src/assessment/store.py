@@ -21,6 +21,150 @@ DB_PATH = DB_DIR / "app.db"
 SEED_PATH = PACKAGE_ROOT / "static" / "assessment" / "seed.json"
 
 
+RUNTIME_SEED_LIST_KEYS = {
+    "agentAssets",
+    "discoveryHits",
+    "discoveryErrors",
+    "discoveryLog",
+    "mcpServers",
+    "consents",
+    "tools",
+    "skills",
+    "tasks",
+    "jobs",
+    "processes",
+    "taskEvents",
+    "findings",
+    "evidenceItems",
+    "reports",
+    "components",
+    "redteamRuns",
+    "attackPaths",
+    "policyDrafts",
+    "retests",
+    "backupRecords",
+    "heatmap",
+}
+
+RUNTIME_SEED_OBJECT_KEYS = {
+    "selectedAsset",
+    "selectedTask",
+    "selectedMcp",
+    "selectedTool",
+    "selectedConsent",
+    "selectedSkill",
+    "selectedCase",
+    "selectedRedteamRun",
+    "selectedFinding",
+    "selectedEvidence",
+    "selectedAttackPath",
+    "selectedPolicyDraft",
+    "selectedReport",
+}
+
+PROTOTYPE_RUNTIME_TABLES = [
+    "assessment_target",
+    "discovery_run",
+    "discovery_hit",
+    "agent_instance",
+    "config_snapshot",
+    "component",
+    "component_relation",
+    "assessment",
+    "assessment_scope",
+    "task",
+    "task_stage",
+    "task_event",
+    "scan_stage",
+    "scan_job",
+    "mcp_consent",
+    "consent_request",
+    "process_execution",
+    "mcp_server",
+    "mcp_tool",
+    "mcp_prompt",
+    "mcp_resource",
+    "mcp_signature",
+    "skill",
+    "skill_file",
+    "scanner_run",
+    "test_run",
+    "redteam_run",
+    "redteam_message",
+    "finding",
+    "finding_instance",
+    "evidence",
+    "artifact",
+    "attack_path",
+    "attack_path_node",
+    "attack_path_edge",
+    "policy_draft",
+    "report",
+    "retest",
+    "retest_run",
+    "guard_event",
+    "defense_recommendation",
+]
+
+PROTOTYPE_SEED_IDS = {
+    "agt_cc_001",
+    "agt_cx_001",
+    "agt_oc_001",
+    "agt_he_001",
+    "asm_v4_001",
+    "asm_v4_002",
+    "asm_v4_003",
+    "asm_v4_004",
+    "asm_v4_005",
+    "mcp_001",
+    "mcp_002",
+    "mcp_003",
+    "mcp_004",
+    "mcp_005",
+    "skill_001",
+    "skill_002",
+    "skill_003",
+    "skill_004",
+    "skill_005",
+    "fnd_001",
+    "fnd_002",
+    "fnd_003",
+    "fnd_004",
+    "ev_001",
+    "ev_002",
+    "ev_003",
+    "ev_004",
+    "rpt_001",
+    "rpt_002",
+    "rpt_003",
+    "rpt_004",
+    "rt_001",
+    "rt_002",
+    "rt_003",
+    "job_001",
+    "job_002",
+    "job_003",
+    "job_004",
+    "job_005",
+    "job_006",
+    "job_007",
+    "exec_001",
+    "exec_002",
+    "exec_003",
+    "exec_004",
+}
+
+PROTOTYPE_SEED_MARKERS = (
+    "claude-code-repo-demo",
+    "codex-project-a",
+    "openclaw-gateway-lab",
+    "hermes-profile-dev",
+    "/workspace/demo",
+    "/workspace/claude-demo",
+    "unknown.example",
+)
+
+
 GENERIC_TABLES = [
     "assessment_target",
     "discovery_run",
@@ -112,6 +256,7 @@ class AssessmentStore:
             directory.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             self._create_schema(conn)
+            self._purge_prototype_runtime_records(conn)
             self._seed_if_needed(conn)
 
     def connect(self) -> sqlite3.Connection:
@@ -193,24 +338,60 @@ class AssessmentStore:
         )
         existing = conn.execute("SELECT value_json FROM app_setting WHERE key='ui_state'").fetchone()
         if existing:
+            self._sanitize_ui_state(conn, json.loads(existing["value_json"]))
             self._sync_contract_seed(conn)
             return
-        state = load_seed_state()
+        state = runtime_empty_seed_state(load_seed_state())
         state["completeness"] = completeness_rows()
         conn.execute(
             "INSERT INTO app_setting(key, value_json, managed_by, updated_at) VALUES (?, ?, ?, ?)",
             ("ui_state", json.dumps(state, ensure_ascii=False), "local", now),
         )
         self._sync_contract_seed(conn, state)
-        self.audit(conn, "system.seed", "app", "ui_state", {"source": "prototype seed"})
+        self.audit(conn, "system.seed", "app", "ui_state", {"source": "runtime-empty seed"})
         conn.commit()
+
+    def _sanitize_ui_state(self, conn: sqlite3.Connection, state: dict) -> None:
+        sanitized = runtime_empty_seed_state(state)
+        if sanitized == state:
+            return
+        conn.execute(
+            """
+            INSERT INTO app_setting(key, value_json, managed_by, updated_at)
+            VALUES ('ui_state', ?, 'local', ?)
+            ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+            """,
+            (json.dumps(sanitized, ensure_ascii=False), utc_now()),
+        )
+
+    def _purge_prototype_runtime_records(self, conn: sqlite3.Connection) -> None:
+        deleted: dict[str, int] = {}
+        for table in PROTOTYPE_RUNTIME_TABLES:
+            rows = conn.execute(f"SELECT id, data_json FROM {table}").fetchall()
+            delete_ids = [
+                row["id"]
+                for row in rows
+                if row["id"] in PROTOTYPE_SEED_IDS or any(marker in row["data_json"] for marker in PROTOTYPE_SEED_MARKERS)
+            ]
+            for record_id in delete_ids:
+                conn.execute(f"DELETE FROM {table} WHERE id=?", (record_id,))
+            if delete_ids:
+                deleted[table] = len(delete_ids)
+        if deleted:
+            now = utc_now()
+            total = sum(deleted.values())
+            conn.execute(
+                "INSERT OR REPLACE INTO app_metadata(key, value, updated_at) VALUES (?, ?, ?)",
+                ("prototype_seed_purged_at", now, now),
+            )
+            self.audit(conn, "system.purge_prototype_seed", "app", "runtime_records", {"deleted": total, "tables": deleted})
 
     def _sync_contract_seed(self, conn: sqlite3.Connection, state: dict | None = None) -> None:
         rows = completeness_rows()
         now = utc_now()
         if state is None:
             existing = conn.execute("SELECT value_json FROM app_setting WHERE key='ui_state'").fetchone()
-            state = json.loads(existing["value_json"]) if existing else load_seed_state()
+            state = json.loads(existing["value_json"]) if existing else runtime_empty_seed_state(load_seed_state())
         existing_ids = {row.get("id") for row in state.get("completeness", []) if isinstance(row, dict)}
         if existing_ids != {row["id"] for row in rows}:
             state["completeness"] = rows
@@ -235,7 +416,7 @@ class AssessmentStore:
         with self.connect() as conn:
             row = conn.execute("SELECT value_json FROM app_setting WHERE key='ui_state'").fetchone()
         if not row:
-            return load_seed_state()
+            return runtime_empty_seed_state(load_seed_state())
         return json.loads(row["value_json"])
 
     def save_state(self, state: dict) -> None:
@@ -489,6 +670,39 @@ class AssessmentStore:
 
 def load_seed_state() -> dict:
     return json.loads(SEED_PATH.read_text(encoding="utf-8"))
+
+
+def runtime_empty_seed_state(state: dict) -> dict:
+    sanitized = dict(state)
+    for key in RUNTIME_SEED_LIST_KEYS:
+        sanitized[key] = []
+    for key in RUNTIME_SEED_OBJECT_KEYS:
+        sanitized[key] = {}
+    sanitized["form"] = {
+        "adapter": "自动识别",
+        "targetPath": "",
+        "discoveryPaths": "",
+        "snapshotContent": "",
+        "assessmentName": "",
+        "businessNote": "",
+        "redteamTarget": "local-agent-dry-run",
+        "redteamCaseId": "",
+        "redteamMode": "dry-run",
+    }
+    sanitized["planJson"] = json.dumps(
+        {
+            "adapter": "auto-detect",
+            "target": "local-machine",
+            "profile": "standard-complete@4.1.0",
+            "safe_mode": "local-readonly",
+            "remote_analysis": False,
+            "mutates_installed_agents": False,
+            "stdio_mcp": "per-server-consent",
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    return sanitized
 
 
 def utc_now() -> str:
