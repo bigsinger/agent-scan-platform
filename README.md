@@ -38,7 +38,19 @@ python tools/check_frontend_offline.py --html src/assessment/static/assessment/i
 pytest
 ```
 
-Fixture 快速扫描：
+本机快速扫描：
+
+```powershell
+$body = @{
+  mode = "machine"
+  adapter = "自动识别"
+  max_files = 500
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
+```
+
+测试 Fixture 快速扫描：
 
 ```powershell
 $body = @{
@@ -56,4 +68,15 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Bo
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/guard/check
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
+```
+
+报告与 SQLite 运维：
+
+```powershell
+$report = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/reports -Body (@{ type = "Standard" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v1/reports/$($report.report.id)/download" -OutFile report.html
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/integrity-check
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/backup
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/checkpoint
 ```

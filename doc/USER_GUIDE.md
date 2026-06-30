@@ -10,19 +10,16 @@
 http://127.0.0.1:8000/assessment
 ```
 
-推荐首次使用扫描内置 Fixture：
+推荐首次使用本机只读扫描：
 
 1. 进入“快速扫描”。
-2. 扫描模式选择“指定目录/文件”。
-3. 路径填写：
-
-   ```text
-   tests\fixtures\sample_agent_project
-   ```
-
+2. 扫描模式选择“发现本机 Agent”。
+3. 路径留空，系统会发现当前用户下已安装或可识别的 Codex、Hermes、Claude Code、Cursor 等 Agent 配置。
 4. 点击“开始快速扫描”。
 5. 系统进入任务详情页，展示阶段、事件、P0/P1 数量。
 6. 打开“风险中心”“证据中心”“报告中心”查看结果。
+
+`tests\fixtures\sample_agent_project` 仍保留为开发和回归测试样本，不作为企业客户默认验收入口。
 
 ## 2. 可以扫描什么
 
@@ -58,7 +55,7 @@ http://127.0.0.1:8000/assessment
 
 | 字段 | 说明 |
 | --- | --- |
-| 扫描模式 | 本机发现、指定目录/文件、单个 MCP Server、内置 Fixture |
+| 扫描模式 | 本机发现、指定目录/文件、单个 MCP Server |
 | Agent 类型提示 | 可选择 Claude Code、Codex、OpenClaw、Hermes 或自动识别 |
 | 路径 / URL | 留空时扫描当前服务目录；建议填写明确目录或配置文件 |
 | 扫描 Skills | 开启后分析 `SKILL.md`、脚本和资源 |
@@ -266,8 +263,8 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 下载方式：
 
 1. 在页面打开报告中心。
-2. 找到最新报告 ID。
-3. 访问：
+2. 点击“生成报告”，系统会基于当前 SQLite 中的任务、风险和证据生成 HTML/JSON 制品。
+3. 点击“预览”查看报告摘要，点击“下载”或访问：
 
    ```text
    /api/v1/reports/{report_id}/download
@@ -294,10 +291,9 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 
 ```powershell
 $body = @{
-  mode = "path"
-  target_path = "tests\fixtures\sample_agent_project"
-  adapter = "Codex"
-  max_files = 200
+  mode = "machine"
+  adapter = "自动识别"
+  max_files = 500
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -311,8 +307,7 @@ Invoke-RestMethod `
 
 ```powershell
 $body = @{
-  path = "tests\fixtures\sample_agent_project"
-  scope = "fixture"
+  scope = "current-user"
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -334,6 +329,47 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/findings?page_size=50
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/evidence?page_size=50
 ```
 
+### 重新脱敏证据
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/evidence/<evidence_id>/redact `
+  -Body (@{} | ConvertTo-Json) `
+  -ContentType "application/json"
+```
+
+### 风险确认和复测
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/accept `
+  -Body (@{ reason = "人工确认" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/retest `
+  -Body (@{ scope = "固化输入" } | ConvertTo-Json) `
+  -ContentType "application/json"
+```
+
+### 生成报告
+
+```powershell
+$body = @{
+  type = "Standard"
+  assessment_id = "<assessment_id>"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/reports `
+  -Body $body `
+  -ContentType "application/json"
+```
+
 ### 下载报告
 
 ```powershell
@@ -342,12 +378,21 @@ Invoke-WebRequest `
   -OutFile report.html
 ```
 
+### SQLite 运维
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/integrity-check
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/backup
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/checkpoint
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/backups
+```
+
 ## 11. 客户测评建议流程
 
 企业客户 POC 推荐流程：
 
-1. 用 Fixture 扫描确认系统功能正常。
-2. 扫描一个 Codex 或 Claude Code 项目目录。
+1. 先执行“发现本机 Agent”，确认 Codex、Hermes 等已安装 Agent 能被识别。
+2. 执行本机快速扫描或扫描一个 Codex / Claude Code 项目目录。
 3. 查看本机发现结果和 Agent 资产。
 4. 检查 MCP Server 是否全部进入审批。
 5. 在风险中心筛选 P0/P1。
@@ -356,9 +401,9 @@ Invoke-WebRequest `
 8. 修复一个问题后重新扫描。
 9. 对比复测前后报告。
 
-## 12. 当前规则命中示例
+## 12. 测试 Fixture 规则命中示例
 
-Fixture 目录会触发：
+开发/回归测试 Fixture `tests\fixtures\sample_agent_project` 会触发：
 
 | 规则 | 示例 |
 | --- | --- |
@@ -405,7 +450,7 @@ Fixture 目录会触发：
 1. 服务可在无公网环境启动。
 2. `/assessment` 页面无空白，无 CDN 依赖。
 3. 48 个页面/详情入口可打开。
-4. Fixture 快速扫描能生成风险、证据和报告。
+4. 本机快速扫描能生成风险、证据和报告；测试 Fixture 可用于回归校验。
 5. MCP stdio Server 只生成审批，不自动启动。
 6. 证据和报告中不出现明文测试 Key。
 7. SQLite 可备份、可完整性检查。

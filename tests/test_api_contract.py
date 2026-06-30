@@ -50,9 +50,37 @@ def test_write_api_updates_state_and_audit():
 def test_database_maintenance_endpoints():
     assert client.get("/api/v1/database/status").status_code == 200
     assert client.post("/api/v1/database/integrity-check").json()["integrity"]["status"] == "PASS"
+    assert client.post("/api/v1/sqlite/integrity-check").json()["integrity"]["status"] == "PASS"
+    assert client.post("/api/v1/sqlite/checkpoint").json()["checkpoint"]["status"] == "DONE"
     backup = client.post("/api/v1/database/backup")
     assert backup.status_code == 200
     assert backup.json()["backup"]["sha256"]
+    backups = client.get("/api/v1/backups")
+    assert backups.status_code == 200
+    assert backups.json()["total"] >= 1
+
+
+def test_report_evidence_and_risk_closure_actions():
+    scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50}).json()
+    report = client.post("/api/v1/reports", json={"assessment_id": scan["assessment"]["id"], "type": "Standard"}).json()["report"]
+    assert report["status"] == "READY"
+    preview = client.get(f"/api/v1/reports/{report['id']}")
+    assert preview.status_code == 200
+    assert preview.json()["preview"]["download"].endswith("/download")
+    download = client.get(f"/api/v1/reports/{report['id']}/download")
+    assert download.status_code == 200
+    assert "Agent 安全测评能力模块 V4.1" in download.text
+
+    evidence = scan["evidence"][0]
+    redacted = client.post(f"/api/v1/evidence/{evidence['id']}/redact", json={})
+    assert redacted.status_code == 200
+    assert redacted.json()["evidence"]["redaction"] == "已脱敏"
+
+    finding = scan["findings"][0]
+    accepted = client.post(f"/api/v1/findings/{finding['id']}/accept", json={"reason": "contract test"})
+    assert accepted.json()["finding"]["status"] == "已接受风险"
+    retest = client.post(f"/api/v1/findings/{finding['id']}/retest", json={"scope": "固化输入"})
+    assert retest.json()["retest"]["status"] == "QUEUED"
 
 
 def test_representative_spec_endpoints():

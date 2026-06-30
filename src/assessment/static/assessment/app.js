@@ -25,6 +25,11 @@ data(){
     initial.discoveryLog = initial.discoveryLog || [];
     initial.sqliteStatus = initial.sqliteStatus || {file_bytes:0, mode:'WAL', state:'未知', pragma:{}};
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
+    initial.quickModes = (initial.quickModes || []).filter(mode => mode.id !== 'fixture');
+    initial.backupRecords = initial.backupRecords || [];
+    initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
+    initial.reportPreviewData = initial.reportPreviewData || null;
+    initial.opsBusy = false;
     return initial;
   },
   computed:{
@@ -69,6 +74,21 @@ data(){
       const dt=new Date(raw);
       if(Number.isNaN(dt.getTime())) return String(raw).replace('T',' ').replace(/\.\d+Z?$/,'');
       return new Intl.DateTimeFormat('zh-CN', {year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'}).format(dt);
+    },
+    sqliteWalBusy(){
+      const wal=this.sqliteStatus && this.sqliteStatus.wal_checkpoint || [];
+      return wal[0] || 0;
+    },
+    sqliteWalFrames(){
+      const wal=this.sqliteStatus && this.sqliteStatus.wal_checkpoint || [];
+      return wal[1] || 0;
+    },
+    sqliteWalCheckpointed(){
+      const wal=this.sqliteStatus && this.sqliteStatus.wal_checkpoint || [];
+      return wal[2] || 0;
+    },
+    sqliteIntegrityDisplay(){
+      return (this.sqliteStatus && this.sqliteStatus.integrity) || '未检查';
     }
   },
   mounted(){
@@ -115,13 +135,19 @@ data(){
     async loadBootstrap(){
       try {
         const payload=await this.apiGet('/api/v1/bootstrap');
-        if(payload && payload.state){ Object.assign(this, payload.state); this.syncRouteFromLocation(); }
+        if(payload && payload.state){
+          Object.assign(this, payload.state);
+          this.quickModes=(this.quickModes || []).filter(mode => mode.id !== 'fixture');
+          if(this.quickMode==='fixture') this.quickMode='machine';
+          this.syncRouteFromLocation();
+        }
       } catch (err) {
         this.apiError='后端 API 暂不可用，当前显示本地种子数据。';
       }
     },
     async apiGet(path){ return this.apiRequest(path); },
     async apiPost(path, body){ return this.apiRequest(path, {method:'POST', body:JSON.stringify(body||{})}); },
+    async apiPatch(path, body){ return this.apiRequest(path, {method:'PATCH', body:JSON.stringify(body||{})}); },
     async apiRequest(path, options){
       const res=await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, options||{}));
       const text=await res.text();
@@ -133,6 +159,13 @@ data(){
 
     go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
+    formatBytes(bytes){
+      const value=Number(bytes)||0;
+      if(value>=1024*1024*1024) return (value/1024/1024/1024).toFixed(1)+' GB';
+      if(value>=1024*1024) return (value/1024/1024).toFixed(1)+' MB';
+      if(value>=1024) return (value/1024).toFixed(1)+' KB';
+      return value+' B';
+    },
     statusClass(s){
       if(s==='已完成') return 'low';
       if(s==='COMPLETED'||s==='READY'||s==='ACTIVE') return 'low';
@@ -248,6 +281,116 @@ data(){
         this.toastMsg('只读 Guard 检查完成：变化 '+((res.event&&res.event.changed)||0)+'，建议 '+((res.event&&res.event.recommendations)||0));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.quickBusy=false; }
+    },
+    async createRuntimeReport(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const assessmentId=(this.selectedTask&&this.selectedTask.id) || ((this.tasks||[])[0] && this.tasks[0].id) || '';
+        const res=await this.apiPost('/api/v1/reports', {assessment_id:assessmentId, type:'Standard'});
+        if(res.report){
+          this.mergeRecords('reports', [res.report]);
+          await this.openReportPreview(res.report);
+          this.toastMsg('本地 HTML/JSON 报告已生成：'+res.report.id);
+        }
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async openReportPreview(report){
+      if(!report || !report.id) return;
+      this.selectedReport=report;
+      this.reportPreview=true;
+      try {
+        const res=await this.apiGet('/api/v1/reports/'+encodeURIComponent(report.id));
+        this.selectedReport=Object.assign({}, report, res.item || {});
+        this.reportPreviewData=res.preview || null;
+      } catch (err) { this.apiError=this.describeError(err); }
+    },
+    downloadReport(report){
+      if(!report || !report.id) return;
+      window.open('/api/v1/reports/'+encodeURIComponent(report.id)+'/download', '_blank', 'noopener');
+      this.toastMsg('已请求下载本地 HTML 报告');
+    },
+    async syncReport(report){
+      if(!report || !report.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        await this.apiPost('/api/v1/integrations/runtime-platform/sync', {report_id:report.id});
+        this.toastMsg('报告回写事件已写入本地审计');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async acceptFinding(finding){
+      if(!finding || !finding.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/findings/'+encodeURIComponent(finding.id)+'/accept', {reason:'本地人工确认'});
+        if(res.finding){ this.mergeRecords('findings', [res.finding]); this.selectedFinding=res.finding; }
+        this.toastMsg('风险状态已写入：已接受风险');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async retestFinding(finding){
+      if(!finding || !finding.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/findings/'+encodeURIComponent(finding.id)+'/retest', {scope:'固化输入'});
+        if(res.retest){ this.mergeRecords('retests', [res.retest]); }
+        this.go('retests');
+        this.toastMsg('复测任务已排队：'+(res.retest&&res.retest.id || 'QUEUED'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async redactEvidence(evidence){
+      if(!evidence || !evidence.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/evidence/'+encodeURIComponent(evidence.id)+'/redact', {});
+        if(res.evidence){ this.mergeRecords('evidenceItems', [res.evidence]); this.selectedEvidence=res.evidence; }
+        this.toastMsg('证据脱敏状态已刷新');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async runSqliteBackup(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/sqlite/backup', {});
+        if(res.backup){ this.mergeRecords('backupRecords', [res.backup]); }
+        await this.refreshSqliteStatus();
+        this.toastMsg('在线备份已创建：'+(res.backup&&res.backup.relative_path || '完成'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async runSqliteIntegrity(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/sqlite/integrity-check', {});
+        this.sqliteStatus=Object.assign({}, this.sqliteStatus, {integrity:res.integrity && res.integrity.status || 'UNKNOWN'});
+        this.toastMsg('完整性检查：'+(res.integrity&&res.integrity.result || 'UNKNOWN'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async runSqliteCheckpoint(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        await this.apiPost('/api/v1/sqlite/checkpoint', {});
+        await this.refreshSqliteStatus();
+        this.toastMsg('WAL Checkpoint 已完成');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async refreshSqliteStatus(){
+      const res=await this.apiGet('/api/v1/sqlite/status');
+      this.sqliteStatus=res;
+    },
+    async runScheduleNow(schedule){
+      if(!schedule || !schedule.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/schedules/'+encodeURIComponent(schedule.id)+'/run-now', {});
+        if(res.run){ this.mergeRecords('tasks', [res.run]); }
+        this.toastMsg('计划已立即入队：'+(res.run&&res.run.id || schedule.id));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
     },
     openAgent(a){this.selectedAsset=a;this.agentTab='概览';this.current='agent-detail';window.scrollTo(0,0);},
     openTask(t){this.selectedTask=t;this.taskTab='执行概览';this.current='task-detail';window.scrollTo(0,0);},

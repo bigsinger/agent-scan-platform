@@ -46,6 +46,8 @@ LIST_KEYS = {
     "/integrations": "integrations",
     "/third-party": "licenses",
     "/licenses": "licenses",
+    "/backups": "backupRecords",
+    "/database/backups": "backupRecords",
     "/completeness": "completeness",
     "/discovery-runs": "discoveryRuns",
     "/discovery-hits": "discoveryHits",
@@ -77,6 +79,8 @@ TABLE_KEYS = {
     "/redteam-cases": "redteam_case",
     "/licenses": "third_party_component",
     "/tools": "mcp_tool",
+    "/backups": "backup_record",
+    "/database/backups": "backup_record",
 }
 
 
@@ -168,8 +172,18 @@ async def database_integrity_check() -> dict:
     return {"ok": True, "integrity": get_store().integrity_check()}
 
 
+@router.post("/sqlite/integrity-check")
+async def sqlite_integrity_check() -> dict:
+    return {"ok": True, "integrity": get_store().integrity_check()}
+
+
 @router.post("/database/checkpoint")
 async def database_checkpoint() -> dict:
+    return {"ok": True, "checkpoint": get_store().checkpoint()}
+
+
+@router.post("/sqlite/checkpoint")
+async def sqlite_checkpoint() -> dict:
     return {"ok": True, "checkpoint": get_store().checkpoint()}
 
 
@@ -618,7 +632,8 @@ def get_item_route(path: str, state: dict) -> dict | None:
     if len(parts) >= 2 and parts[0] == "reports":
         item = get_store().get_record("report", parts[1]) or find_item(state.get("reports", []), parts[1])
         if len(parts) == 2:
-            return {"item": item or {"id": parts[1], "status": "NOT_FOUND"}}
+            item = item or {"id": parts[1], "status": "NOT_FOUND"}
+            return {"item": item, "preview": report_preview(item)}
         if parts[2:] == ["preview"]:
             return {"item": item, "preview": report_preview(item)}
     if len(parts) >= 2 and parts[0] == "profiles":
@@ -1049,6 +1064,7 @@ REAL_STATE_PATHS = {
     "attackPaths": "/attack-paths",
     "retests": "/retests",
     "ruleRows": "/rules",
+    "backupRecords": "/backups",
 }
 
 
@@ -1111,6 +1127,8 @@ def real_items_for_path(path: str) -> list[dict]:
         return combine_items(get_store().list_records("scanner_plugin"), get_store().list_records("scanner"))
     if path == "/integrations":
         return combine_items(get_store().list_records("integration"), get_store().list_records("integration_config"))
+    if path in {"/backups", "/database/backups"}:
+        return combine_items(get_store().list_records("backup_record"), get_store().list_records("database_backup"))
     if path == "/completeness":
         return completeness_rows()
     table = TABLE_KEYS.get(path)

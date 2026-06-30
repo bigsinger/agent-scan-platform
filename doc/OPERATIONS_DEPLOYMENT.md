@@ -144,13 +144,19 @@ data/backups/app-YYYYMMDDHHMMSS.db
 完整性检查：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/database/integrity-check
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/integrity-check
 ```
 
 WAL checkpoint：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/database/checkpoint
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/checkpoint
+```
+
+备份记录：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/backups
 ```
 
 数据库压缩：
@@ -204,7 +210,18 @@ python tools\check_frontend_offline.py --html src\assessment\static\assessment\i
 pytest -q
 ```
 
-Fixture 快速扫描：
+本机快速扫描：
+
+```powershell
+$body = @{
+  mode = "machine"
+  adapter = "自动识别"
+  max_files = 500
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
+```
+
+测试 Fixture 回归扫描：
 
 ```powershell
 $body = @{
@@ -234,6 +251,36 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Bo
 
 - HTML：面向人工审阅和客户交付。
 - JSON：面向平台同步、二次分析和归档。
+
+生成与下载：
+
+```powershell
+$report = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/reports `
+  -Body (@{ type = "Standard"; assessment_id = "<assessment_id>" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000/api/v1/reports/$($report.report.id)/download" `
+  -OutFile report.html
+```
+
+风险闭环：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/accept `
+  -Body (@{ reason = "人工确认" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/retest `
+  -Body (@{ scope = "固化输入" } | ConvertTo-Json) `
+  -ContentType "application/json"
+```
 
 ## 11. 安全加固建议
 
