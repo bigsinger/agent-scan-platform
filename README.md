@@ -5,7 +5,7 @@
 - FastAPI REST/SSE API，Base Path 为 `/api/v1`。
 - SQLite 本地数据库，默认位置 `data/db/app.db`。
 - 正式前端静态资源：`/static/vendor/vue.global.prod.js`、`/static/assessment/app.js`、`/static/assessment/style.css`。
-- 48 个页面/详情视图入口与 139 个 V4.1 SPEC API 契约均可访问，并注入 FastAPI OpenAPI。
+- 48 个页面/详情视图入口与 141 个 V4.1 SPEC API 契约均可访问，并注入 FastAPI OpenAPI。
 - 前端不依赖 CDN，Vue 已 vendoring 到本地并登记 `vendor-manifest.json`。
 - 本地只读扫描：Agent 发现、MCP 配置解析、Skill 扫描、规则命中、脱敏证据、HTML/JSON 报告。
 - stdio MCP Server 默认只生成审批记录，不自动启动。
@@ -188,4 +188,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/rules/SECRET-KE
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "本机变化扫描"; type = "本机发现"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
 Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8000/api/v1/settings -Body (@{ default_profile = "standard-complete"; timezone = "Asia/Shanghai" } | ConvertTo-Json) -ContentType "application/json"
+$settings = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/settings/test -Body ($settings.settings | ConvertTo-Json -Depth 8) -ContentType "application/json"
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile module-settings.json
 ```

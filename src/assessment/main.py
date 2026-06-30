@@ -30,15 +30,16 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
         return JSONResponse(
             status_code=exc.status_code,
             content={
                 "error": {
                     "code": getattr(exc, "code", "HTTP_ERROR"),
-                    "message": str(exc.detail),
+                    "message": str(detail.get("message") or exc.detail),
                     "correlation_id": request.headers.get("X-Correlation-ID", uuid4().hex),
-                    "details": {},
-                    "validation_errors": [],
+                    "details": detail,
+                    "validation_errors": detail.get("validation_errors", []),
                 }
             },
         )

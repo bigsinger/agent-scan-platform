@@ -7,7 +7,7 @@
 | 路径 | 用途 |
 | --- | --- |
 | `src/assessment/main.py` | FastAPI 应用入口，挂载 `/api/v1` 和 `/assessment` |
-| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 139 个 API 契约并提供本地实现兜底 |
+| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 141 个 API 契约并提供本地实现兜底 |
 | `src/assessment/scanning/` | 本地发现、静态规则、证据脱敏、扫描编排 |
 | `src/assessment/scanning/guard.py` | 只读 Guard 防御监测，负责配置哈希基线、变化检测和防御建议 |
 | `src/assessment/reports/` | HTML/JSON 报告渲染器 |
@@ -459,6 +459,11 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/scanners/scanner.loc
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/rules/SECRET-KEY-001/test -Body (@{ sample = "sk-test-value" } | ConvertTo-Json) -ContentType "application/json"
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/settings/test
+$settings = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings
+$settings.settings.mcp_stdio_policy = "per-server-consent"
+Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8000/api/v1/settings -Body ($settings.settings | ConvertTo-Json -Depth 8) -ContentType "application/json"
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile module-settings.json
 ```
 
 发现资产运维操作只写本系统数据库和制品目录，不会修改 Codex/Hermes/Claude Code 安装目录：

@@ -106,6 +106,64 @@ def test_sandbox_policy_is_real_review_only_and_audited():
     assert "C:/Windows/System32/config" not in export_download.text
 
 
+def test_module_settings_are_persisted_validated_exported_and_imported():
+    loaded = client.get("/api/v1/settings")
+    assert loaded.status_code == 200
+    settings = loaded.json()["settings"]
+    assert settings["safe_mode"] == "local-readonly"
+    assert settings["mutates_installed_agents"] is False
+    assert settings["cloud_analysis"] is False
+
+    settings.update(
+        {
+            "module_name": "Agent 安全测评 Contract",
+            "default_profile": "standard-complete",
+            "timezone": "Asia/Shanghai",
+            "bind_host": "127.0.0.1",
+            "port": 8011,
+            "mcp_stdio_policy": "per-server-consent",
+            "remote_mcp_policy": "https-allowlist-required",
+            "tls_policy": "verify",
+            "unattended_stdio": "deny",
+            "secret_reference": "ref://tenant/security-judge",
+        }
+    )
+    saved = client.put("/api/v1/settings", json=settings)
+    assert saved.status_code == 200
+    saved_settings = saved.json()["settings"]
+    assert saved_settings["module_name"] == "Agent 安全测评 Contract"
+    assert isinstance(saved_settings["restart_required"], bool)
+    assert saved_settings["status"] in {"ACTIVE", "待重启"}
+    assert saved_settings["safe_mode"] == "local-readonly"
+
+    tested = client.post("/api/v1/settings/test", json=saved_settings)
+    assert tested.status_code == 200
+    assert tested.json()["test"]["status"] == "PASS"
+    assert tested.json()["test"]["mutates_installed_agents"] is False
+
+    unsafe = dict(saved_settings)
+    unsafe["mcp_stdio_policy"] = "auto-start"
+    unsafe["secret_reference"] = "sk-settingssecret1234567890"
+    rejected = client.put("/api/v1/settings", json=unsafe)
+    assert rejected.status_code == 422
+    assert {item["field"] for item in rejected.json()["error"]["validation_errors"]} >= {"mcp_stdio_policy", "secret_reference"}
+
+    exported = client.get("/api/v1/settings/export")
+    assert exported.status_code == 200
+    download = client.get(exported.json()["download"])
+    assert download.status_code == 200
+    assert "agent-security-module-settings@4.1" in download.text
+    assert "sk-settingssecret" not in download.text
+
+    imported = client.post(
+        "/api/v1/settings/import",
+        json={"settings": {**saved_settings, "module_name": "Agent 安全测评 Imported", "port": 8012}},
+    )
+    assert imported.status_code == 200
+    assert imported.json()["imported"] is True
+    assert imported.json()["settings"]["module_name"] == "Agent 安全测评 Imported"
+
+
 def test_report_evidence_and_risk_closure_actions():
     scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50}).json()
     report = client.post("/api/v1/reports", json={"assessment_id": scan["assessment"]["id"], "type": "Standard"}).json()["report"]

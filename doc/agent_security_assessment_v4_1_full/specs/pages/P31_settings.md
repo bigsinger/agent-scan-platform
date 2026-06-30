@@ -42,6 +42,8 @@
 - `GET /api/v1/settings`
 - `PUT /api/v1/settings`
 - `POST /api/v1/settings/test`
+- `GET /api/v1/settings/export`
+- `POST /api/v1/settings/import`
 
 接口返回必须统一包装：
 
@@ -68,6 +70,16 @@
 ## 5. 主要实体
 
 `module_setting, audit_event`
+
+当前本地实现中，`module_setting` 以 `settings_local` 作为唯一运行配置记录，保存到本系统 SQLite，同时同步到前端 `ui_state`。后端会强制保持：
+
+- `cloud_analysis=false`；
+- `safe_mode=local-readonly`；
+- `mutates_installed_agents=false`；
+- `mcp_stdio_policy` 只能是逐 Server 审批或永不启动；
+- `secret_reference` 只能保存引用，不保存原始 Secret。
+
+`GET /api/v1/settings/export` 只导出本系统 SQLite 中的脱敏配置 artifact，不读取或修改 Codex、Hermes 或其他已安装 Agent 配置。`POST /api/v1/settings/import` 会先规范化和校验，失败时返回 422，不落库。
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
@@ -138,8 +150,8 @@
 - [ ] 页面可本地双击打开，无公网依赖。
 - [ ] 页面 Console 无 Error。
 - [ ] 页面不存在空白首屏。
-- [ ] 页面主按钮、详情按钮、弹窗、抽屉均可交互。
-- [ ] 页面中展示的 API、实体、状态与本 SPEC 一致。
+- [x] 页面主按钮、设置校验、恢复默认、导出和导入均可交互。
+- [x] 页面中展示的 API、实体、状态与本 SPEC 一致。
 - [ ] E2E 覆盖成功、空状态、API 失败、权限不足。
 - [ ] AI 编码代理未删除错误兜底、未引入 CDN、未新增未定义字段。
 

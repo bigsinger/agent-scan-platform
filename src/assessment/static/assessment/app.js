@@ -73,6 +73,9 @@ data(){
     initial.ruleTestResult = null;
     initial.scannerTestResult = null;
     initial.settingsState = initial.settings || {};
+    initial.settingsValidation = [];
+    initial.settingsTestResult = null;
+    initial.settingsImportText = '';
     initial.opsBusy = false;
     return initial;
   },
@@ -274,6 +277,9 @@ data(){
       if(this.current==='abom' && this.selectedAsset && this.selectedAsset.id){
         this.loadAgentAbom(this.selectedAsset);
       }
+      if(this.current==='settings'){
+        this.loadSettings();
+      }
     },
     async loadBootstrap(){
       try {
@@ -285,6 +291,8 @@ data(){
           if(!this.selectedCase || !(this.selectedCase.id || this.selectedCase.name)) this.selectedCase=(this.redCases && this.redCases[0]) || (this.caseLibrary && this.caseLibrary[0]) || {};
           if(this.selectedCase && this.selectedCase.id) this.form.redteamCaseId=this.selectedCase.id;
           if(!this.selectedRedteamRun || !this.selectedRedteamRun.id) this.selectedRedteamRun=(this.redteamRuns && this.redteamRuns[0]) || {};
+          this.settingsState=payload.state.settings || this.settingsState || {};
+          this.settingsValidation=(this.settingsState && this.settingsState.validation_errors) || [];
           this.syncRouteFromLocation();
         }
       } catch (err) {
@@ -304,7 +312,7 @@ data(){
     },
     describeError(err){ return err && err.error ? err.error.message+' · '+err.error.correlation_id : String(err && err.message || err || '未知错误'); },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -1152,23 +1160,123 @@ data(){
       }
       this.toastMsg('启用连接测试已完成');
     },
+    async loadSettings(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/settings');
+        this.settingsState=res.settings || {};
+        this.settingsValidation=res.validation || this.settingsState.validation_errors || [];
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async restoreSettingsDefaults(){
+      this.settingsState={
+        id:'settings_local',
+        module_name:'Agent 安全测评',
+        mode:'local',
+        cloud_analysis:false,
+        default_profile:'standard-complete',
+        timezone:'Asia/Shanghai',
+        language:'zh-CN',
+        bind_host:'127.0.0.1',
+        port:8000,
+        max_parallel_assessments:2,
+        max_parallel_jobs:2,
+        cpu_workers:2,
+        external_cli_parallel:2,
+        mcp_stdio_parallel:1,
+        output_limit_mib:10,
+        graceful_shutdown_timeout_sec:10,
+        service_shutdown_timeout_sec:15,
+        judge_mode:'deterministic',
+        judge_provider:'local-rules',
+        judge_endpoint:'',
+        judge_model:'',
+        min_confidence:0.85,
+        mcp_stdio_policy:'per-server-consent',
+        mcp_approval_timeout_min:15,
+        remote_mcp_policy:'https-allowlist-required',
+        tls_policy:'verify',
+        unattended_stdio:'deny',
+        server_stderr_policy:'redact-10mib',
+        evidence_retention_days:180,
+        raw_sensitive_evidence:'do-not-store',
+        prompt_redaction:'structured',
+        absolute_path_policy:'tokenize',
+        extra_sensitive_patterns:'Authorization:\\s*Bearer\\n(sk|rk)-[A-Za-z0-9_-]+\\npassword\\s*=',
+        proxy_mode:'disabled',
+        proxy_url:'',
+        rule_update_source:'local-only',
+        report_formats:['HTML','JSON'],
+        host_platform_managed:false,
+        notifications_enabled:false,
+        secret_reference:'',
+        safe_mode:'local-readonly',
+        mutates_installed_agents:false
+      };
+      this.settingsValidation=[];
+      await this.saveSettings();
+    },
     async saveSettings(){
       this.opsBusy=true; this.apiError='';
       try {
-        const settings=Object.assign({}, this.settingsState, {default_profile:'standard-complete', timezone:'Asia/Shanghai', bind_host:'127.0.0.1', evidence_retention_days:180, mcp_stdio_policy:'per-server-consent', updated_at:new Date().toISOString()});
+        const settings=Object.assign({}, this.settingsState || {}, {cloud_analysis:false, mode:'local', safe_mode:'local-readonly', mutates_installed_agents:false});
         const res=await this.apiPut('/api/v1/settings', settings);
         this.settingsState=res.settings || settings;
-        this.toastMsg('设置已保存到 SQLite 并写入审计');
-      } catch (err) { this.apiError=this.describeError(err); }
+        this.settingsValidation=this.settingsState.validation_errors || [];
+        this.toastMsg('设置已保存到 SQLite：'+(this.settingsState.restart_required?'待重启':'无需重启'));
+      } catch (err) {
+        const detail=err && err.detail;
+        this.settingsValidation=(detail && detail.validation_errors) || [];
+        this.apiError=this.describeError(err);
+      }
       finally { this.opsBusy=false; }
     },
     async testSettings(){
       this.opsBusy=true; this.apiError='';
       try {
-        const res=await this.apiPost('/api/v1/settings/test', {});
-        this.toastMsg('设置校验：'+(res.test&&res.test.status));
+        const res=await this.apiPost('/api/v1/settings/test', this.settingsState || {});
+        this.settingsTestResult=res.test || {};
+        this.settingsValidation=this.settingsTestResult.validation_errors || [];
+        this.toastMsg('设置校验：'+(this.settingsTestResult.status || 'UNKNOWN'));
+      } catch (err) {
+        const detail=err && err.detail;
+        this.settingsValidation=(detail && detail.validation_errors) || [];
+        this.apiError=this.describeError(err);
+      }
+      finally { this.opsBusy=false; }
+    },
+    async exportSettings(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/settings/export');
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('设置 JSON 已导出：'+(res.artifact&&res.artifact.id || '完成'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
+    },
+    async importSettings(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const raw=String(this.settingsImportText || '').trim();
+        if(!raw){ this.toastMsg('请先粘贴设置 JSON'); return; }
+        const parsed=JSON.parse(raw);
+        const res=await this.apiPost('/api/v1/settings/import', parsed);
+        this.settingsState=res.settings || {};
+        this.settingsValidation=res.validation || this.settingsState.validation_errors || [];
+        this.settingsImportText='';
+        this.toastMsg('设置已导入并通过校验');
+      } catch (err) {
+        const detail=err && err.detail;
+        this.settingsValidation=(detail && detail.validation_errors) || [];
+        this.apiError=this.describeError(err);
+      }
+      finally { this.opsBusy=false; }
+    },
+    toggleReportFormat(format){
+      const list=this.settingsState.report_formats || [];
+      if(list.includes(format)) this.settingsState.report_formats=list.filter(x=>x!==format);
+      else this.settingsState.report_formats=list.concat([format]);
     },
     async exportLicenses(){
       try {

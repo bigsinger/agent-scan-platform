@@ -89,6 +89,8 @@
 - `GET /api/v1/settings`
 - `PUT /api/v1/settings`
 - `POST /api/v1/settings/test`
+- `GET /api/v1/settings/export`
+- `POST /api/v1/settings/import`
 - `GET /api/v1/sqlite/status`
 - `POST /api/v1/sqlite/backup`
 - `POST /api/v1/sqlite/vacuum`

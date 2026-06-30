@@ -90,6 +90,7 @@ GENERIC_TABLES = [
     "feature_requirement",
     "guard_event",
     "defense_recommendation",
+    "module_setting",
 ]
 
 ALLOWED_TABLES = set(GENERIC_TABLES)

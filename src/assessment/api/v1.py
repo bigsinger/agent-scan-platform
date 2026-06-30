@@ -314,8 +314,11 @@ async def generic_get(resource: str, request: Request) -> dict:
         return export_sandbox_policy(get_store(), state)
     if path == "/sandbox-policy":
         return {"policy": load_sandbox_policy(get_store(), state), "status": "ACTIVE"}
+    if path == "/settings/export":
+        return export_settings(get_store(), state)
     if path == "/settings":
-        return {"settings": state.get("settings", default_settings())}
+        settings = load_module_settings(get_store(), state)
+        return {"settings": settings, "validation": validate_settings(settings), "schema": settings_schema()}
     if path.startswith("/redteam/runs/"):
         run_id = path.split("/")[-1]
         return redteam_run_detail(get_store(), state, run_id)
@@ -402,6 +405,8 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         parts = [part for part in path.split("/") if part]
         server_id = parts[-2]
         result.update(inspect_mcp_server(store, state, server_id, body))
+    elif path == "/settings/import":
+        result.update(import_settings(store, state, body))
     elif path.startswith("/mcp-consents/") and path.endswith(("/approve", "/decline")):
         consent_id = path.split("/")[-2]
         status = "本任务允许" if path.endswith("/approve") else "已拒绝"
@@ -573,10 +578,9 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path == "/sandbox-policy/test":
         result["test"] = run_sandbox_policy_test(store, state, body)
     elif path == "/settings" and method == "PUT":
-        state["settings"] = body
-        result["settings"] = body
+        result["settings"] = save_module_settings(store, state, body)
     elif path == "/settings/test":
-        result["test"] = {"status": "PASS", "checked_at": utc_now()}
+        result["test"] = test_module_settings(store, state, body)
     elif path.startswith("/agent-scan/issues/") and method == "PUT":
         code = path.split("/")[-1]
         result["issue"] = update_issue_mapping(store, state, code, body)
@@ -3398,12 +3402,288 @@ def merge_state_record(state: dict, key: str, record: dict) -> None:
 
 def default_settings() -> dict:
     return {
+        "id": "settings_local",
+        "module_name": "Agent 安全测评",
         "mode": "local",
         "cloud_analysis": False,
+        "default_profile": "standard-complete",
+        "timezone": "Asia/Shanghai",
+        "language": "zh-CN",
+        "bind_host": "127.0.0.1",
+        "port": 8000,
         "max_parallel_assessments": 2,
+        "max_parallel_jobs": 2,
+        "cpu_workers": 2,
+        "external_cli_parallel": 2,
+        "mcp_stdio_parallel": 1,
+        "output_limit_mib": 10,
+        "graceful_shutdown_timeout_sec": 10,
+        "service_shutdown_timeout_sec": 15,
+        "judge_mode": "deterministic",
+        "judge_provider": "local-rules",
+        "judge_endpoint": "",
+        "judge_model": "",
+        "min_confidence": 0.85,
+        "mcp_stdio_policy": "per-server-consent",
+        "mcp_approval_timeout_min": 15,
+        "remote_mcp_policy": "https-allowlist-required",
+        "tls_policy": "verify",
+        "unattended_stdio": "deny",
+        "server_stderr_policy": "redact-10mib",
         "evidence_retention_days": 180,
+        "raw_sensitive_evidence": "do-not-store",
+        "prompt_redaction": "structured",
+        "absolute_path_policy": "tokenize",
+        "extra_sensitive_patterns": "Authorization:\\s*Bearer\n(sk|rk)-[A-Za-z0-9_-]+\npassword\\s*=",
+        "proxy_mode": "disabled",
+        "proxy_url": "",
+        "rule_update_source": "local-only",
+        "report_formats": ["HTML", "JSON"],
+        "host_platform_managed": False,
+        "notifications_enabled": False,
+        "secret_reference": "",
         "managed_by": "local",
+        "status": "ACTIVE",
+        "restart_required": False,
+        "updated_at": "",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
     }
+
+
+def load_module_settings(store: Any, state: dict | None = None) -> dict:
+    persisted = store.get_record("module_setting", "settings_local")
+    raw = persisted or ((state or {}).get("settings") if state else None) or {}
+    settings = normalize_settings(raw)
+    settings["validation_errors"] = validate_settings(settings)
+    settings["status"] = "校验失败" if settings["validation_errors"] else str(settings.get("status") or "ACTIVE")
+    return settings
+
+
+def normalize_settings(values: dict | None) -> dict:
+    settings = default_settings()
+    if isinstance(values, dict):
+        for key, value in values.items():
+            if key == "validation_errors":
+                continue
+            settings[key] = value
+    settings["id"] = "settings_local"
+    settings["mode"] = "local"
+    settings["cloud_analysis"] = False
+    settings["safe_mode"] = "local-readonly"
+    settings["mutates_installed_agents"] = False
+    settings["managed_by"] = "host-platform" if truthy(settings.get("host_platform_managed")) else "local"
+    settings["port"] = coerce_int(settings.get("port"), 8000)
+    for key, default, upper in [
+        ("max_parallel_assessments", 2, 16),
+        ("max_parallel_jobs", 2, 32),
+        ("cpu_workers", 2, 32),
+        ("external_cli_parallel", 2, 16),
+        ("mcp_stdio_parallel", 1, 8),
+        ("output_limit_mib", 10, 1024),
+        ("graceful_shutdown_timeout_sec", 10, 300),
+        ("service_shutdown_timeout_sec", 15, 600),
+        ("mcp_approval_timeout_min", 15, 1440),
+        ("evidence_retention_days", 180, 3650),
+    ]:
+        settings[key] = max(1, min(coerce_int(settings.get(key), default), upper))
+    settings["min_confidence"] = max(0.5, min(coerce_float(settings.get("min_confidence"), 0.85), 1.0))
+    settings["report_formats"] = normalize_list(settings.get("report_formats"), ["HTML", "JSON"])
+    if str(settings.get("proxy_mode")) == "enabled":
+        settings["proxy_url"] = redact_text(str(settings.get("proxy_url") or ""))
+    else:
+        settings["proxy_url"] = ""
+    settings["secret_reference"] = str(settings.get("secret_reference") or "")
+    settings["updated_at"] = str(settings.get("updated_at") or "")
+    return settings
+
+
+def save_module_settings(store: Any, state: dict, body: dict) -> dict:
+    settings = normalize_settings(body)
+    errors = validate_settings(settings)
+    if errors:
+        raise HTTPException(status_code=422, detail={"message": "settings validation failed", "validation_errors": errors})
+    previous = load_module_settings(store, state)
+    settings["updated_at"] = utc_now()
+    settings["restart_required"] = settings_restart_required(previous, settings)
+    settings["status"] = "待重启" if settings["restart_required"] else "ACTIVE"
+    updated = store.upsert_record("module_setting", settings, status=str(settings["status"]))
+    state["settings"] = updated
+    store.audit_event(
+        "put.settings",
+        "module_setting",
+        updated["id"],
+        {
+            "changed": sorted(changed_setting_keys(previous, updated)),
+            "restart_required": updated["restart_required"],
+            "payload_redacted": redacted_settings_payload(updated),
+        },
+    )
+    return updated
+
+
+def test_module_settings(store: Any, state: dict, body: dict | None = None) -> dict:
+    settings = normalize_settings(body if body else load_module_settings(store, state))
+    errors = validate_settings(settings)
+    warnings = settings_warnings(settings)
+    checked_at = utc_now()
+    result = {
+        "id": "settest_" + stable_hash(json.dumps(settings, ensure_ascii=False, sort_keys=True), 16),
+        "status": "PASS" if not errors else "FAIL",
+        "checked_at": checked_at,
+        "validation_errors": errors,
+        "warnings": warnings,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "checks": [
+            {"id": "mcp_stdio_policy", "status": "PASS" if not any(e["field"] == "mcp_stdio_policy" for e in errors) else "FAIL"},
+            {"id": "network_default", "status": "PASS" if settings.get("cloud_analysis") is False else "FAIL"},
+            {"id": "secret_persistence", "status": "PASS" if not raw_secret_like(str(settings.get("secret_reference") or "")) else "FAIL"},
+            {"id": "local_bind", "status": "PASS" if settings.get("bind_host") in {"127.0.0.1", "localhost"} else "WARN"},
+        ],
+    }
+    store.audit_event("post.settings.test", "module_setting", "settings_local", {"status": result["status"], "errors": len(errors), "warnings": len(warnings)})
+    return result
+
+
+def export_settings(store: Any, state: dict) -> dict:
+    settings = load_module_settings(store, state)
+    payload = {
+        "schema": "agent-security-module-settings@4.1",
+        "exported_at": utc_now(),
+        "settings": redacted_settings_payload(settings),
+        "validation": validate_settings(settings),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "boundary": "导出仅来自本系统 SQLite 设置记录；不读取或修改已安装 Agent 配置，不包含原始 Secret。",
+    }
+    artifact = store.write_artifact(
+        "module-settings",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"settings_id": settings["id"], "safe_mode": "local-readonly"},
+    )
+    store.audit_event("get.settings.export", "artifact", artifact["id"], {"settings_id": settings["id"]})
+    return {
+        "format": "module-settings-json",
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "settings_id": settings["id"],
+        "exported_at": payload["exported_at"],
+    }
+
+
+def import_settings(store: Any, state: dict, body: dict) -> dict:
+    raw_settings = body.get("settings") if isinstance(body.get("settings"), dict) else body
+    settings = save_module_settings(store, state, raw_settings)
+    store.audit_event("post.settings.import", "module_setting", settings["id"], {"payload_redacted": redacted_settings_payload(settings)})
+    return {"settings": settings, "imported": True, "validation": validate_settings(settings)}
+
+
+def validate_settings(settings: dict) -> list[dict]:
+    errors: list[dict] = []
+    if str(settings.get("mcp_stdio_policy")) not in {"per-server-consent", "never-start"}:
+        errors.append({"field": "mcp_stdio_policy", "message": "stdio MCP 必须逐 Server 审批或永不启动"})
+    if str(settings.get("unattended_stdio")) != "deny":
+        errors.append({"field": "unattended_stdio", "message": "无人值守 stdio 必须保持禁止"})
+    if settings.get("cloud_analysis") is not False:
+        errors.append({"field": "cloud_analysis", "message": "本地企业交付默认不得启用云分析"})
+    if str(settings.get("remote_mcp_policy")) not in {"https-allowlist-required", "deny-all"}:
+        errors.append({"field": "remote_mcp_policy", "message": "Remote MCP 必须 HTTPS allowlist 或全部拒绝"})
+    if str(settings.get("tls_policy")) != "verify":
+        errors.append({"field": "tls_policy", "message": "TLS 必须校验证书"})
+    if settings.get("port") < 1 or settings.get("port") > 65535:
+        errors.append({"field": "port", "message": "端口必须在 1-65535"})
+    if str(settings.get("bind_host")) not in {"127.0.0.1", "localhost", "0.0.0.0"}:
+        errors.append({"field": "bind_host", "message": "绑定地址必须为本地回环或显式全接口"})
+    if settings.get("bind_host") == "0.0.0.0" and not truthy(settings.get("host_platform_managed")):
+        errors.append({"field": "bind_host", "message": "全接口监听必须由主平台托管并补齐访问控制"})
+    if raw_secret_like(str(settings.get("secret_reference") or "")):
+        errors.append({"field": "secret_reference", "message": "不得保存原始 Secret，只允许 Secret Reference"})
+    if str(settings.get("raw_sensitive_evidence")) not in {"do-not-store", "authorized-7-days"}:
+        errors.append({"field": "raw_sensitive_evidence", "message": "原始敏感证据策略无效"})
+    if str(settings.get("rule_update_source")) not in {"local-only", "signed-mirror"}:
+        errors.append({"field": "rule_update_source", "message": "规则更新源必须为本地或签名镜像"})
+    return errors
+
+
+def settings_warnings(settings: dict) -> list[dict]:
+    warnings: list[dict] = []
+    if settings.get("bind_host") == "0.0.0.0":
+        warnings.append({"field": "bind_host", "message": "全接口监听需在反向代理或主平台鉴权之后暴露"})
+    if settings.get("evidence_retention_days", 0) > 365:
+        warnings.append({"field": "evidence_retention_days", "message": "证据保留超过 365 天，需确认企业合规要求"})
+    if "JSON" not in normalize_list(settings.get("report_formats"), []):
+        warnings.append({"field": "report_formats", "message": "建议保留 JSON 报告以便审计和复测对比"})
+    return warnings
+
+
+def settings_schema() -> dict:
+    return {
+        "entity": "module_setting",
+        "safe_defaults": {
+            "cloud_analysis": False,
+            "mcp_stdio_policy": "per-server-consent",
+            "remote_mcp_policy": "https-allowlist-required",
+            "raw_sensitive_evidence": "do-not-store",
+        },
+        "write_scope": "SQLite module_setting + app_setting.ui_state only",
+    }
+
+
+def settings_restart_required(previous: dict, current: dict) -> bool:
+    restart_keys = {"bind_host", "port", "max_parallel_assessments", "cpu_workers", "external_cli_parallel"}
+    return any(previous.get(key) != current.get(key) for key in restart_keys)
+
+
+def changed_setting_keys(previous: dict, current: dict) -> set[str]:
+    ignored = {"updated_at", "validation_errors", "status"}
+    keys = set(previous) | set(current)
+    return {key for key in keys if key not in ignored and previous.get(key) != current.get(key)}
+
+
+def redacted_settings_payload(settings: dict) -> dict:
+    payload = dict(settings)
+    for key in list(payload):
+        if any(marker in key.upper() for marker in ["TOKEN", "SECRET", "PASSWORD", "KEY", "AUTHORIZATION"]):
+            payload[key] = redact_text(str(payload[key]))
+    payload["proxy_url"] = redact_text(str(payload.get("proxy_url") or ""))
+    payload["secret_reference"] = redact_text(str(payload.get("secret_reference") or ""))
+    return payload
+
+
+def coerce_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def coerce_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_list(value: Any, default: list[str]) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item)]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return list(default)
+
+
+def truthy(value: Any) -> bool:
+    return value is True or str(value).lower() in {"true", "1", "yes", "on", "enabled"}
+
+
+def raw_secret_like(value: str) -> bool:
+    if not value:
+        return False
+    if value.startswith(("ref://", "vault://", "secret://", "${")):
+        return False
+    return bool(re.search(r"(sk|rk)-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,}|[A-Za-z0-9_]{24,}", value))
 
 
 def path_action(method: str, path: str) -> str:
@@ -3447,6 +3727,8 @@ def runtime_state() -> dict:
     state["guardStatus"] = PassiveGuard(store).status()
     state["dashboardMetrics"] = dashboard_metrics(state)
     state["sandboxPolicy"] = load_sandbox_policy(store, state)
+    state["settings"] = load_module_settings(store, state)
+    state["settingsState"] = state["settings"]
     decisions = store.list_records("policy_decision", limit=20)
     if decisions:
         latest_test = next((item for item in decisions if item.get("test_run_id")), decisions[0])

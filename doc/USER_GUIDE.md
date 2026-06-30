@@ -747,12 +747,27 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($schedu
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync
 
+$settings = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings
+$settings.settings.mcp_stdio_policy = "per-server-consent"
+$settings.settings.cloud_analysis = $false
+
 Invoke-RestMethod `
   -Method Put `
   -Uri http://127.0.0.1:8000/api/v1/settings `
-  -Body (@{ default_profile = "standard-complete"; timezone = "Asia/Shanghai" } | ConvertTo-Json) `
+  -Body ($settings.settings | ConvertTo-Json -Depth 8) `
   -ContentType "application/json"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/settings/test `
+  -Body ($settings.settings | ConvertTo-Json -Depth 8) `
+  -ContentType "application/json"
+
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile module-settings.json
 ```
+
+模块设置保存到本系统 SQLite 的 `module_setting` 记录，并同步到前端运行状态。后端会强制保持 `cloud_analysis=false`、`safe_mode=local-readonly` 和 `mutates_installed_agents=false`；如果导入配置尝试自动启动 stdio MCP、保存明文 Secret 或在非主平台托管下监听 `0.0.0.0`，接口会返回 422。
 
 ## 11. 客户测评建议流程
 
