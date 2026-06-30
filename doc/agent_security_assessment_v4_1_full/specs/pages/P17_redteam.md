@@ -41,6 +41,7 @@
 
 - `POST /api/v1/redteam-runs`
 - `GET /api/v1/redteam-runs/{id}`
+- `PATCH /api/v1/redteam-runs/{id}`
 - `POST /api/v1/redteam-runs/{id}/stop`
 
 接口返回必须统一包装：
@@ -67,7 +68,7 @@
 
 ## 5. 主要实体
 
-`redteam_run, redteam_case, redteam_message`
+`redteam_run, redteam_case, redteam_message, finding, evidence, artifact`
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 

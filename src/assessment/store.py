@@ -64,6 +64,8 @@ GENERIC_TABLES = [
     "redteam_case",
     "redteam_run",
     "redteam_message",
+    "judge_rule",
+    "payload_template",
     "finding",
     "finding_instance",
     "evidence",

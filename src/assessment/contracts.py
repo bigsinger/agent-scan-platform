@@ -120,6 +120,7 @@ GET /api/v1/tasks/{id}/events
 GET /api/v1/tasks/{id}/artifacts
 POST /api/v1/redteam-runs
 GET /api/v1/redteam-runs/{id}
+PATCH /api/v1/redteam-runs/{id}
 POST /api/v1/redteam-runs/{id}/stop
 GET /api/v1/redteam-cases
 POST /api/v1/redteam-cases
@@ -225,8 +226,8 @@ PAGE_API_MAP = {
     "P14": ["GET /api/v1/skills/{id}", "GET /api/v1/skills/{id}/files", "GET /api/v1/skills/{id}/render-diff"],
     "P15": ["GET /api/v1/tasks", "POST /api/v1/tasks/{id}/cancel", "POST /api/v1/tasks/{id}/retry", "POST /api/v1/tasks/{id}/clone"],
     "P16": ["GET /api/v1/tasks/{id}", "GET /api/v1/tasks/{id}/events", "GET /api/v1/tasks/{id}/artifacts"],
-    "P17": ["POST /api/v1/redteam-runs", "GET /api/v1/redteam-runs/{id}", "POST /api/v1/redteam-runs/{id}/stop"],
-    "P18": ["GET /api/v1/redteam-cases", "POST /api/v1/redteam-cases", "POST /api/v1/redteam-cases/{id}/validate"],
+    "P17": ["POST /api/v1/redteam-runs", "GET /api/v1/redteam-runs/{id}", "PATCH /api/v1/redteam-runs/{id}", "POST /api/v1/redteam-runs/{id}/stop"],
+    "P18": ["GET /api/v1/redteam-cases", "POST /api/v1/redteam-cases", "POST /api/v1/redteam-cases/{id}/validate", "POST /api/v1/redteam-cases/{id}/dry-run"],
     "P19": ["GET /api/v1/executor/health", "GET /api/v1/scanners", "POST /api/v1/scanners/{id}/self-test"],
     "P20": ["GET /api/v1/sandbox-policy", "PUT /api/v1/sandbox-policy", "POST /api/v1/sandbox-policy/test", "GET /api/v1/sandbox-policy/export"],
     "P21": ["GET /api/v1/findings", "PATCH /api/v1/findings/{id}", "POST /api/v1/findings/{id}/accept"],
@@ -322,8 +323,8 @@ def entity_for_page(page_id: str) -> str:
         "P14": "skill, skill_file",
         "P15": "task",
         "P16": "task, task_event, artifact",
-        "P17": "redteam_run",
-        "P18": "redteam_case",
+        "P17": "redteam_run, redteam_message, finding, evidence",
+        "P18": "redteam_case, judge_rule, payload_template",
         "P19": "scanner_plugin, process_execution",
         "P20": "sandbox_policy, policy_decision, audit_event",
         "P21": "finding",

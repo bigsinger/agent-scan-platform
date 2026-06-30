@@ -42,6 +42,7 @@
 - `GET /api/v1/redteam-cases`
 - `POST /api/v1/redteam-cases`
 - `POST /api/v1/redteam-cases/{id}/validate`
+- `POST /api/v1/redteam-cases/{id}/dry-run`
 
 接口返回必须统一包装：
 
