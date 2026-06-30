@@ -137,8 +137,11 @@ GET /api/v1/findings/{id}
 GET /api/v1/findings/{id}/evidence
 POST /api/v1/findings/{id}/retest
 GET /api/v1/evidence
+GET /api/v1/evidence/export
 GET /api/v1/evidence/{id}
+GET /api/v1/evidence/{id}/download
 POST /api/v1/evidence/{id}/redact
+GET /api/v1/artifacts/{id}/download
 GET /api/v1/attack-paths
 POST /api/v1/attack-paths/build
 PATCH /api/v1/attack-paths/{id}
@@ -222,7 +225,7 @@ PAGE_API_MAP = {
     "P20": ["GET /api/v1/sandbox-policy", "PUT /api/v1/sandbox-policy", "POST /api/v1/sandbox-policy/test"],
     "P21": ["GET /api/v1/findings", "PATCH /api/v1/findings/{id}", "POST /api/v1/findings/{id}/accept"],
     "P22": ["GET /api/v1/findings/{id}", "GET /api/v1/findings/{id}/evidence", "POST /api/v1/findings/{id}/retest"],
-    "P23": ["GET /api/v1/evidence", "GET /api/v1/evidence/{id}", "POST /api/v1/evidence/{id}/redact"],
+    "P23": ["GET /api/v1/evidence", "GET /api/v1/evidence/export", "GET /api/v1/evidence/{id}", "GET /api/v1/evidence/{id}/download", "POST /api/v1/evidence/{id}/redact", "GET /api/v1/artifacts/{id}/download"],
     "P24": ["GET /api/v1/attack-paths", "POST /api/v1/attack-paths/build", "PATCH /api/v1/attack-paths/{id}"],
     "P25": ["GET /api/v1/reports", "POST /api/v1/reports", "GET /api/v1/reports/{id}/download"],
     "P26": ["GET /api/v1/retests", "POST /api/v1/retests", "GET /api/v1/retests/{id}/diff"],

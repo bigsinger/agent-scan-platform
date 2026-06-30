@@ -282,6 +282,32 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
+证据制品运维操作只读取 SQLite 中的 evidence 记录并生成脱敏 JSON artifact；不会回读、覆盖或删除 Codex/Hermes/Claude Code 安装目录文件：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/evidence/<evidence_id>/redact `
+  -Body (@{} | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-WebRequest `
+  -Uri http://127.0.0.1:8000/api/v1/evidence/<evidence_id>/download `
+  -OutFile evidence.json
+
+$package = Invoke-RestMethod http://127.0.0.1:8000/api/v1/evidence/export
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($package.download)" `
+  -OutFile evidence-package.json
+```
+
+证据包归档建议：
+
+1. 归档 `evidence-package.json`、HTML 报告和对应 SQLite 备份。
+2. 使用 artifact `sha256` 做完整性校验。
+3. 不把原始密钥、完整 Prompt、完整环境变量值写入工单或外部报告系统。
+4. 保留期到期后归档或删除 `data/artifacts/` 中的脱敏制品，删除前先保留审计记录。
+
 任务生命周期运维操作只影响本系统任务记录、报告制品和审计事件，不会修改或终止已安装 Codex/Hermes：
 
 ```powershell

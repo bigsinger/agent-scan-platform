@@ -395,6 +395,30 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
+    async verifyEvidenceIntegrity(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/evidence/export');
+        this.evidenceExport=res;
+        this.toastMsg('证据包已生成：'+((res.counts&&res.counts.evidence)||0)+' 条证据');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async exportEvidencePackage(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/evidence/export');
+        this.evidenceExport=res;
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('证据包导出完成');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    downloadEvidence(evidence){
+      if(!evidence || !evidence.id) return;
+      window.open((evidence.download || ('/api/v1/evidence/'+encodeURIComponent(evidence.id)+'/download')), '_blank', 'noopener');
+      this.toastMsg('已请求下载脱敏证据 JSON');
+    },
     async runSqliteBackup(){
       this.opsBusy=true; this.apiError='';
       try {

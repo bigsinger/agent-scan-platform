@@ -254,6 +254,13 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 - 明文密钥会替换为 `<REDACTED>`。
 - 报告中只展示脱敏证据。
 
+证据中心支持真实制品操作：
+
+1. “验证完整性”会生成一次脱敏证据包，返回证据数量、关联风险数量和 artifact 下载地址。
+2. “导出证据包”会下载 `agent-security-evidence-package@4.1` JSON，内容只包含脱敏片段、哈希、Finding 关联和采集元数据。
+3. “重新脱敏”会使用本地统一规则重新处理当前证据，并写入新的 redacted artifact。
+4. “下载 JSON”只下载本系统生成的脱敏证据文件，不回读目标 Agent 原始文件。
+
 ## 9. 报告中心
 
 位置：
@@ -372,6 +379,23 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/api/v1/evidence/<evidence_id>/redact `
   -Body (@{} | ConvertTo-Json) `
   -ContentType "application/json"
+```
+
+### 下载单条证据
+
+```powershell
+Invoke-WebRequest `
+  -Uri http://127.0.0.1:8000/api/v1/evidence/<evidence_id>/download `
+  -OutFile evidence.json
+```
+
+### 导出证据包
+
+```powershell
+$package = Invoke-RestMethod http://127.0.0.1:8000/api/v1/evidence/export
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($package.download)" `
+  -OutFile evidence-package.json
 ```
 
 ### 风险确认和复测

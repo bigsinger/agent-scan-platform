@@ -75,12 +75,38 @@ def test_report_evidence_and_risk_closure_actions():
     redacted = client.post(f"/api/v1/evidence/{evidence['id']}/redact", json={})
     assert redacted.status_code == 200
     assert redacted.json()["evidence"]["redaction"] == "已脱敏"
+    assert redacted.json()["evidence"]["download"].endswith("/download")
+    evidence_download = client.get(f"/api/v1/evidence/{evidence['id']}/download")
+    assert evidence_download.status_code == 200
+    assert evidence["id"] in evidence_download.text
+
+    secret_redacted = client.post(
+        "/api/v1/evidence/ev_contract_secret/redact",
+        json={"content": "api_key=sk-contracttestsecret1234567890\nAuthorization: Bearer abcdefghijklmnopqrstuvwxyz"},
+    )
+    assert secret_redacted.status_code == 200
+    assert "sk-contracttestsecret" not in secret_redacted.json()["evidence"]["content"]
+    secret_download = client.get("/api/v1/evidence/ev_contract_secret/download")
+    assert secret_download.status_code == 200
+    assert "sk-contracttestsecret" not in secret_download.text
 
     finding = scan["findings"][0]
+    linked_evidence = client.get(f"/api/v1/findings/{finding['id']}/evidence")
+    assert linked_evidence.status_code == 200
+    assert linked_evidence.json()["total"] >= 1
     accepted = client.post(f"/api/v1/findings/{finding['id']}/accept", json={"reason": "contract test"})
     assert accepted.json()["finding"]["status"] == "已接受风险"
     retest = client.post(f"/api/v1/findings/{finding['id']}/retest", json={"scope": "固化输入"})
     assert retest.json()["retest"]["status"] == "QUEUED"
+
+    evidence_export = client.get("/api/v1/evidence/export")
+    assert evidence_export.status_code == 200
+    export_body = evidence_export.json()
+    assert export_body["format"] == "evidence-package-json"
+    assert export_body["counts"]["evidence"] >= 1
+    package_download = client.get(export_body["download"])
+    assert package_download.status_code == 200
+    assert "agent-security-evidence-package@4.1" in package_download.text
 
 
 def test_capability_management_actions_are_persisted():

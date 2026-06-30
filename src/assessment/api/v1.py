@@ -5,12 +5,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 from ..contracts import API_CONTRACTS, completeness_rows
 from ..reports import ReportRenderer
 from ..scanning import DiscoveryEngine, LocalScanEngine, PassiveGuard
+from ..scanning.redaction import redact_text, stable_hash
 from ..scanning.rules import analyze_text
 from ..scanning.rules import rule_catalog
 from ..store import DATA_DIR, REPO_ROOT, get_store, new_id, utc_now
@@ -254,6 +255,31 @@ async def licenses_export() -> dict:
         "notices": "THIRD_PARTY_NOTICES.md",
         "exported_at": utc_now(),
     }
+
+
+@router.get("/evidence/export")
+async def evidence_export() -> dict:
+    store = get_store()
+    return export_evidence_package(store, runtime_state())
+
+
+@router.get("/evidence/{evidence_id}/download")
+async def evidence_download(evidence_id: str) -> FileResponse:
+    store = get_store()
+    state = runtime_state()
+    evidence = find_evidence_record(store, state, evidence_id)
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+    artifact = ensure_evidence_artifact(store, evidence)
+    return artifact_file_response(artifact, filename=f"{evidence_id}.json")
+
+
+@router.get("/artifacts/{artifact_id}/download")
+async def artifact_download(artifact_id: str) -> FileResponse:
+    artifact = get_store().get_record("artifact", artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return artifact_file_response(artifact, filename=f"{artifact_id}.json")
 
 
 @router.get("/{resource:path}")
@@ -641,11 +667,12 @@ def get_item_route(path: str, state: dict) -> dict | None:
         if len(parts) == 3 and parts[2] == "history":
             return {"items": [{"status": "NEW", "at": utc_now()}, {"status": "NEEDS_REVIEW", "at": utc_now()}], "total": 2}
         if len(parts) == 3 and parts[2] == "evidence":
-            evidence = [item for item in get_store().list_records("evidence") if item.get("finding_id") == parts[1]]
-            return page(evidence or state.get("evidenceItems", []), None)
+            evidence = evidence_for_finding(get_store(), state, parts[1])
+            return page(evidence, None)
         return {"item": get_store().get_record("finding", parts[1]) or find_item(state.get("findings", []), parts[1]) or state.get("selectedFinding", {})}
     if len(parts) >= 2 and parts[0] == "evidence":
-        return {"item": get_store().get_record("evidence", parts[1]) or find_item(state.get("evidenceItems", []), parts[1]) or state.get("selectedEvidence", {})}
+        item = find_evidence_record(get_store(), state, parts[1]) or state.get("selectedEvidence", {})
+        return {"item": decorate_evidence_item(item)}
     if len(parts) >= 2 and parts[0] == "reports":
         item = get_store().get_record("report", parts[1]) or find_item(state.get("reports", []), parts[1])
         if len(parts) == 2:
@@ -690,6 +717,8 @@ def enrich_items(key: str, items: list[dict]) -> list[dict]:
             copy.setdefault("id", copy.get("server", f"consent_{index}"))
             enriched.append(copy)
         return enriched
+    if key == "evidenceItems":
+        return [decorate_evidence_item(item) for item in items]
     return items
 
 
@@ -1099,13 +1128,171 @@ def create_retest(store: Any, state: dict, finding_id: str, body: dict) -> dict:
     return updated
 
 
+def find_evidence_record(store: Any, state: dict, evidence_id: str) -> dict | None:
+    return store.get_record("evidence", evidence_id) or find_item(state.get("evidenceItems", []), evidence_id)
+
+
+def decorate_evidence_item(evidence: dict) -> dict:
+    item = dict(evidence)
+    evidence_id = str(item.get("id") or "")
+    if evidence_id:
+        item["download"] = f"/api/v1/evidence/{evidence_id}/download"
+    item.setdefault("redaction", "已脱敏")
+    item.setdefault("status", "READY")
+    if item.get("content"):
+        item["content"] = redact_text(str(item["content"]))
+    item["integrity"] = {
+        "sha256": item.get("redacted_sha256") or item.get("sha256") or stable_hash(json.dumps(item, ensure_ascii=False, sort_keys=True), 64),
+        "artifact_id": item.get("redacted_artifact_id") or item.get("artifact_id"),
+        "artifact_path": item.get("artifact_path"),
+    }
+    return item
+
+
+def ensure_evidence_artifact(store: Any, evidence: dict, force_new: bool = False) -> dict:
+    artifact_id = evidence.get("redacted_artifact_id") or evidence.get("artifact_id")
+    artifact = store.get_record("artifact", str(artifact_id)) if artifact_id else None
+    if artifact and not force_new:
+        try:
+            artifact_disk_path(artifact)
+            return artifact
+        except HTTPException:
+            pass
+
+    redacted_content = redact_text(str(evidence.get("content") or ""))
+    payload = {
+        "schema": "agent-security-evidence@4.1",
+        "id": evidence.get("id"),
+        "assessment_id": evidence.get("assessment_id"),
+        "finding_id": evidence.get("finding_id"),
+        "type": evidence.get("type"),
+        "collector": evidence.get("collector"),
+        "redaction": "已脱敏",
+        "content": redacted_content,
+        "metadata": {
+            "path": evidence.get("path"),
+            "location": evidence.get("location"),
+            "line": evidence.get("line"),
+            "original_sha256": evidence.get("sha256"),
+        },
+        "exported_at": utc_now(),
+    }
+    artifact = store.write_artifact(
+        "evidence-redacted",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "evidence_id": evidence.get("id"),
+            "assessment_id": evidence.get("assessment_id"),
+            "finding_id": evidence.get("finding_id"),
+            "safe_mode": "local-readonly",
+        },
+    )
+    evidence.update(
+        {
+            "content": redacted_content,
+            "redaction": "已脱敏",
+            "redacted_at": utc_now(),
+            "redacted_artifact_id": artifact["id"],
+            "redacted_sha256": artifact["sha256"],
+            "artifact_id": artifact["id"],
+            "artifact_path": artifact["relative_path"],
+            "updated_at": utc_now(),
+        }
+    )
+    store.upsert_record("evidence", evidence, status="READY")
+    return artifact
+
+
+def export_evidence_package(store: Any, state: dict) -> dict:
+    evidence_items = [decorate_evidence_item(item) for item in combine_items(store.list_records("evidence"), state.get("evidenceItems", []))]
+    findings = combine_items(store.list_records("finding"), state.get("findings", []))
+    package = {
+        "schema": "agent-security-evidence-package@4.1",
+        "generated_at": utc_now(),
+        "safe_mode": "local-readonly",
+        "raw_sensitive_evidence": "not-included",
+        "counts": {
+            "evidence": len(evidence_items),
+            "findings": len(findings),
+            "linked_evidence": len([item for item in evidence_items if item.get("finding_id")]),
+        },
+        "findings": [
+            {
+                "id": item.get("id"),
+                "severity": item.get("severity"),
+                "title": item.get("title"),
+                "rule": item.get("rule") or item.get("rule_id"),
+                "status": item.get("status"),
+                "evidence_ids": item.get("evidence_ids", []),
+            }
+            for item in findings
+        ],
+        "evidence": evidence_items,
+    }
+    content = json.dumps(package, ensure_ascii=False, indent=2)
+    artifact = store.write_artifact(
+        "evidence-package",
+        content,
+        suffix="json",
+        metadata={"safe_mode": "local-readonly", "evidence_count": len(evidence_items), "finding_count": len(findings)},
+    )
+    store.audit_event("get.evidence.export", "artifact", artifact["id"], package["counts"])
+    return {
+        "format": "evidence-package-json",
+        "artifact": artifact,
+        "counts": package["counts"],
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "generated_at": package["generated_at"],
+    }
+
+
+def artifact_disk_path(artifact: dict) -> Path:
+    relative_path = str(artifact.get("relative_path") or "").replace("\\", "/")
+    if not relative_path:
+        raise HTTPException(status_code=404, detail="Artifact path missing")
+    root = DATA_DIR.resolve()
+    path = (DATA_DIR / relative_path).resolve()
+    if root != path and root not in path.parents:
+        raise HTTPException(status_code=400, detail="Artifact path outside data directory")
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    return path
+
+
+def artifact_file_response(artifact: dict, filename: str | None = None) -> FileResponse:
+    path = artifact_disk_path(artifact)
+    return FileResponse(
+        path,
+        media_type=str(artifact.get("content_type") or "application/octet-stream"),
+        filename=filename or path.name,
+    )
+
+
+def evidence_for_finding(store: Any, state: dict, finding_id: str) -> list[dict]:
+    finding = store.get_record("finding", finding_id) or find_item(state.get("findings", []), finding_id) or {}
+    evidence_ids = {str(item) for item in finding.get("evidence_ids", [])}
+    records = combine_items(store.list_records("evidence"), state.get("evidenceItems", []))
+    matched = [
+        item
+        for item in records
+        if item.get("finding_id") == finding_id or (evidence_ids and str(item.get("id")) in evidence_ids)
+    ]
+    return [decorate_evidence_item(item) for item in matched]
+
+
 def redact_evidence_record(store: Any, state: dict, evidence_id: str, body: dict) -> dict:
-    evidence = store.get_record("evidence", evidence_id) or find_item(state.get("evidenceItems", []), evidence_id) or {"id": evidence_id}
-    content = str(evidence.get("content") or body.get("content") or "")
-    evidence.update({"content": content.replace(body.get("needle", ""), "<REDACTED>") if body.get("needle") else content, "redaction": "已脱敏", "updated_at": utc_now()})
+    evidence = find_evidence_record(store, state, evidence_id) or {"id": evidence_id}
+    content = str(body.get("content") if body.get("content") is not None else evidence.get("content") or "")
+    if body.get("needle"):
+        content = content.replace(str(body["needle"]), "<REDACTED>")
+    evidence.update({"content": redact_text(content), "redaction": "已脱敏", "redaction_policy": "local-secret-and-path-redaction@4.1", "updated_at": utc_now()})
+    artifact = ensure_evidence_artifact(store, evidence, force_new=True)
+    evidence["redacted_artifact_id"] = artifact["id"]
+    evidence["redacted_sha256"] = artifact["sha256"]
     updated = store.upsert_record("evidence", evidence, status="READY")
     merge_state_record(state, "evidenceItems", updated)
-    return updated
+    return decorate_evidence_item(updated)
 
 
 def build_attack_path(store: Any, state: dict, body: dict) -> dict:

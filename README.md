@@ -92,6 +92,17 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/backup
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/checkpoint
 ```
 
+证据包与脱敏证据下载：
+
+```powershell
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body (@{ mode = "path"; target_path = "tests\fixtures\sample_agent_project"; max_files = 50 } | ConvertTo-Json) -ContentType "application/json"
+$evidence = $scan.evidence[0]
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/evidence/$($evidence.id)/redact" -Body (@{} | ConvertTo-Json) -ContentType "application/json"
+Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v1/evidence/$($evidence.id)/download" -OutFile evidence.json
+$package = Invoke-RestMethod http://127.0.0.1:8000/api/v1/evidence/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($package.download)" -OutFile evidence-package.json
+```
+
 任务生命周期操作：
 
 ```powershell

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent 安全测评能力模块 V4.1</title>
-<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.9">
+<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.10">
 </head>
 <body>
 <div id="boot-status" class="boot-status"><div class="boot-card"><strong>Agent 安全测评模块正在启动</strong><p>如果页面长时间无响应，请检查本地 Vue 静态资源、浏览器 Console 或模板编译错误。</p></div></div>
@@ -636,10 +636,10 @@ reproducibility: 3/3</div></div>
 
 <!-- P23 EVIDENCE -->
 <div v-if="current==='evidence'">
-  <div class="card"><div class="card-head"><div><h2>证据中心</h2><div class="desc">结构化、脱敏、可校验的 Prompt、配置、Tool、文件、网络、进程、Memory 和判定证据。</div></div><div><button class="btn" @click="toastMsg('证据完整性基于 artifact SHA-256 与报告快照校验')">验证完整性</button><button class="btn" :disabled="opsBusy" @click="createRuntimeReport">导出证据包</button></div></div>
+  <div class="card"><div class="card-head"><div><h2>证据中心</h2><div class="desc">结构化、脱敏、可校验的 Prompt、配置、Tool、文件、网络、进程、Memory 和判定证据。</div></div><div><button class="btn" :disabled="opsBusy" @click="verifyEvidenceIntegrity">验证完整性</button><button class="btn" :disabled="opsBusy" @click="exportEvidencePackage">导出证据包</button></div></div>
     <div class="grid g2">
       <div><div class="timeline"><div class="event" v-for="e in evidenceItems"><div class="event-time">{{e.time}} · {{e.type}} · {{e.id}}</div><div class="event-text"><span class="link" @click="selectedEvidence=e">{{e.text}}</span> <span :class="['badge',e.level]">{{e.redaction}}</span></div></div></div></div>
-      <div class="card" style="margin:0;position:sticky;top:88px"><h2>{{selectedEvidence.id}} · {{selectedEvidence.type}}</h2><div class="kv"><div>Assessment</div><div>{{selectedEvidence.assessment_id||'local'}}</div><div>Finding</div><div>{{selectedEvidence.finding_id||'未关联'}}</div><div>采集器</div><div>{{selectedEvidence.collector}}</div><div>脱敏</div><div>{{selectedEvidence.redaction}}</div><div>SHA-256</div><div class="mono">{{selectedEvidence.sha256||'artifact 记录'}}</div><div>Artifact</div><div>{{selectedEvidence.artifact_path||selectedEvidence.path||'本地 SQLite'}}</div></div><h3 style="margin-top:14px">内容</h3><div class="code">{{selectedEvidence.content}}</div><div class="callout">页面不返回本地绝对路径。原始敏感证据默认未保存；申请原始内容按钮在没有授权时禁用。</div><button class="btn" :disabled="opsBusy" @click="redactEvidence(selectedEvidence)">重新脱敏</button></div>
+      <div class="card" style="margin:0;position:sticky;top:88px"><h2>{{selectedEvidence.id}} · {{selectedEvidence.type}}</h2><div class="kv"><div>Assessment</div><div>{{selectedEvidence.assessment_id||'local'}}</div><div>Finding</div><div>{{selectedEvidence.finding_id||'未关联'}}</div><div>采集器</div><div>{{selectedEvidence.collector}}</div><div>脱敏</div><div>{{selectedEvidence.redaction}}</div><div>SHA-256</div><div class="mono">{{selectedEvidence.redacted_sha256||selectedEvidence.sha256||selectedEvidence.integrity&&selectedEvidence.integrity.sha256||'artifact 记录'}}</div><div>Artifact</div><div>{{selectedEvidence.artifact_path||selectedEvidence.path||'本地 SQLite'}}</div></div><h3 style="margin-top:14px">内容</h3><div class="code">{{selectedEvidence.content}}</div><div class="callout">页面不返回本地绝对路径。原始敏感证据默认未保存；下载内容为本系统生成的脱敏 JSON artifact。</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" :disabled="opsBusy" @click="redactEvidence(selectedEvidence)">重新脱敏</button><button class="btn soft" @click="downloadEvidence(selectedEvidence)">下载 JSON</button></div></div>
     </div>
   </div>
 </div>
@@ -784,6 +784,6 @@ remote_analysis: false</div></div></div></div>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.9"></script>
+<script src="/static/assessment/app.js?v=4.1.10"></script>
 </body>
 </html>
