@@ -41,6 +41,8 @@
 - `GET /api/v1/mcp-servers`
 - `POST /api/v1/mcp-servers/{id}/inspect`
 - `GET /api/v1/tools`
+- `GET /api/v1/mcp-servers/{id}/tools`
+- `GET /api/v1/tools/{id}/flows`
 
 接口返回必须统一包装：
 
@@ -66,7 +68,9 @@
 
 ## 5. 主要实体
 
-`mcp_server, mcp_tool, mcp_prompt, mcp_resource`
+`mcp_server, mcp_tool, mcp_prompt, mcp_resource, mcp_signature, finding, evidence, artifact`
+
+当前本地实现中，`POST /api/v1/mcp-servers/{id}/inspect` 是只读静态检查：只使用已发现的配置摘要生成 Signature、Tool 能力标签、Finding、Evidence 和 JSON artifact；不得启动 stdio MCP Server，不得执行配置中的 `command`，不得连接 Remote MCP。
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 

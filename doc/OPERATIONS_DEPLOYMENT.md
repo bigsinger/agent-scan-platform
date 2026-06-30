@@ -92,6 +92,26 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sandbox-policy/test
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy/export
 ```
 
+MCP / Tool 只读静态检查：
+
+```powershell
+$discovery = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/discovery-runs `
+  -Body (@{ path = "tests\fixtures\sample_agent_project"; scope = "fixture" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$mcp = $discovery.mcp_servers[0]
+$inspect = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/mcp-servers/$($mcp.id)/inspect"
+
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/mcp-servers/$($mcp.id)/tools"
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($inspect.inspection.download)" `
+  -OutFile mcp-static-inspection.json
+```
+
 动态红队 dry-run：
 
 ```powershell

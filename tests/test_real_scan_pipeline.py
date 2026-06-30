@@ -59,6 +59,43 @@ def test_discovery_creates_mcp_consent_without_starting_stdio():
     assert payload["consents"][0]["env"]["OPENAI_API_KEY"] == "<REDACTED>"
 
 
+def test_mcp_static_inspect_derives_tools_and_evidence_without_starting_stdio():
+    discovery = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "fixture"})
+    assert discovery.status_code == 200
+    server = discovery.json()["mcp_servers"][0]
+
+    response = client.post(f"/api/v1/mcp-servers/{server['id']}/inspect", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["safe_mode"] == "local-readonly"
+    assert payload["external_process_started"] is False
+    assert payload["mcp_started"] is False
+    assert payload["inspection"]["status"] == "COMPLETED"
+    assert payload["inspection"]["tool_count"] >= 1
+    assert "MCP-CMD-001" in payload["inspection"]["risk_rules"]
+    assert payload["server"]["status"] == "待审批"
+    assert payload["server"]["signature"].startswith("static:")
+    assert payload["tools"]
+    assert any("shell_exec" in tool["labels"] for tool in payload["tools"])
+    assert payload["findings"]
+    assert payload["evidence"]["artifact_path"]
+
+    tools = client.get(f"/api/v1/mcp-servers/{server['id']}/tools")
+    assert tools.status_code == 200
+    assert tools.json()["items"]
+
+    flow_tool = next(tool for tool in payload["tools"] if "shell_exec" in tool["labels"])
+    flows = client.get(f"/api/v1/tools/{flow_tool['id']}/flows")
+    assert flows.status_code == 200
+    assert any(item["status"] == "默认阻断" for item in flows.json()["items"])
+
+    artifact = client.get(payload["inspection"]["download"])
+    assert artifact.status_code == 200
+    assert "未启动 stdio MCP Server" in artifact.text
+    assert "sk-test000000000000000000000000" not in artifact.text
+
+
 def test_discovery_probes_installed_hermes_and_codex(monkeypatch, tmp_path):
     hermes_project = tmp_path / "hermes" / "hermes-agent"
     hermes_project.mkdir(parents=True)

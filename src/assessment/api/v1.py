@@ -397,6 +397,10 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result.update(scan_payload(scan))
         result["audit_event"] = store.audit_event(path_action(method, path), "assessment", scan.assessment["id"], {"body": body})
         return result
+    elif (path.startswith("/mcp-servers/") or path.startswith("/mcp/servers/")) and path.endswith("/inspect"):
+        parts = [part for part in path.split("/") if part]
+        server_id = parts[-2]
+        result.update(inspect_mcp_server(store, state, server_id, body))
     elif path.startswith("/mcp-consents/") and path.endswith(("/approve", "/decline")):
         consent_id = path.split("/")[-2]
         status = "本任务允许" if path.endswith("/approve") else "已拒绝"
@@ -1220,19 +1224,315 @@ def find_adapter(state: dict, adapter_id: str) -> dict:
     }
 
 
+def inspect_mcp_server(store: Any, state: dict, server_id: str, body: dict) -> dict:
+    server = (
+        store.get_record("mcp_server", server_id)
+        or find_item(state.get("mcpServers", []), server_id)
+        or find_item(store.list_records("mcp_server"), server_id)
+    )
+    if not server:
+        raise HTTPException(status_code=404, detail=f"MCP server not found: {server_id}")
+
+    checked_at = utc_now()
+    risks = mcp_static_risks(server)
+    highest = highest_mcp_risk(risks)
+    tools = derive_mcp_tools(server, risks, checked_at)
+    signature_payload = {
+        "server_id": server.get("id"),
+        "name": server.get("name"),
+        "transport": server.get("transport"),
+        "config_sha256": server.get("config_sha256"),
+        "command": server.get("command"),
+        "args": server.get("args", []),
+        "url": server.get("url"),
+        "risk_rules": [risk["rule"] for risk in risks],
+    }
+    signature_hash = stable_hash(json.dumps(signature_payload, ensure_ascii=False, sort_keys=True), 16)
+    signature = {
+        "id": "sig_" + stable_hash(str(server.get("id")) + signature_hash, 20),
+        "server_id": server.get("id"),
+        "server": server.get("name"),
+        "signature": "static:" + signature_hash,
+        "transport": server.get("transport"),
+        "risk_rules": [risk["rule"] for risk in risks],
+        "safe_mode": "local-readonly",
+        "external_process_started": False,
+        "mcp_started": False,
+        "checked_at": checked_at,
+    }
+    updated_signature = store.upsert_record("mcp_signature", signature, status="READY")
+
+    updated_server = dict(server)
+    updated_server.update(
+        {
+            "signature": updated_signature["signature"],
+            "inspection_status": "已检查",
+            "inspected_at": checked_at,
+            "risk": highest["label"],
+            "riskClass": highest["class"],
+            "status": "待审批" if str(server.get("transport")) == "stdio" else "已静态检查",
+            "statusClass": "medium" if str(server.get("transport")) == "stdio" else "low",
+            "safe_mode": "local-readonly",
+            "external_process_started": False,
+            "mcp_started": False,
+        }
+    )
+    updated_server = store.upsert_record("mcp_server", updated_server, status=str(updated_server.get("status") or "INSPECTED"))
+    merge_state_record(state, "mcpServers", updated_server)
+
+    updated_tools: list[dict] = []
+    for tool in tools:
+        updated_tool = store.upsert_record("mcp_tool", tool, status=str(tool.get("status") or "STATIC_ONLY"))
+        updated_tools.append(updated_tool)
+        merge_state_record(state, "tools", updated_tool)
+
+    findings: list[dict] = []
+    for risk in risks:
+        if risk.get("severity") in {"严重 P0", "高危 P1", "中危 P2"}:
+            finding = {
+                "id": "fnd_" + stable_hash(f"{server.get('id')}:{risk['rule']}:{signature_hash}", 24),
+                "title": risk["title"],
+                "severity": risk["severity"],
+                "sevClass": risk["class"],
+                "summary": risk["summary"],
+                "agent": server.get("agent") or "MCP",
+                "rule": risk["rule"],
+                "source": "MCP Static Inspect",
+                "confidence": risk["confidence"],
+                "component": server.get("name") or server.get("id"),
+                "evidence": risk["evidence"],
+                "fix": risk["fix"],
+                "status": "待复核",
+                "safe_mode": "local-readonly",
+                "created_at": checked_at,
+            }
+            updated_finding = store.upsert_record("finding", finding, status="NEEDS_REVIEW")
+            findings.append(updated_finding)
+            merge_state_record(state, "findings", updated_finding)
+
+    evidence_payload = {
+        "schema": "agent-security-mcp-static-inspection@4.1",
+        "server": sanitize_mcp_server(updated_server),
+        "signature": updated_signature,
+        "risks": risks,
+        "tools": updated_tools,
+        "finding_ids": [finding["id"] for finding in findings],
+        "safe_mode": "local-readonly",
+        "external_process_started": False,
+        "mcp_started": False,
+        "boundary": "只读解析 MCP 配置；未启动 stdio MCP Server，未执行命令，未连接 Remote MCP。",
+        "checked_at": checked_at,
+    }
+    artifact = store.write_artifact(
+        "mcp-static-inspection",
+        json.dumps(evidence_payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"server_id": server.get("id"), "safe_mode": "local-readonly"},
+    )
+    evidence = {
+        "id": new_id("ev"),
+        "type": "mcp_static_inspection",
+        "collector": "mcp-static-inspect",
+        "redaction": "已脱敏",
+        "level": highest["class"],
+        "text": f"MCP 静态检查：{server.get('name')} · {highest['label']}",
+        "content": json.dumps({"server": sanitize_mcp_server(updated_server), "risks": risks[:5]}, ensure_ascii=False),
+        "mcp_server_id": server.get("id"),
+        "finding_ids": [finding["id"] for finding in findings],
+        "artifact_id": artifact["id"],
+        "artifact_path": artifact["relative_path"],
+        "safe_mode": "local-readonly",
+        "created_at": checked_at,
+    }
+    evidence["download"] = f"/api/v1/evidence/{evidence['id']}/download"
+    updated_evidence = store.upsert_record("evidence", evidence, status="READY")
+    merge_state_record(state, "evidenceItems", updated_evidence)
+
+    for finding in findings:
+        finding["evidence_ids"] = [updated_evidence["id"]]
+        store.upsert_record("finding", finding, status="NEEDS_REVIEW")
+
+    inspection = {
+        "id": "insp_" + stable_hash(str(server.get("id")) + checked_at, 20),
+        "server_id": server.get("id"),
+        "status": "COMPLETED",
+        "safe_mode": "local-readonly",
+        "external_process_started": False,
+        "mcp_started": False,
+        "risk": highest["label"],
+        "risk_rules": [risk["rule"] for risk in risks],
+        "tool_count": len(updated_tools),
+        "finding_count": len(findings),
+        "evidence_id": updated_evidence["id"],
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "checked_at": checked_at,
+    }
+    store.audit_event("post.mcp-servers.inspect", "mcp_server", str(server.get("id")), {"safe_mode": "local-readonly", "risk": highest["label"], "tool_count": len(updated_tools)})
+    return {
+        "inspection": inspection,
+        "server": updated_server,
+        "signature": updated_signature,
+        "tools": updated_tools,
+        "findings": findings,
+        "evidence": updated_evidence,
+        "safe_mode": "local-readonly",
+        "external_process_started": False,
+        "mcp_started": False,
+    }
+
+
+def mcp_static_risks(server: dict) -> list[dict]:
+    command = str(server.get("command") or "")
+    args = [str(arg) for arg in server.get("args") or []]
+    url = str(server.get("url") or "")
+    env_keys = [str(key) for key in server.get("env_keys") or server.get("envKeys") or []]
+    text = " ".join([command, *args, url]).lower()
+    risks: list[dict] = []
+
+    def add(rule: str, title: str, severity: str, risk_class: str, confidence: float, evidence: str, fix: str, labels: list[str]) -> None:
+        if rule in {item["rule"] for item in risks}:
+            return
+        risks.append(
+            {
+                "rule": rule,
+                "title": title,
+                "severity": severity,
+                "class": risk_class,
+                "confidence": confidence,
+                "summary": title,
+                "evidence": redact_text(evidence),
+                "fix": fix,
+                "labels": labels,
+            }
+        )
+
+    if str(server.get("transport")) == "stdio":
+        add("MCP-STDIO-CONSENT-001", "stdio MCP Server 需要人工审批，检查阶段不得自动启动", "中危 P2", "medium", 0.86, command or str(server.get("name")), "保持默认拒绝；只有人工确认命令、配置哈希和任务上下文后才允许一次性启动。", ["stdio", "consent_required"])
+    if any(token in text for token in ["powershell", "cmd.exe", " bash", " sh ", "iex", "invoke-expression", " iwr ", "curl ", "|"]):
+        add("MCP-CMD-001", "MCP stdio Server 使用高风险命令外壳或管道执行", "高危 P1", "high", 0.92, " ".join([command, *args])[:260], "固定可审计的可执行文件路径，禁止 shell 管道、远程脚本和隐式解释器启动。", ["shell_exec", "process_spawn"])
+    if any(token in text for token in ["npx", "uvx", "pipx", "npm ", "pnpm dlx", " -y "]):
+        add("MCP-SUPPLYCHAIN-001", "MCP 启动命令可能动态下载并执行外部包", "高危 P1", "high", 0.88, " ".join([command, *args])[:260], "固定包版本、校验哈希，并在隔离环境中预安装，不允许运行时下载执行。", ["package_download", "process_spawn"])
+    if any(token in text for token in ["http://", "https://", "webhook", "upload", "send_report"]):
+        add("MCP-NET-001", "MCP 配置或参数包含外部网络目标", "高危 P1" if "http://" in text else "中危 P2", "high" if "http://" in text else "medium", 0.84, " ".join([url, *args])[:260], "Remote MCP 必须使用 HTTPS allowlist；stdio 参数不得直接包含未批准外传地址。", ["network_send"])
+    if any(any(marker in key.upper() for marker in ["TOKEN", "SECRET", "PASSWORD", "KEY"]) for key in env_keys):
+        add("MCP-ENV-SECRET-001", "MCP Server 环境变量包含敏感键名", "高危 P1", "high", 0.9, ",".join(env_keys), "最小化传入环境变量；敏感 Token 使用短期凭据并在证据与日志中脱敏。", ["secret_env"])
+    if any(token in text for token in ["filesystem", "read_file", "write_file", "workspace", ":\\", "/workspace", "~/."]):
+        add("MCP-FS-BOUNDARY-001", "MCP Server 具备文件系统或工作区访问能力", "中危 P2", "medium", 0.8, " ".join([command, *args])[:260], "限制根目录到测评工作区；对写入和敏感路径读取启用二次确认。", ["file_read", "file_write"])
+    if not risks:
+        add("MCP-STATIC-PASS-001", "MCP 配置静态检查未发现高风险启动特征", "低危 P3", "low", 0.68, str(server.get("name") or server.get("id")), "保持周期性复检；配置哈希变化后重新审批。", ["config_only"])
+    return risks
+
+
+def highest_mcp_risk(risks: list[dict]) -> dict:
+    order = {"critical": 4, "high": 3, "medium": 2, "low": 1, "gray": 0}
+    labels = {"critical": "严重", "high": "高", "medium": "需审批", "low": "低", "gray": "未知"}
+    risk_class = max((risk.get("class", "gray") for risk in risks), key=lambda value: order.get(value, 0), default="gray")
+    return {"class": risk_class, "label": labels.get(risk_class, "未知")}
+
+
+def derive_mcp_tools(server: dict, risks: list[dict], checked_at: str) -> list[dict]:
+    labels = sorted({label for risk in risks for label in risk.get("labels", [])})
+    name = str(server.get("name") or server.get("id") or "mcp")
+    server_id = str(server.get("id") or name)
+    specs: list[tuple[str, str, list[str], str, str]] = []
+    if "file_read" in labels or "file_write" in labels:
+        specs.append(("read_workspace", "读取或枚举工作区文件。", ["file_read", "private_data"], "高", "high"))
+    if "shell_exec" in labels or "process_spawn" in labels:
+        specs.append(("spawn_process", "启动本地命令或解释器。", ["shell_exec", "process_spawn"], "高", "high"))
+    if "network_send" in labels:
+        specs.append(("network_request", "访问外部网络或上传数据。", ["network_send", "external_sink"], "高", "high"))
+    if "secret_env" in labels:
+        specs.append(("read_environment", "读取传入 MCP Server 的环境变量键。", ["secret_env"], "高", "high"))
+    if "package_download" in labels:
+        specs.append(("runtime_package", "运行时下载并执行包入口。", ["package_download", "supply_chain"], "高", "high"))
+    if not specs:
+        specs.append(("inspect_config", "静态解析 MCP 配置和签名。", ["config_only"], "低", "low"))
+
+    tools: list[dict] = []
+    for suffix, desc, tool_labels, risk, risk_class in specs:
+        tool_name = f"{name}.{suffix}"
+        tools.append(
+            {
+                "id": "tool_" + stable_hash(f"{server_id}:{suffix}", 20),
+                "name": tool_name,
+                "server": name,
+                "server_id": server_id,
+                "desc": desc,
+                "labels": tool_labels,
+                "risk": risk,
+                "riskClass": risk_class,
+                "status": "STATIC_ONLY",
+                "source": "mcp-static-inspect",
+                "signature": "static:" + stable_hash(json.dumps({"server": server_id, "tool": suffix, "labels": tool_labels}, sort_keys=True), 12),
+                "safe_mode": "local-readonly",
+                "created_at": checked_at,
+            }
+        )
+    return tools
+
+
+def sanitize_mcp_server(server: dict) -> dict:
+    clean = dict(server)
+    if "command" in clean:
+        clean["command"] = redact_text(str(clean.get("command") or ""))
+    if "args" in clean:
+        clean["args"] = [redact_text(str(arg)) for arg in clean.get("args") or []]
+    if "url" in clean:
+        clean["url"] = redact_text(str(clean.get("url") or ""))
+    clean.pop("env", None)
+    return clean
+
+
 def similar_tools(item: dict, state: dict) -> list[dict]:
     tools = combine_items(get_store().list_records("mcp_tool"), state.get("tools", []))
     if not item:
         return tools[:5]
-    return [tool for tool in tools if tool.get("id") != item.get("id")][:5]
+    target = normalize_tool_name(str(item.get("name") or item.get("id") or ""))
+    scored: list[dict] = []
+    for tool in tools:
+        if tool.get("id") == item.get("id"):
+            continue
+        name = normalize_tool_name(str(tool.get("name") or tool.get("id") or ""))
+        if not target or not name:
+            score = 0.0
+        elif target == name:
+            score = 1.0
+        elif target in name or name in target:
+            score = 0.82
+        else:
+            target_parts = set(target.split("_"))
+            name_parts = set(name.split("_"))
+            score = min(0.75, len(target_parts & name_parts) / max(1, len(target_parts | name_parts)))
+        if score >= 0.45:
+            copy = dict(tool)
+            copy["similarity"] = round(score, 2)
+            copy["conclusion"] = "覆盖风险" if score >= 0.82 else "需确认"
+            scored.append(copy)
+    return sorted(scored, key=lambda tool: tool.get("similarity", 0), reverse=True)[:5]
 
 
 def tool_flows(item: dict) -> list[dict]:
     name = item.get("name") or item.get("id") or "tool"
-    return [
-        {"id": "flow_read", "name": f"{name} read-only flow", "risk": "低", "status": "允许"},
-        {"id": "flow_write", "name": f"{name} write/action flow", "risk": "中", "status": "需审批"},
-    ]
+    labels = set(item.get("labels") or [])
+    flows = []
+    if labels & {"file_read", "private_data"}:
+        flows.append({"id": "flow_private_read", "name": f"{name} -> workspace/private data", "risk": "高", "status": "需审批", "source": "workspace", "sink": "agent context", "control": "path allowlist"})
+    if labels & {"network_send", "external_sink"}:
+        flows.append({"id": "flow_external_send", "name": f"{name} -> external network sink", "risk": "高", "status": "默认阻断", "source": "agent context", "sink": "external", "control": "domain allowlist"})
+    if labels & {"shell_exec", "process_spawn"}:
+        flows.append({"id": "flow_process_exec", "name": f"{name} -> local process", "risk": "高", "status": "默认阻断", "source": "tool call", "sink": "subprocess", "control": "human consent"})
+    if labels & {"secret_env"}:
+        flows.append({"id": "flow_secret_env", "name": f"{name} -> secret environment", "risk": "高", "status": "脱敏", "source": "env", "sink": "mcp server", "control": "env deny patterns"})
+    if not flows:
+        flows.append({"id": "flow_config_only", "name": f"{name} static config flow", "risk": "低", "status": "允许", "source": "config", "sink": "signature", "control": "readonly"})
+    return flows
+
+
+def normalize_tool_name(name: str) -> str:
+    normalized = "".join(ch.lower() if ch.isalnum() else "_" for ch in name)
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return normalized.strip("_")
 
 
 def report_preview(report: dict | None) -> dict:
@@ -2292,6 +2592,7 @@ REAL_STATE_PATHS = {
     "discoveryHits": "/discovery-hits",
     "mcpServers": "/mcp-servers",
     "consents": "/mcp-consents",
+    "tools": "/tools",
     "skills": "/skills",
     "tasks": "/tasks",
     "findings": "/findings",

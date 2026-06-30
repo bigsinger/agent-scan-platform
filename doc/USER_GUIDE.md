@@ -194,6 +194,28 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 | Env 含 API Key | 移除明文，改为 Secret Reference |
 | Remote MCP 使用 HTTP | 要求 HTTPS、认证和 allowlist |
 
+## 5.1 MCP / Tool 只读静态检查
+
+位置：
+
+```text
+左侧导航 → MCP / Tool
+```
+
+用途：
+
+- 对已发现的 MCP Server 做静态签名，不启动 stdio Server，不做真实 handshake。
+- 根据命令、参数、URL、环境变量 Key、配置 Hash 派生 Tool Signature。
+- 自动识别 shell/powershell/cmd、`npx -y`、远程 URL、敏感环境变量、文件系统能力等风险。
+- 生成 `mcp_signature`、`mcp_tool`、Finding、Evidence 和 `mcp-static-inspection` JSON artifact。
+
+安全边界：
+
+1. `inspect` 只读取本系统已经保存的 MCP 配置摘要。
+2. 不执行 `command`、不解析真实 Tool list、不连接 Remote MCP。
+3. 环境变量只显示 Key，值保持 `<REDACTED>`。
+4. stdio Server 检查后仍保持“待审批”，不会因静态检查而放行。
+
 ## 6. Skill 安全扫描
 
 位置：
@@ -541,6 +563,26 @@ $export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy/export
 Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($export.download)" `
   -OutFile sandbox-policy.json
+```
+
+### MCP / Tool 只读静态检查
+
+```powershell
+$discovery = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/discovery-runs `
+  -Body (@{ path = "tests\fixtures\sample_agent_project"; scope = "fixture" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$mcp = $discovery.mcp_servers[0]
+$inspect = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/mcp-servers/$($mcp.id)/inspect"
+
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/mcp-servers/$($mcp.id)/tools"
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($inspect.inspection.download)" `
+  -OutFile mcp-static-inspection.json
 ```
 
 ### 动态红队 Dry-run

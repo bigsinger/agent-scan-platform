@@ -30,6 +30,11 @@ data(){
     initial.selectedRedteamRun = initial.selectedRedteamRun || initial.redteamRuns[0] || {};
     initial.redteamValidation = null;
     initial.redteamBusy = false;
+    initial.mcpBusy = false;
+    initial.mcpInspection = null;
+    initial.selectedMcp = initial.selectedMcp || (initial.mcpServers || [])[0] || {};
+    initial.selectedTool = initial.selectedTool || (initial.tools || [])[0] || {};
+    initial.selectedConsent = initial.selectedConsent || (initial.consents || [])[0] || {};
     initial.sqliteStatus = initial.sqliteStatus || {file_bytes:0, mode:'WAL', state:'未知', pragma:{}};
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
     initial.sandboxPolicy = Object.assign({
@@ -93,6 +98,42 @@ data(){
     },
     remoteMcpCount(){
       return this.mcpServers.filter(m=>m.transport && m.transport!=='stdio').length;
+    },
+    mcpRiskFindings(){
+      return this.findings.filter(f=>String(f.source||'').includes('MCP') || String(f.rule||f.rule_id||'').startsWith('MCP-'));
+    },
+    mcpToxicTools(){
+      return this.tools.filter(t=>{
+        const labels=t.labels || [];
+        return labels.includes('shell_exec') || labels.includes('network_send') || labels.includes('external_sink') || labels.includes('secret_env') || labels.includes('file_read');
+      });
+    },
+    mcpShadowPairs(){
+      const pairs=[];
+      const normalize=name=>String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+      const list=this.tools || [];
+      for(let i=0;i<list.length;i++){
+        for(let j=i+1;j<list.length;j++){
+          const left=normalize(list[i].name);
+          const right=normalize(list[j].name);
+          if(!left || !right) continue;
+          const same=left===right;
+          const overlap=left.includes(right) || right.includes(left);
+          if(same || overlap) pairs.push({trusted:list[i], conflict:list[j], similarity:same?1:0.82, conclusion:same?'覆盖风险':'需确认'});
+        }
+      }
+      return pairs.slice(0,8);
+    },
+    currentConsent(){
+      const selectedId=this.selectedConsent && (this.selectedConsent.id || this.selectedConsent.server);
+      const selected=selectedId ? this.consents.find(c=>(c.id||c.server)===selectedId) : null;
+      return selected || this.consents.find(c=>c.status==='待审批') || this.consents[0] || {};
+    },
+    allowedConsentCount(){
+      return this.consents.filter(c=>['允许一次','本任务允许','APPROVED_ONCE','APPROVED_TASK'].includes(c.status)).length;
+    },
+    deniedConsentCount(){
+      return this.consents.filter(c=>['已拒绝','DENIED','DECLINED'].includes(c.status)).length;
     },
     skillScriptCount(){
       return this.skills.reduce((sum,s)=>sum+(Number(s.scripts)||0),0);
@@ -473,6 +514,60 @@ data(){
         this.toastMsg('只读重探测完成：'+(res.status || (res.probe&&res.probe.status) || 'DONE'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
+    },
+    async runReadonlyMcpCheck(){
+      this.mcpBusy=true; this.apiError='';
+      try {
+        const target=(this.form.targetPath || '').trim();
+        const payload=target ? {path:target, scope:'explicit-path'} : {scope:'current-user'};
+        const res=await this.apiPost('/api/v1/discovery-runs', payload);
+        this.mergeRecords('discoveryHits', res.hits || []);
+        this.mergeRecords('agentAssets', res.agents || []);
+        this.mergeRecords('mcpServers', res.mcp_servers || []);
+        this.mergeRecords('consents', res.consents || []);
+        this.mergeRecords('skills', res.skills || []);
+        const servers=(res.mcp_servers && res.mcp_servers.length ? res.mcp_servers : this.mcpServers).slice(0,12);
+        let inspected=0;
+        for(const server of servers){
+          if(server && server.id){
+            await this.inspectMcpServer(server, true);
+            inspected++;
+          }
+        }
+        this.toastMsg('MCP 只读检查完成：发现 '+((res.mcp_servers||[]).length)+' 个，静态检查 '+inspected+' 个');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.mcpBusy=false; }
+    },
+    async inspectMcpServer(server, quiet){
+      if(!server || !server.id) return;
+      const wasBusy=this.mcpBusy;
+      this.mcpBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/mcp-servers/'+encodeURIComponent(server.id)+'/inspect', {});
+        if(res.server){ this.mergeRecords('mcpServers', [res.server]); this.selectedMcp=res.server; }
+        if(res.tools && res.tools.length){ this.mergeRecords('tools', res.tools); this.selectedTool=res.tools[0]; }
+        if(res.findings && res.findings.length) this.mergeRecords('findings', res.findings);
+        if(res.evidence) this.mergeRecords('evidenceItems', [res.evidence]);
+        this.mcpInspection=res.inspection || null;
+        if(!quiet) this.toastMsg('MCP 静态检查完成：'+(res.server&&res.server.name || server.name)+' · '+(res.inspection&&res.inspection.risk || 'READY'));
+        return res;
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.mcpBusy=wasBusy; }
+    },
+    async openToolSignature(tool){
+      if(!tool || !tool.id) return;
+      this.mcpBusy=true; this.apiError='';
+      try {
+        const detail=await this.apiGet('/api/v1/tools/'+encodeURIComponent(tool.id));
+        const flows=await this.apiGet('/api/v1/tools/'+encodeURIComponent(tool.id)+'/flows');
+        this.selectedTool=Object.assign({}, tool, detail.item || {}, {flows:flows.items || []});
+        this.mergeRecords('tools', [this.selectedTool]);
+        this.toastMsg('Tool Signature 已加载：'+(this.selectedTool.signature || this.selectedTool.id));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.mcpBusy=false; }
+    },
+    selectConsent(c){
+      this.selectedConsent=c || {};
     },
     async runGuardCheck(){
       this.quickBusy=true; this.apiError='';
@@ -940,12 +1035,32 @@ data(){
       finally { this.opsBusy=false; }
     },
     async approveConsent(c,scope){
-      c.status=scope==='once'?'允许一次':'本任务允许';
-      try { await this.apiPost('/api/v1/consents/'+encodeURIComponent(c.id||c.server)+'/decision', {decision:c.status}); } catch (err) { this.apiError = this.describeError(err); }
+      if(!c) return;
+      this.selectConsent(c);
+      const decision=scope==='once'?'允许一次':'本任务允许';
+      c.status=decision;
+      try {
+        const res=await this.apiPost('/api/v1/mcp-consents/'+encodeURIComponent(c.id||c.server)+'/approve', {decision, scope});
+        if(res.consent){ this.mergeRecords('consents', [res.consent]); this.selectedConsent=res.consent; }
+      } catch (err) { this.apiError = this.describeError(err); }
       this.toastMsg(c.server+' 已批准；配置变化将要求重新审批');
     },
-    async denyConsent(c){c.status='已拒绝';try { await this.apiPost('/api/v1/consents/'+encodeURIComponent(c.id||c.server)+'/decision', {decision:'DENIED'}); } catch (err) { this.apiError = this.describeError(err); } this.toastMsg(c.server+' 已拒绝，任务将标记部分完成');},
-    async denyAllConsents(){this.consents.forEach(c=>{if(c.status==='待审批')c.status='已拒绝'});try { await this.apiPost('/api/v1/consents/bulk-decision', {decision:'DENIED'}); } catch (err) { this.apiError = this.describeError(err); } this.toastMsg('所有待审批 stdio Server 已拒绝');}
+    async denyConsent(c){
+      if(!c) return;
+      this.selectConsent(c);
+      c.status='已拒绝';
+      try {
+        const res=await this.apiPost('/api/v1/mcp-consents/'+encodeURIComponent(c.id||c.server)+'/decline', {decision:'DENIED'});
+        if(res.consent){ this.mergeRecords('consents', [res.consent]); this.selectedConsent=res.consent; }
+      } catch (err) { this.apiError = this.describeError(err); }
+      this.toastMsg(c.server+' 已拒绝，任务将标记部分完成');
+    },
+    async denyAllConsents(){
+      const pending=this.consents.filter(c=>c.status==='待审批');
+      for(const consent of pending) await this.denyConsent(consent);
+      if(!pending.length) this.toastMsg('没有待审批 stdio Server');
+      else this.toastMsg('所有待审批 stdio Server 已拒绝');
+    }
   }
     });
     prototypeApp.config.errorHandler = function(err){ showBootError('Vue 运行时错误', err && (err.stack || err.message || err)); console.error(err); };
