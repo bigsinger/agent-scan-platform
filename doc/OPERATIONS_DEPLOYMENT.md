@@ -7,7 +7,7 @@
 | 路径 | 用途 |
 | --- | --- |
 | `src/assessment/main.py` | FastAPI 应用入口，挂载 `/api/v1` 和 `/assessment` |
-| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 136 个 API 契约并提供本地实现兜底 |
+| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 138 个 API 契约并提供本地实现兜底 |
 | `src/assessment/scanning/` | 本地发现、静态规则、证据脱敏、扫描编排 |
 | `src/assessment/scanning/guard.py` | 只读 Guard 防御监测，负责配置哈希基线、变化检测和防御建议 |
 | `src/assessment/reports/` | HTML/JSON 报告渲染器 |
@@ -160,6 +160,20 @@ PYTHONPATH=src python -m uvicorn assessment.main:app --host 127.0.0.1 --port 800
 3. 用快速扫描指定该目录，确认发现、风险、证据、报告闭环。
 4. 再扫描客户真实 Agent 项目目录。
 5. 如果需要多人访问，使用企业现有网关提供登录、TLS、审计和访问控制。
+
+Skill 专项 POC 可以单独验证：
+
+```powershell
+$body = @{ target_path = "tests\fixtures\sample_agent_project"; limit = 20 } | ConvertTo-Json
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/skill-scans -Body $body -ContentType "application/json"
+$skill = $scan.skills[0]
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/files"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/render-diff"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/quarantine" -Body (@{ reason = "poc logical quarantine" } | ConvertTo-Json) -ContentType "application/json"
+```
+
+上述 `quarantine` 是本系统内的逻辑隔离状态和审计记录，只写 SQLite 与 artifact，不移动、不重命名、不覆盖客户机器上的 Skill 文件。
 
 不建议在 POC 第一阶段直接绑定 `0.0.0.0`。如必须绑定：
 

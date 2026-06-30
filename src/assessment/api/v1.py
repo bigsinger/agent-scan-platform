@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
@@ -12,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from ..contracts import API_CONTRACTS, completeness_rows
 from ..reports import ReportRenderer
 from ..scanning import DiscoveryEngine, LocalScanEngine, PassiveGuard
-from ..scanning.redaction import redact_text, stable_hash
+from ..scanning.redaction import file_digest, redact_text, safe_display_path, stable_hash
 from ..scanning.rules import analyze_text
 from ..scanning.rules import rule_catalog
 from ..store import DATA_DIR, REPO_ROOT, get_store, new_id, utc_now
@@ -391,12 +393,11 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         hit_id = path.split("/")[-2]
         result.update(ignore_discovery_hit(store, state, hit_id, body))
     elif path == "/skill-scans":
-        payload = dict(body)
-        payload.setdefault("mode", "skill")
-        scan = LocalScanEngine(store).run_quick_scan(payload)
-        result.update(scan_payload(scan))
-        result["audit_event"] = store.audit_event(path_action(method, path), "assessment", scan.assessment["id"], {"body": body})
+        result.update(run_skill_scan(store, state, body))
         return result
+    elif path.startswith("/skills/") and path.endswith("/quarantine"):
+        skill_id = path.split("/")[-2]
+        result.update(quarantine_skill(store, state, skill_id, body))
     elif (path.startswith("/mcp-servers/") or path.startswith("/mcp/servers/")) and path.endswith("/inspect"):
         parts = [part for part in path.split("/") if part]
         server_id = parts[-2]
@@ -673,14 +674,15 @@ def get_item_route(path: str, state: dict) -> dict | None:
     if len(parts) >= 2 and parts[0] == "skills":
         item = get_store().get_record("skill", parts[1]) or get_store().get_record("skill_file", parts[1]) or find_item(state.get("skills", []), parts[1]) or state.get("selectedSkill", {})
         if len(parts) == 2:
-            return {"item": item}
+            return skill_detail(get_store(), state, parts[1])
         if parts[2] == "files":
-            return {"items": [{"path": "SKILL.md", "kind": "markdown"}, {"path": "scripts/check.py", "kind": "script"}], "total": 2}
+            return page(skill_files_for_item(item, {}), None)
         if parts[2] == "findings":
-            real = [f for f in get_store().list_records("finding") if item and f.get("component") == item.get("path")]
-            return page(real or state.get("findings", [])[:2], None)
+            return page(skill_findings(get_store(), state, item), None)
         if parts[2] == "render-diff":
-            return {"diff": [{"file": "SKILL.md", "status": "redacted-preview", "changes": 0}], "status": "READY"}
+            return skill_render_diff(item, {})
+        if parts[2] == "export":
+            return export_skill_redacted(get_store(), state, parts[1], {})
     if len(parts) >= 2 and parts[0] == "assessments":
         return {"item": get_store().get_record("assessment", parts[1]) or find_item(state.get("tasks", []), parts[1]) or state.get("selectedTask", {})}
     if len(parts) >= 2 and parts[0] == "tasks":
@@ -1603,6 +1605,479 @@ def ignore_discovery_hit(store: Any, state: dict, hit_id: str, body: dict) -> di
     updated = store.upsert_record("discovery_hit", hit, status="IGNORED")
     merge_state_record(state, "discoveryHits", updated)
     return {"status": "IGNORED", "hit": updated}
+
+
+def run_skill_scan(store: Any, state: dict, body: dict) -> dict:
+    discovery_payload = dict(body)
+    discovery_payload.setdefault("scope", "skill-scan")
+    discovery = None
+    if any(discovery_payload.get(key) for key in ("path", "target_path", "paths", "additional_paths")):
+        discovery = LocalScanEngine(store).run_discovery(discovery_payload)
+        state = store.get_state()
+
+    skill_id = str(body.get("skill_id") or body.get("id") or "")
+    records = discovery.skills if discovery and discovery.skills else combine_items(real_items_for_path("/skills"), state.get("skills", []))
+    if skill_id:
+        records = [item for item in records if item.get("id") == skill_id or item.get("name") == skill_id]
+    limit = max(1, min(int(body.get("limit") or 20), 100))
+    checked: list[dict] = []
+    findings: list[dict] = []
+    evidence: list[dict] = []
+    skipped: list[dict] = []
+    for skill in records[:limit]:
+        result = inspect_skill_record(store, state, skill, body)
+        if result.get("status") == "SKIPPED":
+            skipped.append(result)
+            continue
+        checked.append(result["skill"])
+        findings.extend(result.get("findings", []))
+        if result.get("evidence"):
+            evidence.append(result["evidence"])
+
+    payload = {
+        "status": "COMPLETED",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "skills": checked,
+        "findings": findings,
+        "evidence": evidence,
+        "skipped": skipped,
+        "counts": {"checked": len(checked), "findings": len(findings), "evidence": len(evidence), "skipped": len(skipped)},
+        "discovery": {
+            "run": discovery.run,
+            "hits": discovery.hits,
+            "agents": discovery.agents,
+            "mcp_servers": discovery.mcp_servers,
+            "consents": discovery.consents,
+            "skills": discovery.skills,
+            "errors": discovery.errors,
+        }
+        if discovery
+        else None,
+    }
+    artifact = store.write_artifact(
+        "skill-scan-summary",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"safe_mode": "local-readonly", "checked": len(checked)},
+    )
+    payload["artifact"] = artifact
+    payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    store.audit_event("post.skill-scans", "skill", skill_id or "all", {"checked": len(checked), "skipped": len(skipped), "safe_mode": "local-readonly"})
+    return payload
+
+
+def inspect_skill_record(store: Any, state: dict, skill: dict, body: dict) -> dict:
+    root = resolve_skill_root(skill, body)
+    if not root:
+        updated = dict(skill)
+        updated.update({"status": "路径待确认", "risk": "待定位", "riskClass": "medium", "last_scan_note": "无法从脱敏路径定位本机 Skill 根目录"})
+        updated = store.upsert_record("skill", updated, status="UNRESOLVED")
+        merge_state_record(state, "skills", updated)
+        return {"status": "SKIPPED", "skill": updated, "reason": "path unresolved"}
+
+    checked_at = utc_now()
+    files = skill_files_for_root(root)
+    findings: list[dict] = []
+    for file_item in files:
+        file_path = root / file_item["relative_path"]
+        text = read_skill_text(file_path)
+        if text is None:
+            continue
+        for match in analyze_text(file_path, text, root):
+            finding_id = "fnd_" + stable_hash(f"{root}:{match.rule_id}:{match.display_path}:{match.line}:{match.snippet}", 24)
+            finding = {
+                "id": finding_id,
+                "title": match.title,
+                "severity": match.severity,
+                "sevClass": severity_class_from_text(match.severity),
+                "summary": match.reason,
+                "agent": skill.get("agent") or "Skill",
+                "rule": match.rule_id,
+                "source": "Skill Static Scan",
+                "confidence": match.confidence,
+                "component": skill.get("path") or safe_display_path(root, body_root(body)),
+                "skill_id": skill.get("id"),
+                "skill_name": skill.get("name"),
+                "evidence": match.snippet,
+                "fix": match.remediation,
+                "status": "待复核",
+                "safe_mode": "local-readonly",
+                "created_at": checked_at,
+            }
+            updated_finding = store.upsert_record("finding", finding, status="NEEDS_REVIEW")
+            findings.append(updated_finding)
+            merge_state_record(state, "findings", updated_finding)
+
+    highest = highest_skill_risk(findings)
+    updated_skill = dict(skill)
+    updated_skill.update(
+        {
+            "id": skill.get("id") or "skill_" + stable_hash(str(root.resolve())),
+            "name": skill.get("name") or root.name,
+            "path": safe_display_path(root, body_root(body)),
+            "files": len(files),
+            "scripts": len([item for item in files if item.get("kind") in {"shell", "python", "javascript", "powershell"}]),
+            "sha256": digest_skill_root(files),
+            "risk": highest["label"],
+            "riskClass": highest["class"],
+            "status": "已扫描",
+            "last_scanned_at": checked_at,
+            "finding_count": len(findings),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+    )
+    updated_skill = store.upsert_record("skill", updated_skill, status="SCANNED")
+    store.upsert_record("skill_file", updated_skill, status="SCANNED")
+    merge_state_record(state, "skills", updated_skill)
+    state["selectedSkill"] = updated_skill
+
+    evidence = {
+        "id": new_id("ev"),
+        "type": "skill_static_scan",
+        "collector": "skill-static-scan",
+        "redaction": "已脱敏",
+        "level": highest["class"],
+        "text": f"Skill 静态扫描：{updated_skill['name']} · {highest['label']}",
+        "content": json.dumps({"skill": sanitize_skill(updated_skill), "files": files[:80], "finding_ids": [item["id"] for item in findings]}, ensure_ascii=False),
+        "skill_id": updated_skill["id"],
+        "finding_ids": [item["id"] for item in findings],
+        "safe_mode": "local-readonly",
+        "created_at": checked_at,
+    }
+    artifact = store.write_artifact(
+        "skill-static-scan",
+        json.dumps(
+            {
+                "schema": "agent-security-skill-static-scan@4.1",
+                "skill": sanitize_skill(updated_skill),
+                "files": files,
+                "findings": findings,
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "boundary": "只读扫描 Skill 根目录；未执行脚本，未安装依赖，未移动或修改原始 Skill 文件。",
+                "checked_at": checked_at,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        suffix="json",
+        metadata={"skill_id": updated_skill["id"], "safe_mode": "local-readonly"},
+    )
+    evidence["artifact_id"] = artifact["id"]
+    evidence["artifact_path"] = artifact["relative_path"]
+    evidence["download"] = f"/api/v1/evidence/{evidence['id']}/download"
+    updated_evidence = store.upsert_record("evidence", evidence, status="READY")
+    merge_state_record(state, "evidenceItems", updated_evidence)
+    for finding in findings:
+        finding["evidence_ids"] = [updated_evidence["id"]]
+        store.upsert_record("finding", finding, status="NEEDS_REVIEW")
+    store.audit_event("post.skills.scan", "skill", updated_skill["id"], {"findings": len(findings), "files": len(files), "safe_mode": "local-readonly"})
+    return {"status": "SCANNED", "skill": updated_skill, "findings": findings, "evidence": updated_evidence, "files": files}
+
+
+def skill_detail(store: Any, state: dict, skill_id: str) -> dict:
+    item = store.get_record("skill", skill_id) or store.get_record("skill_file", skill_id) or find_item(state.get("skills", []), skill_id) or {"id": skill_id, "status": "NOT_FOUND"}
+    files = skill_files_for_item(item, {})
+    findings = skill_findings(store, state, item)
+    evidence_ids = {evidence_id for finding in findings for evidence_id in finding.get("evidence_ids", [])}
+    evidence = [decorate_evidence_item(record) for record in store.list_records("evidence", limit=500) if record.get("skill_id") == item.get("id") or record.get("id") in evidence_ids]
+    detail = dict(item)
+    detail["files_detail"] = files
+    detail["findings"] = findings
+    detail["evidence"] = evidence
+    detail["render_diff"] = skill_render_diff(item, {}).get("diff", [])
+    root = resolve_skill_root(item, {})
+    if root:
+        skill_md = root / "SKILL.md"
+        detail["skill_md"] = redact_text(read_skill_text(skill_md) or "", max_len=3000)
+    return {"item": detail, "files": files, "findings": findings, "evidence": evidence}
+
+
+def quarantine_skill(store: Any, state: dict, skill_id: str, body: dict) -> dict:
+    skill = store.get_record("skill", skill_id) or store.get_record("skill_file", skill_id) or find_item(state.get("skills", []), skill_id) or {"id": skill_id}
+    skill.update(
+        {
+            "status": "隔离",
+            "risk": skill.get("risk") or "需隔离",
+            "riskClass": "critical" if skill.get("riskClass") in {"critical", "high"} else "medium",
+            "quarantine_status": "LOGICAL_ONLY",
+            "quarantine_reason": body.get("reason") or "local review quarantine",
+            "quarantined_at": utc_now(),
+            "mutates_installed_agents": False,
+            "safe_mode": "local-readonly",
+        }
+    )
+    updated = store.upsert_record("skill", skill, status="QUARANTINED")
+    merge_state_record(state, "skills", updated)
+    store.audit_event("post.skills.quarantine", "skill", skill_id, {"mutates_installed_agents": False, "mode": "logical-only"})
+    return {"status": "QUARANTINED", "skill": updated, "mutates_installed_agents": False, "safe_mode": "local-readonly"}
+
+
+def export_skill_redacted(store: Any, state: dict, skill_id: str, body: dict) -> dict:
+    skill = store.get_record("skill", skill_id) or store.get_record("skill_file", skill_id) or find_item(state.get("skills", []), skill_id) or {"id": skill_id}
+    root = resolve_skill_root(skill, body)
+    files = skill_files_for_root(root) if root else []
+    contents = []
+    for item in files[:100]:
+        file_path = root / item["relative_path"] if root else None
+        text = read_skill_text(file_path) if file_path else None
+        contents.append({**item, "content": redact_text(text or "", max_len=2500) if text is not None else None})
+    payload = {
+        "schema": "agent-security-skill-redacted-export@4.1",
+        "skill": sanitize_skill(skill),
+        "files": contents,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "boundary": "导出脱敏副本只读取 Skill 文件并写入本系统 artifact，不覆盖或移动原文件。",
+        "exported_at": utc_now(),
+    }
+    artifact = store.write_artifact("skill-redacted-export", json.dumps(payload, ensure_ascii=False, indent=2), suffix="json", metadata={"skill_id": skill_id, "safe_mode": "local-readonly"})
+    store.audit_event("get.skills.export", "skill", skill_id, {"files": len(contents), "safe_mode": "local-readonly"})
+    return {"format": "json", "artifact": artifact, "download": f"/api/v1/artifacts/{artifact['id']}/download", "file_count": len(contents), "exported_at": payload["exported_at"]}
+
+
+def body_root(body: dict | None) -> Path | None:
+    body = body or {}
+    raw = body.get("path") or body.get("target_path")
+    if not raw:
+        paths = body.get("paths") or body.get("additional_paths") or []
+        raw = paths[0] if isinstance(paths, list) and paths else None
+    if not raw:
+        return None
+    try:
+        path = Path(str(raw)).expanduser()
+        if not path.exists():
+            return None
+        return path.resolve() if path.is_dir() else path.parent.resolve()
+    except OSError:
+        return None
+
+
+def resolve_skill_root(skill: dict, body: dict | None = None) -> Path | None:
+    body = body or {}
+    candidates: list[Path] = []
+    for key in ("skill_path", "path", "target_path"):
+        value = body.get(key)
+        if value:
+            candidates.append(Path(str(value)).expanduser())
+    raw_path = str(skill.get("real_path") or skill.get("source_path") or skill.get("path") or "")
+    base = body_root(body)
+    if raw_path:
+        expanded = raw_path.replace("\\", "/")
+        if expanded.startswith("<target>/") and base:
+            candidates.append(base / expanded.removeprefix("<target>/"))
+        elif expanded.startswith("<project>/") and base:
+            candidates.append(base / expanded.removeprefix("<project>/"))
+        elif expanded.startswith("~/"):
+            candidates.append(Path.home() / expanded[2:])
+        elif "<" not in expanded:
+            candidates.append(Path(expanded).expanduser())
+
+    for candidate in candidates:
+        root = normalize_skill_root(candidate)
+        if root:
+            return root
+
+    names = {str(skill.get("name") or "").lower(), str(skill.get("id") or "").lower()}
+    search_roots = [base] if base else []
+    search_roots.extend(
+        [
+            REPO_ROOT / "tests" / "fixtures" / "sample_agent_project",
+            REPO_ROOT,
+            Path.home() / ".agents" / "skills",
+            Path.home() / ".codex" / "skills",
+            Path.home() / ".codex" / "plugins" / "cache",
+            Path.home() / ".hermes" / "skills",
+            Path.home() / ".openclaw" / "skills",
+        ]
+    )
+    local_appdata = Path(os.environ["LOCALAPPDATA"]) if os.environ.get("LOCALAPPDATA") else None
+    if local_appdata:
+        search_roots.append(local_appdata / "hermes" / "skills")
+
+    for root in search_roots:
+        if not root or not root.exists() or not root.is_dir():
+            continue
+        try:
+            for skill_md in root.rglob("SKILL.md"):
+                parent = skill_md.parent
+                if parent.name.lower() in names or str(parent).lower().endswith("/" + next(iter(names), "")):
+                    return parent.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def normalize_skill_root(candidate: Path) -> Path | None:
+    try:
+        candidate = candidate.expanduser()
+        if candidate.is_file() and candidate.name.upper() == "SKILL.MD":
+            candidate = candidate.parent
+        if candidate.is_dir() and (candidate / "SKILL.md").exists():
+            return candidate.resolve()
+        if candidate.is_dir():
+            hits = list(candidate.glob("*/SKILL.md"))
+            if len(hits) == 1:
+                return hits[0].parent.resolve()
+    except OSError:
+        return None
+    return None
+
+
+def skill_files_for_item(item: dict, body: dict | None = None) -> list[dict]:
+    root = resolve_skill_root(item, body or {})
+    return skill_files_for_root(root) if root else []
+
+
+def skill_files_for_root(root: Path | None, max_files: int = 500) -> list[dict]:
+    if not root or not root.exists() or not root.is_dir():
+        return []
+    files: list[dict] = []
+    try:
+        iterator = root.rglob("*")
+        for path in iterator:
+            if len(files) >= max_files:
+                break
+            try:
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(root).as_posix()
+                stat = path.stat()
+                files.append(
+                    {
+                        "relative_path": relative,
+                        "name": path.name,
+                        "kind": skill_file_kind(path),
+                        "size": stat.st_size,
+                        "sha256": file_digest(path) if stat.st_size <= 20 * 1024 * 1024 else "sha256-skipped-large-file",
+                    }
+                )
+            except OSError:
+                continue
+    except OSError:
+        return files
+    return files
+
+
+def skill_file_kind(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if path.name.upper() == "SKILL.MD" or suffix in {".md", ".mdx"}:
+        return "markdown"
+    if suffix in {".sh", ".bash", ".zsh", ".cmd", ".bat"}:
+        return "shell"
+    if suffix == ".ps1":
+        return "powershell"
+    if suffix == ".py":
+        return "python"
+    if suffix in {".js", ".mjs", ".cjs", ".ts", ".tsx"}:
+        return "javascript"
+    if suffix in {".json", ".jsonl", ".yaml", ".yml", ".toml"}:
+        return "metadata"
+    if suffix in {".txt", ".ini", ".cfg", ".conf"}:
+        return "text"
+    return "binary"
+
+
+def read_skill_text(path: Path | None, limit: int = 200_000) -> str | None:
+    if not path:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in data[:4096]:
+        return None
+    return data[:limit].decode("utf-8", errors="replace")
+
+
+def severity_class_from_text(text: str) -> str:
+    raw = str(text or "")
+    if "P0" in raw or "严重" in raw or "Critical" in raw:
+        return "critical"
+    if "P1" in raw or "高危" in raw or "High" in raw:
+        return "high"
+    if "P2" in raw or "中危" in raw or "Medium" in raw or "需关注" in raw:
+        return "medium"
+    return "low"
+
+
+def highest_skill_risk(findings: list[dict]) -> dict:
+    if not findings:
+        return {"class": "low", "label": "通过"}
+    order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    labels = {"critical": "严重", "high": "高危", "medium": "需关注", "low": "低"}
+    risk_class = max((item.get("sevClass") or severity_class_from_text(item.get("severity", "")) for item in findings), key=lambda value: order.get(value, 0))
+    return {"class": risk_class, "label": labels.get(risk_class, "需关注")}
+
+
+def digest_skill_root(files: list[dict]) -> str:
+    material = "\n".join(f"{item.get('relative_path')}:{item.get('sha256')}" for item in sorted(files, key=lambda x: x.get("relative_path", "")))
+    return stable_hash(material or "empty-skill", 64)
+
+
+def sanitize_skill(skill: dict) -> dict:
+    allowed = {
+        "id",
+        "name",
+        "agent",
+        "scope",
+        "path",
+        "files",
+        "scripts",
+        "metadata",
+        "risk",
+        "riskClass",
+        "status",
+        "sha256",
+        "finding_count",
+        "last_scanned_at",
+        "safe_mode",
+        "mutates_installed_agents",
+        "quarantine_status",
+    }
+    return {key: value for key, value in skill.items() if key in allowed}
+
+
+def skill_findings(store: Any, state: dict, item: dict) -> list[dict]:
+    skill_id = str(item.get("id") or "")
+    skill_name = str(item.get("name") or "")
+    path = str(item.get("path") or "")
+    records = combine_items(store.list_records("finding", limit=1000), state.get("findings", []))
+    matched = []
+    for record in records:
+        if record.get("skill_id") == skill_id or record.get("skill_name") == skill_name or (path and record.get("component") == path):
+            matched.append(record)
+    return matched
+
+
+def skill_render_diff(item: dict, body: dict | None = None) -> dict:
+    root = resolve_skill_root(item, body or {})
+    if not root:
+        return {"status": "UNRESOLVED", "diff": []}
+    raw = read_skill_text(root / "SKILL.md") or ""
+    comments = re.findall(r"<!--[\s\S]*?-->", raw)
+    without_comments = re.sub(r"<!--[\s\S]*?-->", "", raw)
+    hidden_chars = [char for char in raw if ord(char) in {0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x202E}]
+    visible = "".join(char for char in without_comments if char not in hidden_chars)
+    diff = [
+        {
+            "name": "original_redacted",
+            "content": redact_text(raw, max_len=2500),
+            "comment_count": len(comments),
+            "hidden_unicode_count": len(hidden_chars),
+        },
+        {
+            "name": "rendered_visible_redacted",
+            "content": redact_text(visible.strip(), max_len=2500),
+            "comment_count": 0,
+            "hidden_unicode_count": 0,
+        },
+    ]
+    if comments:
+        diff.append({"name": "removed_comments_redacted", "content": redact_text("\n".join(comments), max_len=1200)})
+    return {"status": "READY", "diff": diff}
 
 
 def probe_agent_asset(store: Any, state: dict, agent_id: str, body: dict) -> dict:

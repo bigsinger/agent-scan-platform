@@ -111,6 +111,8 @@ GET /api/v1/skills/{id}/findings
 GET /api/v1/skills/{id}
 GET /api/v1/skills/{id}/files
 GET /api/v1/skills/{id}/render-diff
+GET /api/v1/skills/{id}/export
+POST /api/v1/skills/{id}/quarantine
 GET /api/v1/tasks
 POST /api/v1/tasks/{id}/cancel
 POST /api/v1/tasks/{id}/retry
@@ -223,7 +225,7 @@ PAGE_API_MAP = {
     "P11": ["GET /api/v1/mcp-servers", "POST /api/v1/mcp-servers/{id}/inspect", "GET /api/v1/mcp-servers/{id}/tools", "GET /api/v1/tools", "GET /api/v1/tools/{id}/flows"],
     "P12": ["GET /api/v1/mcp-consents", "POST /api/v1/mcp-consents/{id}/approve", "POST /api/v1/mcp-consents/{id}/decline"],
     "P13": ["GET /api/v1/skills", "POST /api/v1/skill-scans", "GET /api/v1/skills/{id}/findings"],
-    "P14": ["GET /api/v1/skills/{id}", "GET /api/v1/skills/{id}/files", "GET /api/v1/skills/{id}/render-diff"],
+    "P14": ["GET /api/v1/skills/{id}", "GET /api/v1/skills/{id}/files", "GET /api/v1/skills/{id}/render-diff", "GET /api/v1/skills/{id}/export", "POST /api/v1/skills/{id}/quarantine"],
     "P15": ["GET /api/v1/tasks", "POST /api/v1/tasks/{id}/cancel", "POST /api/v1/tasks/{id}/retry", "POST /api/v1/tasks/{id}/clone"],
     "P16": ["GET /api/v1/tasks/{id}", "GET /api/v1/tasks/{id}/events", "GET /api/v1/tasks/{id}/artifacts"],
     "P17": ["POST /api/v1/redteam-runs", "GET /api/v1/redteam-runs/{id}", "PATCH /api/v1/redteam-runs/{id}", "POST /api/v1/redteam-runs/{id}/stop"],

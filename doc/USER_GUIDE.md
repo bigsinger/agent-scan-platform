@@ -233,9 +233,26 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 - 是否存在明文 Token、API Key、私钥。
 - 是否存在不固定版本的依赖安装。
 
+常见操作：
+
+- “同步并扫描”：先执行只读发现，再对发现到的 Skill 根目录做静态扫描。
+- “扫描”：只扫描当前 Skill，不执行 Skill 中的脚本。
+- “详情”：读取脱敏 `SKILL.md`、渲染差异、文件树、规则命中和证据。
+- “导出脱敏副本”：生成本系统 artifact，内容已脱敏，不覆盖原 Skill 文件。
+- “隔离”：只把 Skill 在本系统内标记为逻辑隔离，写入 SQLite 与审计，不移动、不删除、不改名已安装 Agent 的 Skill 目录。
+
+API 示例：
+
+```powershell
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/skill-scans -Body (@{ target_path = "tests\fixtures\sample_agent_project"; limit = 20 } | ConvertTo-Json) -ContentType "application/json"
+$skill = $scan.skills[0]
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
+```
+
 处置建议：
 
-1. 高危 Skill 先隔离，不进入生产 Agent。
+1. 高危 Skill 先在本系统逻辑隔离，不进入生产 Agent 的启用清单。
 2. 删除越权指令和隐藏控制内容。
 3. 外部脚本必须固定版本并校验哈希。
 4. 重新扫描并生成复测报告。

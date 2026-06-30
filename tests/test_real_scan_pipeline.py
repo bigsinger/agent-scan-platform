@@ -96,6 +96,55 @@ def test_mcp_static_inspect_derives_tools_and_evidence_without_starting_stdio():
     assert "sk-test000000000000000000000000" not in artifact.text
 
 
+def test_skill_static_scan_detail_export_and_logical_quarantine_are_readonly():
+    skill_md = FIXTURE / ".agents" / "skills" / "danger-skill" / "SKILL.md"
+    before = skill_md.read_text(encoding="utf-8")
+
+    response = client.post("/api/v1/skill-scans", json={"target_path": str(FIXTURE), "limit": 20})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "COMPLETED"
+    assert payload["safe_mode"] == "local-readonly"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["counts"]["checked"] >= 1
+    assert payload["skills"]
+    assert payload["findings"]
+    assert {finding["rule"] for finding in payload["findings"]} & {"SKILL-PI-001", "SKILL-CODE-001"}
+    assert skill_md.read_text(encoding="utf-8") == before
+
+    skill = next(item for item in payload["skills"] if item["name"] == "danger-skill")
+    detail = client.get(f"/api/v1/skills/{skill['id']}")
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["item"]["safe_mode"] == "local-readonly"
+    assert detail_payload["files"]
+    assert "ignore previous system instructions" in detail_payload["item"]["skill_md"]
+
+    files = client.get(f"/api/v1/skills/{skill['id']}/files")
+    assert files.status_code == 200
+    assert any(item["relative_path"] == "SKILL.md" for item in files.json()["items"])
+
+    diff = client.get(f"/api/v1/skills/{skill['id']}/render-diff")
+    assert diff.status_code == 200
+    assert diff.json()["status"] == "READY"
+
+    export = client.get(f"/api/v1/skills/{skill['id']}/export")
+    assert export.status_code == 200
+    export_payload = export.json()
+    assert export_payload["artifact"]["id"]
+    artifact = client.get(export_payload["download"])
+    assert artifact.status_code == 200
+    assert "agent-security-skill-redacted-export" in artifact.text
+    assert "mutates_installed_agents" in artifact.text
+
+    quarantine = client.post(f"/api/v1/skills/{skill['id']}/quarantine", json={"reason": "contract test"})
+    assert quarantine.status_code == 200
+    assert quarantine.json()["status"] == "QUARANTINED"
+    assert quarantine.json()["mutates_installed_agents"] is False
+    assert skill_md.read_text(encoding="utf-8") == before
+
+
 def test_discovery_probes_installed_hermes_and_codex(monkeypatch, tmp_path):
     hermes_project = tmp_path / "hermes" / "hermes-agent"
     hermes_project.mkdir(parents=True)

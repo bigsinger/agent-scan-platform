@@ -41,6 +41,8 @@
 - `GET /api/v1/skills`
 - `POST /api/v1/skill-scans`
 - `GET /api/v1/skills/{id}/findings`
+- `GET /api/v1/skills/{id}/export`
+- `POST /api/v1/skills/{id}/quarantine`
 
 接口返回必须统一包装：
 
@@ -107,6 +109,8 @@
 - 长任务不得在请求线程中直接执行；必须创建 task 后由本地任务执行器处理。
 - 查询接口必须支持分页、排序和筛选。
 - 所有返回数据必须经过脱敏，尤其是环境变量、Token、Authorization Header、绝对路径和命令参数。
+- `POST /api/v1/skill-scans` 必须保持 `safe_mode=local-readonly`，不得执行 Skill 脚本、不得安装依赖、不得启动已安装 Agent。
+- `POST /api/v1/skills/{id}/quarantine` 仅写本系统逻辑状态、审计事件和证据，不移动、不删除、不重命名原始 Skill 目录。
 
 ## 9. SQLite 数据要求
 

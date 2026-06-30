@@ -42,6 +42,8 @@
 - `GET /api/v1/skills/{id}`
 - `GET /api/v1/skills/{id}/files`
 - `GET /api/v1/skills/{id}/render-diff`
+- `GET /api/v1/skills/{id}/export`
+- `POST /api/v1/skills/{id}/quarantine`
 
 接口返回必须统一包装：
 
@@ -107,6 +109,8 @@
 - 长任务不得在请求线程中直接执行；必须创建 task 后由本地任务执行器处理。
 - 查询接口必须支持分页、排序和筛选。
 - 所有返回数据必须经过脱敏，尤其是环境变量、Token、Authorization Header、绝对路径和命令参数。
+- 脱敏导出只能读取 Skill 文件并写入本系统 artifact，不覆盖或移动原文件。
+- 隔离操作为逻辑隔离，必须返回 `mutates_installed_agents=false` 并写入审计事件。
 
 ## 9. SQLite 数据要求
 

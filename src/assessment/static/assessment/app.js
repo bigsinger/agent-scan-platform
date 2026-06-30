@@ -32,6 +32,9 @@ data(){
     initial.redteamBusy = false;
     initial.mcpBusy = false;
     initial.mcpInspection = null;
+    initial.skillBusy = false;
+    initial.skillScanResult = null;
+    initial.skillDetail = null;
     initial.selectedMcp = initial.selectedMcp || (initial.mcpServers || [])[0] || {};
     initial.selectedTool = initial.selectedTool || (initial.tools || [])[0] || {};
     initial.selectedConsent = initial.selectedConsent || (initial.consents || [])[0] || {};
@@ -136,10 +139,33 @@ data(){
       return this.consents.filter(c=>['已拒绝','DENIED','DECLINED'].includes(c.status)).length;
     },
     skillScriptCount(){
-      return this.skills.reduce((sum,s)=>sum+(Number(s.scripts)||0),0);
+      return this.skills.reduce((sum,s)=>{
+        const raw=s.scripts;
+        if(typeof raw==='number') return sum+raw;
+        const match=String(raw||'').match(/\d+/);
+        return sum+(match ? Number(match[0]) : 0);
+      },0);
     },
     highSkillCount(){
       return this.skills.filter(s=>['critical','high'].includes(s.riskClass)).length;
+    },
+    selectedSkillFindings(){
+      const id=this.selectedSkill && this.selectedSkill.id;
+      const name=this.selectedSkill && this.selectedSkill.name;
+      const path=this.selectedSkill && this.selectedSkill.path;
+      return (this.selectedSkill && this.selectedSkill.findings) || this.findings.filter(f=>f.skill_id===id || f.skill_name===name || (path && f.component===path));
+    },
+    selectedSkillEvidence(){
+      const id=this.selectedSkill && this.selectedSkill.id;
+      const evidenceIds=new Set(this.selectedSkillFindings.flatMap(f=>f.evidence_ids || []));
+      return (this.selectedSkill && this.selectedSkill.evidence) || this.evidenceItems.filter(e=>e.skill_id===id || evidenceIds.has(e.id));
+    },
+    selectedSkillFiles(){
+      return (this.selectedSkill && this.selectedSkill.files_detail) || [];
+    },
+    selectedSkillHash(){
+      const hash=this.selectedSkill && this.selectedSkill.sha256 || '';
+      return hash ? hash.slice(0,12)+'...' : '-';
     },
     guardLastCheckDisplay(){
       const raw=this.guardStatus && this.guardStatus.last_check_at;
@@ -204,6 +230,14 @@ data(){
     syncRouteFromLocation(){
       const path=location.protocol==='file:' && location.hash ? location.hash.slice(1) : location.pathname;
       this.current=this.keyForPath(path);
+      const skillMatch=path.match(/^\/assessment\/skills\/([^/]+)/);
+      if(skillMatch){
+        const skillId=decodeURIComponent(skillMatch[1]);
+        this._routeSkillId=skillId;
+        const found=(this.skills || []).find(s=>String(s.id)===skillId || String(s.name)===skillId);
+        if(found) this.selectedSkill=found;
+        if(this.current==='skill-detail') this.loadSkillDetail(found || {id:skillId});
+      }
     },
     async loadBootstrap(){
       try {
@@ -565,6 +599,80 @@ data(){
         this.toastMsg('Tool Signature 已加载：'+(this.selectedTool.signature || this.selectedTool.id));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.mcpBusy=false; }
+    },
+    async runSkillScan(){
+      this.skillBusy=true; this.apiError='';
+      try {
+        const target=(this.form.targetPath || '').trim();
+        const payload=target ? {target_path:target, limit:80} : {limit:80};
+        const res=await this.apiPost('/api/v1/skill-scans', payload);
+        this.skillScanResult=res;
+        if(res.discovery){
+          this.mergeRecords('discoveryHits', res.discovery.hits || []);
+          this.mergeRecords('agentAssets', res.discovery.agents || []);
+          this.mergeRecords('mcpServers', res.discovery.mcp_servers || []);
+          this.mergeRecords('consents', res.discovery.consents || []);
+          this.mergeRecords('skills', res.discovery.skills || []);
+        }
+        this.mergeRecords('skills', res.skills || []);
+        this.mergeRecords('findings', res.findings || []);
+        this.mergeRecords('evidenceItems', res.evidence || []);
+        if(res.skills && res.skills.length) this.selectedSkill=res.skills[0];
+        this.toastMsg('Skill 只读扫描完成：'+((res.counts&&res.counts.checked)||0)+' 个，风险 '+((res.counts&&res.counts.findings)||0)+' 条');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.skillBusy=false; }
+    },
+    async scanSkill(skill){
+      if(!skill || !skill.id) return;
+      this.skillBusy=true; this.apiError='';
+      try {
+        const target=(this.form.targetPath || '').trim();
+        const payload=target ? {skill_id:skill.id, target_path:target, limit:1} : {skill_id:skill.id, limit:1};
+        const res=await this.apiPost('/api/v1/skill-scans', payload);
+        this.skillScanResult=res;
+        this.mergeRecords('skills', res.skills || []);
+        this.mergeRecords('findings', res.findings || []);
+        this.mergeRecords('evidenceItems', res.evidence || []);
+        if(res.skills && res.skills.length) {
+          this.selectedSkill=res.skills[0];
+          await this.loadSkillDetail(this.selectedSkill);
+        }
+        this.toastMsg('Skill 扫描完成：'+(skill.name || skill.id));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.skillBusy=false; }
+    },
+    async loadSkillDetail(skill){
+      if(!skill || !skill.id) return;
+      this.skillBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/skills/'+encodeURIComponent(skill.id));
+        this.skillDetail=res;
+        this.selectedSkill=Object.assign({}, skill, res.item || {});
+        this.mergeRecords('skills', [this.selectedSkill]);
+        this.mergeRecords('findings', res.findings || []);
+        this.mergeRecords('evidenceItems', res.evidence || []);
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.skillBusy=false; }
+    },
+    async quarantineSkill(skill){
+      if(!skill || !skill.id) return;
+      this.skillBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/skills/'+encodeURIComponent(skill.id)+'/quarantine', {reason:'local logical quarantine'});
+        if(res.skill){ this.mergeRecords('skills', [res.skill]); this.selectedSkill=res.skill; }
+        this.toastMsg('已记录逻辑隔离：不移动、不修改原始 Skill 文件');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.skillBusy=false; }
+    },
+    async exportSkillRedacted(skill){
+      if(!skill || !skill.id) return;
+      this.skillBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/skills/'+encodeURIComponent(skill.id)+'/export');
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('脱敏副本已生成：'+(res.artifact&&res.artifact.id || 'READY'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.skillBusy=false; }
     },
     selectConsent(c){
       this.selectedConsent=c || {};
@@ -983,7 +1091,7 @@ data(){
     },
     openAgent(a){this.selectedAsset=a;this.agentTab='概览';this.current='agent-detail';window.scrollTo(0,0);},
     openTask(t){this.selectedTask=t;this.taskTab='执行概览';this.current='task-detail';window.scrollTo(0,0);},
-    openSkill(s){this.selectedSkill=s;this.skillTab='概览';this.current='skill-detail';window.scrollTo(0,0);},
+    openSkill(s){this.selectedSkill=s;this.skillTab='概览';this.current='skill-detail';this.pushRoute('skill-detail');window.scrollTo(0,0);this.loadSkillDetail(s);},
     openFinding(f){this.selectedFinding=f;this.findingTab='概览';this.current='finding-detail';window.scrollTo(0,0);},
     async saveAssessmentDraft(){
       this.opsBusy=true; this.apiError='';
