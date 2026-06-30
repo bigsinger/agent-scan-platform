@@ -327,10 +327,10 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.quickBusy=false; }
     },
-    async createRuntimeReport(){
+    async createRuntimeReport(task){
       this.opsBusy=true; this.apiError='';
       try {
-        const assessmentId=(this.selectedTask&&this.selectedTask.id) || ((this.tasks||[])[0] && this.tasks[0].id) || '';
+        const assessmentId=(task&&task.id) || (this.selectedTask&&this.selectedTask.id) || ((this.tasks||[])[0] && this.tasks[0].id) || '';
         const res=await this.apiPost('/api/v1/reports', {assessment_id:assessmentId, type:'Standard'});
         if(res.report){
           this.mergeRecords('reports', [res.report]);
@@ -574,13 +574,54 @@ data(){
     openTask(t){this.selectedTask=t;this.taskTab='执行概览';this.current='task-detail';window.scrollTo(0,0);},
     openSkill(s){this.selectedSkill=s;this.skillTab='概览';this.current='skill-detail';window.scrollTo(0,0);},
     openFinding(f){this.selectedFinding=f;this.findingTab='概览';this.current='finding-detail';window.scrollTo(0,0);},
-    async submitAssessment(){
+    async saveAssessmentDraft(){
+      this.opsBusy=true; this.apiError='';
       try {
-        const res = await this.apiPost('/api/v1/assessments', {target_id:this.selectedAsset.id, target_path:this.form.targetPath, profile_id:'standard-complete@4.0.0'});
+        const res=await this.apiPost('/api/v1/assessments/drafts', {target_id:this.selectedAsset&&this.selectedAsset.id, target_path:this.form.targetPath, adapter:this.form.adapter, profile_id:'standard-complete@4.1.0', wizard:this.wizard, plan_confirmed:this.planConfirmed});
+        if(res.draft){ this.mergeRecords('tasks', [res.draft]); this.selectedTask=res.draft; }
+        this.toastMsg('测评草稿已保存：'+(res.draft&&res.draft.id || 'DRAFT'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async cloneTask(task){
+      if(!task || !task.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/tasks/'+encodeURIComponent(task.id)+'/clone', {});
+        if(res.draft){ this.mergeRecords('tasks', [res.draft]); this.selectedTask=res.draft; }
+        this.toastMsg('任务计划已复制为草稿：'+(res.draft&&res.draft.id || 'DRAFT'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async cancelTask(task){
+      if(!task || !task.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/tasks/'+encodeURIComponent(task.id)+'/cancel', {reason:'local-user requested'});
+        if(res.task){ this.mergeRecords('tasks', [res.task]); this.selectedTask=res.task; }
+        this.toastMsg('任务已安全取消：'+task.id);
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async refreshTaskEvents(task){
+      if(!task || !task.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/tasks/'+encodeURIComponent(task.id)+'/events');
+        this.taskEvents=res.items || [];
+        this.toastMsg('事件流已刷新：'+this.taskEvents.length+' 条');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async submitAssessment(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res = await this.apiPost('/api/v1/assessments', {target_id:this.selectedAsset&&this.selectedAsset.id, target_path:this.form.targetPath, adapter:this.form.adapter, profile_id:'standard-complete@4.1.0'});
         this.mergeScanResponse(res);
         const t = res.assessment || Object.assign({}, this.tasks[0], {id:'asm_v4_'+Date.now(), name:'新建完整测评', progress:1, status:'运行中', stage:'PRECHECK'});
         this.mergeRecords('tasks', [t]);this.selectedTask=t;this.wizard=1;this.planConfirmed=false;this.go('task-detail');this.toastMsg('Assessment Plan 已固化并完成本地扫描');
       } catch (err) { this.apiError = this.describeError(err); }
+      finally { this.opsBusy=false; }
     },
     async approveConsent(c,scope){
       c.status=scope==='once'?'允许一次':'本任务允许';

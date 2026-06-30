@@ -149,6 +149,35 @@ def test_discovery_hit_asset_actions_are_persisted():
     assert exported.json()["counts"]["hits"] >= 1
 
 
+def test_task_lifecycle_actions_are_persisted():
+    draft = client.post(
+        "/api/v1/assessments/drafts",
+        json={"target_path": "tests/fixtures/sample_agent_project", "adapter": "Codex", "profile_id": "standard-complete@4.1.0"},
+    )
+    assert draft.status_code == 200
+    assert draft.json()["draft"]["status"] == "DRAFT"
+    assert draft.json()["draft"]["stage"] == "DRAFT"
+
+    scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 30}).json()
+    task_id = scan["assessment"]["id"]
+    events = client.get(f"/api/v1/tasks/{task_id}/events")
+    assert events.status_code == 200
+    assert events.json()["items"]
+
+    cloned = client.post(f"/api/v1/tasks/{task_id}/clone", json={})
+    assert cloned.status_code == 200
+    assert cloned.json()["draft"]["status"] == "DRAFT"
+    assert cloned.json()["draft"]["source_task_id"] == task_id
+
+    cancelled = client.post(f"/api/v1/tasks/{task_id}/cancel", json={"reason": "contract test"})
+    assert cancelled.status_code == 200
+    assert cancelled.json()["task"]["status"] == "已取消"
+
+    report = client.post("/api/v1/reports", json={"assessment_id": task_id, "type": "Standard"})
+    assert report.status_code == 200
+    assert report.json()["report"]["status"] == "READY"
+
+
 def test_representative_spec_endpoints():
     endpoints = [
         "/api/v1/agents",

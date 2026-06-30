@@ -282,6 +282,16 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
+任务生命周期运维操作只影响本系统任务记录、报告制品和审计事件，不会修改或终止已安装 Codex/Hermes：
+
+```powershell
+$draft = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/assessments/drafts -Body (@{ target_path = "tests\fixtures\sample_agent_project"; adapter = "Codex" } | ConvertTo-Json) -ContentType "application/json"
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body (@{ mode = "path"; target_path = "tests\fixtures\sample_agent_project"; max_files = 50 } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/tasks/$($scan.assessment.id)/events"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.assessment.id)/clone"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.assessment.id)/cancel" -Body (@{ reason = "维护窗口取消" } | ConvertTo-Json) -ContentType "application/json"
+```
+
 能力管理健康检查：
 
 ```powershell

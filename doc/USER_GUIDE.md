@@ -286,6 +286,16 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 - 整改建议。
 - 本地扫描说明。
 
+## 9.1 任务生命周期
+
+任务页和任务详情页支持真实状态操作：
+
+- 保存草稿：创建 `assessment` 草稿记录，后续可复制或提交。
+- 复制任务：从已有任务生成新的草稿，不复用旧结果。
+- 取消任务：把任务状态写为 `CANCELLED`，记录本地审计；当前实现不杀已安装 Agent 进程。
+- 刷新事件：从 SQLite `scan_event` 读取任务事件流。
+- 生成报告：基于指定任务生成 HTML/JSON 报告制品。
+
 ## 10. API 使用示例
 
 ### 健康检查
@@ -392,6 +402,28 @@ Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/reports `
   -Body $body `
+  -ContentType "application/json"
+```
+
+### 任务生命周期
+
+```powershell
+$draft = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/assessments/drafts `
+  -Body (@{ target_path = "tests\fixtures\sample_agent_project"; adapter = "Codex" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$scan = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/quick-scans `
+  -Body (@{ mode = "path"; target_path = "tests\fixtures\sample_agent_project"; max_files = 50 } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/tasks/$($scan.assessment.id)/events"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.assessment.id)/clone"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.assessment.id)/cancel" `
+  -Body (@{ reason = "本地取消" } | ConvertTo-Json) `
   -ContentType "application/json"
 ```
 

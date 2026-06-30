@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent 安全测评能力模块 V4.1</title>
-<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.8">
+<link rel="stylesheet" href="/static/assessment/style.css?v=4.1.9">
 </head>
 <body>
 <div id="boot-status" class="boot-status"><div class="boot-card"><strong>Agent 安全测评模块正在启动</strong><p>如果页面长时间无响应，请检查本地 Vue 静态资源、浏览器 Console 或模板编译错误。</p></div></div>
@@ -150,7 +150,7 @@
   </div>
   <div class="card"><div class="card-head"><h2>最近快速扫描</h2><button class="btn sm" @click="go('tasks')">全部任务</button></div>
     <table><thead><tr><th>任务</th><th>目标</th><th>模式</th><th>风险</th><th>耗时</th><th>状态</th><th>操作</th></tr></thead><tbody>
-      <tr v-for="t in tasks.slice(0,4)"><td>{{t.name}}</td><td>{{t.target}}</td><td>本地</td><td>{{t.critical}} / {{t.high}}</td><td>11m 42s</td><td><span :class="['badge',statusClass(t.status)]">{{t.status}}</span></td><td><button class="btn sm" @click="openTask(t)">查看</button><button class="btn sm" @click="toastMsg('已复制为新任务')">复制</button></td></tr>
+      <tr v-for="t in tasks.slice(0,4)"><td>{{t.name}}</td><td>{{t.target}}</td><td>本地</td><td>{{t.critical}} / {{t.high}}</td><td>11m 42s</td><td><span :class="['badge',statusClass(t.status)]">{{t.status}}</span></td><td><button class="btn sm" @click="openTask(t)">查看</button><button class="btn sm" :disabled="opsBusy" @click="cloneTask(t)">复制</button></td></tr>
     </tbody></table>
   </div>
 </div>
@@ -159,7 +159,7 @@
 <!-- P03 CREATE -->
 <div v-if="current==='create'">
   <div class="card">
-    <div class="card-head"><div><h2>创建完整测评</h2><div class="desc">六步固化范围、授权、检测项、预算和 MCP 启动策略。提交后生成不可变 Plan 快照。</div></div><button class="btn" @click="toastMsg('草稿已保存')">保存草稿</button></div>
+    <div class="card-head"><div><h2>创建完整测评</h2><div class="desc">六步固化范围、授权、检测项、预算和 MCP 启动策略。提交后生成不可变 Plan 快照。</div></div><button class="btn" :disabled="opsBusy" @click="saveAssessmentDraft">保存草稿</button></div>
     <div class="steps"><div v-for="(s,i) in wizardSteps" :class="['step',{active:wizard===i+1,done:wizard>i+1}]"><div class="step-num">{{wizard>i+1?'✓':i+1}}</div><div class="step-name">{{s}}</div></div></div>
 
     <div v-if="wizard===1" class="grid g2">
@@ -186,7 +186,7 @@
         <div class="field"><label>扫描用户</label><select><option>当前用户</option><option>所有可读用户</option></select></div>
         <div class="field"><label>代理</label><select><option>遵循系统代理</option><option>不使用代理</option></select></div>
       </div>
-      <div><h3>连接预检</h3><table><tbody><tr><td>根目录</td><td><span class="badge low">可读</span></td><td>/workspace/claude-demo</td></tr><tr><td>配置</td><td><span class="badge low">4 命中</span></td><td>JSON/JSON5</td></tr><tr><td>Skills</td><td><span class="badge low">8 命中</span></td><td>2 个作用域</td></tr><tr><td>MCP</td><td><span class="badge medium">3 待审批</span></td><td>2 stdio / 1 HTTP</td></tr><tr><td>空间</td><td><span class="badge low">12.4 GiB</span></td><td>足够</td></tr></tbody></table><button class="btn soft" style="margin-top:10px" @click="toastMsg('预检已刷新')">重新预检</button></div>
+      <div><h3>连接预检</h3><table><tbody><tr><td>根目录</td><td><span class="badge low">可读</span></td><td>/workspace/claude-demo</td></tr><tr><td>配置</td><td><span class="badge low">4 命中</span></td><td>JSON/JSON5</td></tr><tr><td>Skills</td><td><span class="badge low">8 命中</span></td><td>2 个作用域</td></tr><tr><td>MCP</td><td><span class="badge medium">3 待审批</span></td><td>2 stdio / 1 HTTP</td></tr><tr><td>空间</td><td><span class="badge low">12.4 GiB</span></td><td>足够</td></tr></tbody></table><button class="btn soft" style="margin-top:10px" :disabled="quickBusy" @click="precheckQuickScan">重新预检</button></div>
     </div>
 
     <div v-if="wizard===3">
@@ -231,7 +231,7 @@ production.write</textarea></div></div></div>
       </div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;margin-top:18px"><button class="btn" :disabled="wizard===1" @click="wizard--">← 上一步</button><button v-if="wizard<6" class="btn primary" @click="wizard++">下一步 →</button><button v-else class="btn primary" :disabled="!planConfirmed" @click="submitAssessment">提交并开始测评</button></div>
+    <div style="display:flex;justify-content:space-between;margin-top:18px"><button class="btn" :disabled="wizard===1" @click="wizard--">← 上一步</button><button v-if="wizard<6" class="btn primary" @click="wizard++">下一步 →</button><button v-else class="btn primary" :disabled="!planConfirmed||opsBusy" @click="submitAssessment">提交并开始测评</button></div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ integrations/agent_scan/
     <div class="card-head"><div><h2>测评任务</h2><div class="desc">任务、阶段、Python Job、MCP 审批和报告状态统一管理。</div></div><button class="btn primary" @click="go('create')">＋ 新建测评</button></div>
     <div class="toolbar"><input class="search" placeholder="搜索任务 / 目标 / ID"><select><option>全部状态</option><option>运行中</option><option>等待审批</option><option>已完成</option><option>部分完成</option><option>失败</option></select><select><option>全部 Adapter</option><option>OpenClaw</option><option>Hermes</option><option>Claude Code</option><option>Codex</option></select><select><option>最近 7 天</option><option>最近 30 天</option><option>全部</option></select></div>
     <div class="table-wrap"><table><thead><tr><th>任务</th><th>目标 / Adapter</th><th>模板</th><th>阶段</th><th>进度</th><th>风险</th><th>执行槽</th><th>状态</th><th>操作</th></tr></thead><tbody>
-      <tr v-for="t in tasks"><td><span class="link" @click="openTask(t)">{{t.name}}</span><div class="tiny muted mono">{{t.id}}</div></td><td>{{t.target}}<div class="tiny muted">{{t.adapter}}</div></td><td>{{t.profile}}</td><td>{{t.stage}}</td><td><div style="display:flex;gap:6px;align-items:center"><div class="progress" style="width:90px"><i :style="{width:t.progress+'%'}"></i></div>{{t.progress}}%</div></td><td><span class="badge critical">{{t.critical}}</span> <span class="badge high">{{t.high}}</span></td><td>{{t.slot}}</td><td><span :class="['badge',statusClass(t.status)]">{{t.status}}</span></td><td><button class="btn sm" @click="openTask(t)">详情</button><button class="btn sm" @click="toastMsg('已复制任务计划')">复制</button><button class="btn sm danger" v-if="t.status==='运行中'||t.status==='等待审批'" @click="toastMsg('已请求安全取消')">取消</button></td></tr>
+      <tr v-for="t in tasks"><td><span class="link" @click="openTask(t)">{{t.name}}</span><div class="tiny muted mono">{{t.id}}</div></td><td>{{t.target}}<div class="tiny muted">{{t.adapter}}</div></td><td>{{t.profile}}</td><td>{{t.stage}}</td><td><div style="display:flex;gap:6px;align-items:center"><div class="progress" style="width:90px"><i :style="{width:(t.progress||0)+'%'}"></i></div>{{t.progress||0}}%</div></td><td><span class="badge critical">{{t.critical||0}}</span> <span class="badge high">{{t.high||0}}</span></td><td>{{t.slot}}</td><td><span :class="['badge',statusClass(t.status)]">{{t.status}}</span></td><td><button class="btn sm" @click="openTask(t)">详情</button><button class="btn sm" :disabled="opsBusy" @click="cloneTask(t)">复制</button><button class="btn sm danger" v-if="t.status==='运行中'||t.status==='等待审批'||t.status==='RUNNING'||t.status==='WAITING_CONSENT'" :disabled="opsBusy" @click="cancelTask(t)">取消</button></td></tr>
     </tbody></table></div>
   </div>
   <div class="grid g2"><div class="card"><h2>队列状态</h2><div class="statline"><div><span class="muted small">运行</span><div class="kpi">2</div></div><div><span class="muted small">等待</span><div class="kpi">3</div></div><div><span class="muted small">等待审批</span><div class="kpi">1</div></div><div><span class="muted small">可用槽</span><div class="kpi">0/2</div></div></div></div><div class="card"><h2>恢复提示</h2><div class="callout green">服务上次正常关闭。0 个 Job 需要恢复，1 个报告渲染任务可重试。</div><button class="btn" @click="go('execution')">查看执行中心</button></div></div>
@@ -398,7 +398,7 @@ integrations/agent_scan/
 <!-- P16 TASK DETAIL -->
 <div v-if="current==='task-detail'">
   <div class="card">
-    <div class="card-head"><div><button class="btn sm" @click="go('tasks')">← 返回</button><h2 style="display:inline;margin-left:8px">{{selectedTask.name}}</h2><div class="desc" style="margin-left:70px">{{selectedTask.id}} · {{selectedTask.target}}</div></div><div><button class="btn" @click="toastMsg('事件流已刷新')">刷新</button><button class="btn danger" v-if="selectedTask.status==='运行中'||selectedTask.status==='等待审批'" @click="toastMsg('正在终止子进程并清理')">取消任务</button><button class="btn primary" v-else @click="toastMsg('报告生成任务已创建')">生成报告</button></div></div>
+    <div class="card-head"><div><button class="btn sm" @click="go('tasks')">← 返回</button><h2 style="display:inline;margin-left:8px">{{selectedTask.name}}</h2><div class="desc" style="margin-left:70px">{{selectedTask.id}} · {{selectedTask.target}}</div></div><div><button class="btn" :disabled="opsBusy" @click="refreshTaskEvents(selectedTask)">刷新</button><button class="btn danger" v-if="selectedTask.status==='运行中'||selectedTask.status==='等待审批'||selectedTask.status==='RUNNING'||selectedTask.status==='WAITING_CONSENT'" :disabled="opsBusy" @click="cancelTask(selectedTask)">取消任务</button><button class="btn primary" v-else :disabled="opsBusy" @click="createRuntimeReport(selectedTask)">生成报告</button></div></div>
     <div class="grid g5"><div class="metric"><div class="metric-label">进度</div><div class="metric-value">{{selectedTask.progress}}%</div></div><div class="metric"><div class="metric-label">当前阶段</div><div class="metric-value" style="font-size:16px">{{selectedTask.stage}}</div></div><div class="metric"><div class="metric-label">Job</div><div class="metric-value">9/13</div></div><div class="metric"><div class="metric-label">P0 / P1</div><div class="metric-value">{{selectedTask.critical}} / {{selectedTask.high}}</div></div><div class="metric"><div class="metric-label">耗时</div><div class="metric-value">18m</div></div></div>
     <div class="stage-list" style="margin:15px 0"><div v-for="s in taskStages" :class="['stage',s.state]"><div class="sname">{{s.name}}</div><div class="stime">{{s.text}}</div></div></div>
     <div class="tabs"><button v-for="x in ['执行概览','Job','事件流','审批','风险','证据','预算','错误与清理']" :class="['tab',{active:taskTab===x}]" @click="taskTab=x">{{x}}</button></div>
@@ -784,6 +784,6 @@ remote_analysis: false</div></div></div></div>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.8"></script>
+<script src="/static/assessment/app.js?v=4.1.9"></script>
 </body>
 </html>

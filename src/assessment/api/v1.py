@@ -375,6 +375,10 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         task_id = path.split("/")[-2]
         result["task"] = update_task_state(store, state, task_id, "排队中", "RETRY_QUEUED")
         result["status"] = "RETRY_QUEUED"
+    elif path.startswith("/tasks/") and path.endswith("/clone"):
+        task_id = path.split("/")[-2]
+        result["draft"] = clone_task_as_draft(store, state, task_id, body)
+        result["status"] = "DRAFT"
     elif path.endswith("/cancel"):
         result["status"] = "CANCELLED"
         mutate_task_status(state, path, "已取消")
@@ -396,8 +400,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path.endswith("/probe"):
         result["probe"] = {"status": "正常", "finished_at": utc_now(), "mode": "local-readonly"}
     elif path == "/assessments/drafts":
-        draft = {"id": new_id("draft"), "status": "DRAFT", "plan": body, "created_at": utc_now()}
-        result["draft"] = store.upsert_record("assessment", draft, status="DRAFT")
+        result["draft"] = create_assessment_draft(store, state, body)
     elif path == "/assessments/plan":
         plan = build_assessment_plan(body, state)
         result["plan"] = plan
@@ -1002,6 +1005,57 @@ def update_task_state(store: Any, state: dict, task_id: str, status: str, state_
     updated = store.upsert_record(table, task, status=state_code)
     merge_state_record(state, "tasks", updated)
     return updated
+
+
+def create_assessment_draft(store: Any, state: dict, body: dict, source: dict | None = None) -> dict:
+    selected = state.get("selectedAsset", {})
+    source = source or {}
+    target = body.get("target") or body.get("target_path") or source.get("target") or selected.get("path") or selected.get("name") or "本机 Agent 配置"
+    adapter = body.get("adapter") or source.get("adapter") or selected.get("adapter") or "自动识别"
+    draft = {
+        "id": new_id("asm"),
+        "name": body.get("name") or (f"{source.get('name', '本机测评')} · 草稿" if source else "本机 Agent 安全测评草稿"),
+        "target": target,
+        "target_path": body.get("target_path") or source.get("target_path", ""),
+        "target_id": body.get("target_id") or source.get("target_id") or selected.get("id", ""),
+        "adapter": adapter,
+        "profile": body.get("profile_id") or source.get("profile") or "standard-complete",
+        "stage": "DRAFT",
+        "progress": 0,
+        "critical": 0,
+        "high": 0,
+        "slot": "draft",
+        "status": "DRAFT",
+        "state_code": "DRAFT",
+        "safe_mode": body.get("safe_mode") or source.get("safe_mode") or "read_only",
+        "mcp_policy": body.get("mcp_policy") or source.get("mcp_policy") or "per-server-consent",
+        "remote_analysis": bool(body.get("remote_analysis", source.get("remote_analysis", False))),
+        "plan": body.get("plan") or body,
+        "created_at": utc_now(),
+    }
+    if source.get("id"):
+        draft["source_task_id"] = source["id"]
+    updated = store.upsert_record("assessment", draft, status="DRAFT")
+    merge_state_record(state, "tasks", updated)
+    state["selectedTask"] = updated
+    return updated
+
+
+def clone_task_as_draft(store: Any, state: dict, task_id: str, body: dict) -> dict:
+    source = store.get_record("assessment", task_id) or store.get_record("task", task_id) or find_item(state.get("tasks", []), task_id) or {"id": task_id}
+    payload = {
+        "name": body.get("name") or f"{source.get('name', task_id)} · 复制",
+        "target": body.get("target") or source.get("target"),
+        "target_path": body.get("target_path") or source.get("target_path", ""),
+        "target_id": body.get("target_id") or source.get("target_id", ""),
+        "adapter": body.get("adapter") or source.get("adapter"),
+        "profile_id": body.get("profile_id") or source.get("profile"),
+        "safe_mode": body.get("safe_mode") or source.get("safe_mode"),
+        "mcp_policy": body.get("mcp_policy") or source.get("mcp_policy"),
+        "remote_analysis": body.get("remote_analysis", source.get("remote_analysis", False)),
+        "plan": {"cloned_from": task_id, "source_stage": source.get("stage"), "source_profile": source.get("profile")},
+    }
+    return create_assessment_draft(store, state, payload, source=source)
 
 
 def build_assessment_plan(body: dict, state: dict) -> dict:

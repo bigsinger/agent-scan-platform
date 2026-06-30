@@ -114,6 +114,7 @@ GET /api/v1/skills/{id}/render-diff
 GET /api/v1/tasks
 POST /api/v1/tasks/{id}/cancel
 POST /api/v1/tasks/{id}/retry
+POST /api/v1/tasks/{id}/clone
 GET /api/v1/tasks/{id}
 GET /api/v1/tasks/{id}/events
 GET /api/v1/tasks/{id}/artifacts
@@ -213,7 +214,7 @@ PAGE_API_MAP = {
     "P12": ["GET /api/v1/mcp-consents", "POST /api/v1/mcp-consents/{id}/approve", "POST /api/v1/mcp-consents/{id}/decline"],
     "P13": ["GET /api/v1/skills", "POST /api/v1/skill-scans", "GET /api/v1/skills/{id}/findings"],
     "P14": ["GET /api/v1/skills/{id}", "GET /api/v1/skills/{id}/files", "GET /api/v1/skills/{id}/render-diff"],
-    "P15": ["GET /api/v1/tasks", "POST /api/v1/tasks/{id}/cancel", "POST /api/v1/tasks/{id}/retry"],
+    "P15": ["GET /api/v1/tasks", "POST /api/v1/tasks/{id}/cancel", "POST /api/v1/tasks/{id}/retry", "POST /api/v1/tasks/{id}/clone"],
     "P16": ["GET /api/v1/tasks/{id}", "GET /api/v1/tasks/{id}/events", "GET /api/v1/tasks/{id}/artifacts"],
     "P17": ["POST /api/v1/redteam-runs", "GET /api/v1/redteam-runs/{id}", "POST /api/v1/redteam-runs/{id}/stop"],
     "P18": ["GET /api/v1/redteam-cases", "POST /api/v1/redteam-cases", "POST /api/v1/redteam-cases/{id}/validate"],
