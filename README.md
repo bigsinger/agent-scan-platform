@@ -50,7 +50,7 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
 ```
 
-测试 Fixture 快速扫描：
+回归样本快速扫描：
 
 ```powershell
 $body = @{
@@ -79,4 +79,14 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v1/reports/$($report.report.id
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/integrity-check
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/backup
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/checkpoint
+```
+
+能力管理操作：
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/scanners/scanner.local-analysis/self-test
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/rules/SECRET-KEY-001/test -Body (@{ sample = "sk-test-value" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "本机变化扫描"; type = "本机发现"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
+Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8000/api/v1/settings -Body (@{ default_profile = "standard-complete"; timezone = "Asia/Shanghai" } | ConvertTo-Json) -ContentType "application/json"
 ```

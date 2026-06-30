@@ -16,7 +16,7 @@
 | `data/artifacts/` | 脱敏证据制品 |
 | `data/reports/` | HTML/JSON 报告制品 |
 | `data/backups/` | SQLite Online Backup 输出 |
-| `tests/fixtures/` | 本地验收 Fixture |
+| `tests/fixtures/` | 本地回归样本 |
 
 ## 2. 运行边界
 
@@ -221,7 +221,7 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
 ```
 
-测试 Fixture 回归扫描：
+回归样本扫描：
 
 ```powershell
 $body = @{
@@ -280,6 +280,22 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/retest `
   -Body (@{ scope = "固化输入" } | ConvertTo-Json) `
   -ContentType "application/json"
+```
+
+能力管理健康检查：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/scanners/scanner.local-analysis/self-test
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/rules/SECRET-KEY-001/test -Body (@{ sample = "sk-test-value" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/settings/test
+```
+
+计划任务操作只写本系统 SQLite，不会直接启动已安装 Agent。立即执行会生成本地任务记录：
+
+```powershell
+$schedule = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "本机变化扫描"; type = "本机发现"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($schedule.schedule.id)/run-now"
 ```
 
 ## 11. 安全加固建议
