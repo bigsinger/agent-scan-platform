@@ -68,9 +68,9 @@
 
 ## 5. 主要实体
 
-`mcp_server, mcp_tool, mcp_prompt, mcp_resource, mcp_signature, finding, evidence, artifact`
+`mcp_server, mcp_tool, tool_label, toxic_flow, mcp_prompt, mcp_resource, mcp_signature, finding, evidence, artifact`
 
-当前本地实现中，`POST /api/v1/mcp-servers/{id}/inspect` 是只读静态检查：只使用已发现的配置摘要生成 Signature、Tool 能力标签、Finding、Evidence 和 JSON artifact；不得启动 stdio MCP Server，不得执行配置中的 `command`，不得连接 Remote MCP。
+当前本地实现中，`POST /api/v1/mcp-servers/{id}/inspect` 是只读静态检查：只使用已发现的配置摘要生成 Signature、Tool 能力标签、Toxic Flow、Finding、Evidence 和 JSON artifact；不得启动 stdio MCP Server，不得执行配置中的 `command`，不得连接 Remote MCP。`GET /api/v1/tools/{id}/flows` 必须优先读取 SQLite 中的 `toxic_flow` 记录，并返回真实 `total`，不得使用固定原型数量。
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
@@ -113,7 +113,7 @@
 
 ## 9. SQLite 数据要求
 
-本页至少涉及实体：`mcp_server, mcp_tool, mcp_prompt, mcp_resource`。
+本页至少涉及实体：`mcp_server, mcp_tool, tool_label, toxic_flow, mcp_prompt, mcp_resource`。
 
 开发时必须确认：
 

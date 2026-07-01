@@ -329,7 +329,7 @@ def entity_for_page(page_id: str) -> str:
         "P08": "adapter",
         "P09": "assessment_profile",
         "P10": "issue_mapping, scanner_plugin",
-        "P11": "mcp_server, mcp_tool, mcp_signature, finding, evidence",
+        "P11": "mcp_server, mcp_tool, tool_label, toxic_flow, mcp_signature, finding, evidence",
         "P12": "mcp_consent, consent_request, audit_event",
         "P13": "skill, finding",
         "P14": "skill, skill_file",

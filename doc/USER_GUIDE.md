@@ -397,9 +397,9 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 用途：
 
 - 对已发现的 MCP Server 做静态签名，不启动 stdio Server，不做真实 handshake。
-- 根据命令、参数、URL、环境变量 Key、配置 Hash 派生 Tool Signature。
+- 根据命令、参数、URL、环境变量 Key、配置 Hash 派生 Tool Signature、Tool Label 和 Toxic Flow。
 - 自动识别 shell/powershell/cmd、`npx -y`、远程 URL、敏感环境变量、文件系统能力等风险。
-- 生成 `mcp_signature`、`mcp_tool`、Finding、Evidence 和 `mcp-static-inspection` JSON artifact。
+- 生成 `mcp_signature`、`mcp_tool`、`tool_label`、`toxic_flow`、Finding、Evidence 和 `mcp-static-inspection` JSON artifact。
 
 安全边界：
 
@@ -407,6 +407,7 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 2. 不执行 `command`、不解析真实 Tool list、不连接 Remote MCP。
 3. 环境变量只显示 Key，值保持 `<REDACTED>`。
 4. stdio Server 检查后仍保持“待审批”，不会因静态检查而放行。
+5. Tool Flow 从 SQLite `toxic_flow` 读取，`/api/v1/tools/{id}/flows` 返回真实 `total`；无持久化记录时才按 Tool 标签即时派生。
 
 ## 5.2 Agent ABOM / 攻击面
 
@@ -957,10 +958,15 @@ $inspect = Invoke-RestMethod `
   -Uri "http://127.0.0.1:8000/api/v1/mcp-servers/$($mcp.id)/inspect"
 
 Invoke-RestMethod "http://127.0.0.1:8000/api/v1/mcp-servers/$($mcp.id)/tools"
+$tool = $inspect.tools[0]
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/tools/$($tool.id)/flows"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/toxic-flows"
 Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($inspect.inspection.download)" `
   -OutFile mcp-static-inspection.json
 ```
+
+`/tools/{id}/flows` 从 SQLite `toxic_flow` 读取该 Tool 的真实流向，`/toxic-flows` 返回全部持久化 Toxic Flow。`mcp-static-inspection.json` 中的 `toxic_flows` 应与接口返回数量一致。
 
 ### 动态红队 Dry-run
 

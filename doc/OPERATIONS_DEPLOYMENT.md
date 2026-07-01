@@ -235,10 +235,15 @@ $inspect = Invoke-RestMethod `
   -Uri "http://127.0.0.1:8000/api/v1/mcp-servers/$($mcp.id)/inspect"
 
 Invoke-RestMethod "http://127.0.0.1:8000/api/v1/mcp-servers/$($mcp.id)/tools"
+$tool = $inspect.tools[0]
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/tools/$($tool.id)/flows"
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/toxic-flows"
 Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($inspect.inspection.download)" `
   -OutFile mcp-static-inspection.json
 ```
+
+验收时应看到 `mcp_signature`、`mcp_tool`、`tool_label`、`toxic_flow`、Finding、Evidence 和 artifact 均被写入本系统 SQLite/制品目录；`/tools/{id}/flows` 的 `total` 必须等于该 Tool 的真实持久化 Flow 数量，不得是固定原型值。整个过程仍保持 `local-readonly`，不启动 stdio MCP，不执行命令。
 
 动态红队 dry-run：
 

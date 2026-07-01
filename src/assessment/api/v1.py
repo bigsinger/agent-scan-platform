@@ -66,6 +66,7 @@ LIST_KEYS = {
     "/discovery-runs": "discoveryRuns",
     "/discovery-hits": "discoveryHits",
     "/tools": "tools",
+    "/toxic-flows": "toxicFlows",
 }
 
 
@@ -98,6 +99,7 @@ TABLE_KEYS = {
     "/redteam-cases": "redteam_case",
     "/licenses": "third_party_component",
     "/tools": "mcp_tool",
+    "/toxic-flows": "toxic_flow",
     "/backups": "backup_record",
     "/database/backups": "backup_record",
 }
@@ -1489,7 +1491,8 @@ def get_item_route(path: str, state: dict) -> dict | None:
         if parts[2:] == ["similar"]:
             return page(similar_tools(item or {}, state), None)
         if parts[2:] == ["flows"]:
-            return {"items": tool_flows(item or {}), "total": 2}
+            flows = persisted_tool_flows(get_store(), item or {})
+            return {"items": flows, "total": len(flows), "safe_mode": "local-readonly", "mutates_installed_agents": False}
     if len(parts) >= 2 and parts[0] == "skills":
         item = get_store().get_record("skill", parts[1]) or get_store().get_record("skill_file", parts[1]) or find_item(state.get("skills", []), parts[1]) or state.get("selectedSkill", {})
         if len(parts) == 2:
@@ -3599,10 +3602,30 @@ def inspect_mcp_server(store: Any, state: dict, server_id: str, body: dict) -> d
     merge_state_record(state, "mcpServers", updated_server)
 
     updated_tools: list[dict] = []
+    updated_flows: list[dict] = []
     for tool in tools:
         updated_tool = store.upsert_record("mcp_tool", tool, status=str(tool.get("status") or "STATIC_ONLY"))
         updated_tools.append(updated_tool)
         merge_state_record(state, "tools", updated_tool)
+        for label in updated_tool.get("labels") or []:
+            store.upsert_record(
+                "tool_label",
+                {
+                    "id": "tl_" + stable_hash(f"{updated_tool.get('id')}:{label}", 20),
+                    "tool_id": updated_tool.get("id"),
+                    "server_id": updated_tool.get("server_id"),
+                    "server": updated_tool.get("server"),
+                    "label": label,
+                    "source": "mcp-static-inspect",
+                    "safe_mode": "local-readonly",
+                    "mutates_installed_agents": False,
+                    "created_at": checked_at,
+                },
+                status="ACTIVE",
+            )
+        for flow in tool_flows(updated_tool, updated_server):
+            updated_flow = store.upsert_record("toxic_flow", flow, status=str(flow.get("status") or "STATIC_ONLY"))
+            updated_flows.append(updated_flow)
 
     findings: list[dict] = []
     for risk in risks:
@@ -3634,8 +3657,10 @@ def inspect_mcp_server(store: Any, state: dict, server_id: str, body: dict) -> d
         "signature": updated_signature,
         "risks": risks,
         "tools": updated_tools,
+        "toxic_flows": updated_flows,
         "finding_ids": [finding["id"] for finding in findings],
         "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
         "external_process_started": False,
         "mcp_started": False,
         "boundary": "只读解析 MCP 配置；未启动 stdio MCP Server，未执行命令，未连接 Remote MCP。",
@@ -3680,20 +3705,29 @@ def inspect_mcp_server(store: Any, state: dict, server_id: str, body: dict) -> d
         "risk": highest["label"],
         "risk_rules": [risk["rule"] for risk in risks],
         "tool_count": len(updated_tools),
+        "flow_count": len(updated_flows),
+        "toxic_flow_count": len([flow for flow in updated_flows if flow.get("riskClass") in {"high", "critical"}]),
         "finding_count": len(findings),
         "evidence_id": updated_evidence["id"],
         "download": f"/api/v1/artifacts/{artifact['id']}/download",
         "checked_at": checked_at,
     }
-    store.audit_event("post.mcp-servers.inspect", "mcp_server", str(server.get("id")), {"safe_mode": "local-readonly", "risk": highest["label"], "tool_count": len(updated_tools)})
+    store.audit_event(
+        "post.mcp-servers.inspect",
+        "mcp_server",
+        str(server.get("id")),
+        {"safe_mode": "local-readonly", "risk": highest["label"], "tool_count": len(updated_tools), "flow_count": len(updated_flows), "mutates_installed_agents": False},
+    )
     return {
         "inspection": inspection,
         "server": updated_server,
         "signature": updated_signature,
         "tools": updated_tools,
+        "flows": updated_flows,
         "findings": findings,
         "evidence": updated_evidence,
         "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
         "external_process_started": False,
         "mcp_started": False,
     }
@@ -3829,20 +3863,63 @@ def similar_tools(item: dict, state: dict) -> list[dict]:
     return sorted(scored, key=lambda tool: tool.get("similarity", 0), reverse=True)[:5]
 
 
-def tool_flows(item: dict) -> list[dict]:
+def persisted_tool_flows(store: Any, item: dict) -> list[dict]:
+    tool_id = str(item.get("id") or "")
+    if tool_id:
+        records = [flow for flow in store.list_records("toxic_flow", limit=1000) if str(flow.get("tool_id") or "") == tool_id]
+        if records:
+            return sorted(records, key=lambda flow: str(flow.get("id") or ""))
+    return tool_flows(item)
+
+
+def tool_flows(item: dict, server: dict | None = None) -> list[dict]:
     name = item.get("name") or item.get("id") or "tool"
+    tool_id = str(item.get("id") or "tool_" + stable_hash(str(name), 20))
+    server_id = str(item.get("server_id") or (server or {}).get("id") or "")
+    server_name = str(item.get("server") or (server or {}).get("name") or "")
     labels = set(item.get("labels") or [])
+    created_at = item.get("created_at") or (server or {}).get("inspected_at") or utc_now()
     flows = []
+
+    def add_flow(kind: str, display: str, risk: str, risk_class: str, status: str, source: str, sink: str, control: str, policy: str, matched_labels: list[str]) -> None:
+        flows.append(
+            {
+                "id": "flow_" + stable_hash(f"{tool_id}:{kind}", 20),
+                "tool_id": tool_id,
+                "tool": name,
+                "server_id": server_id,
+                "server": server_name,
+                "kind": kind,
+                "name": display,
+                "risk": risk,
+                "riskClass": risk_class,
+                "status": status,
+                "source": source,
+                "sink": sink,
+                "control": control,
+                "policy": policy,
+                "labels": matched_labels,
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "mcp_started": False,
+                "external_process_started": False,
+                "source_detector": "mcp-static-inspect",
+                "created_at": created_at,
+            }
+        )
+
     if labels & {"file_read", "private_data"}:
-        flows.append({"id": "flow_private_read", "name": f"{name} -> workspace/private data", "risk": "高", "status": "需审批", "source": "workspace", "sink": "agent context", "control": "path allowlist"})
+        add_flow("private_read", f"{name} -> workspace/private data", "高", "high", "需审批", "workspace", "agent context", "path allowlist", "deny-sensitive-paths", sorted(labels & {"file_read", "private_data"}))
     if labels & {"network_send", "external_sink"}:
-        flows.append({"id": "flow_external_send", "name": f"{name} -> external network sink", "risk": "高", "status": "默认阻断", "source": "agent context", "sink": "external", "control": "domain allowlist"})
+        add_flow("external_send", f"{name} -> external network sink", "高", "high", "默认阻断", "agent context", "external", "domain allowlist", "https-allowlist-required", sorted(labels & {"network_send", "external_sink"}))
     if labels & {"shell_exec", "process_spawn"}:
-        flows.append({"id": "flow_process_exec", "name": f"{name} -> local process", "risk": "高", "status": "默认阻断", "source": "tool call", "sink": "subprocess", "control": "human consent"})
+        add_flow("process_exec", f"{name} -> local process", "高", "high", "默认阻断", "tool call", "subprocess", "human consent", "subprocess-deny-by-default", sorted(labels & {"shell_exec", "process_spawn"}))
     if labels & {"secret_env"}:
-        flows.append({"id": "flow_secret_env", "name": f"{name} -> secret environment", "risk": "高", "status": "脱敏", "source": "env", "sink": "mcp server", "control": "env deny patterns"})
+        add_flow("secret_env", f"{name} -> secret environment", "高", "high", "脱敏", "env", "mcp server", "env deny patterns", "redact-before-persist", ["secret_env"])
+    if labels & {"package_download", "supply_chain"}:
+        add_flow("runtime_package", f"{name} -> runtime package execution", "高", "high", "默认阻断", "package registry", "local process", "pinned package allowlist", "no-runtime-download", sorted(labels & {"package_download", "supply_chain"}))
     if not flows:
-        flows.append({"id": "flow_config_only", "name": f"{name} static config flow", "risk": "低", "status": "允许", "source": "config", "sink": "signature", "control": "readonly"})
+        add_flow("config_only", f"{name} static config flow", "低", "low", "允许", "config", "signature", "readonly", "local-readonly", ["config_only"])
     return flows
 
 
@@ -7935,6 +8012,7 @@ REAL_STATE_PATHS = {
     "mcpServers": "/mcp-servers",
     "consents": "/mcp-consents",
     "tools": "/tools",
+    "toxicFlows": "/toxic-flows",
     "skills": "/skills",
     "tasks": "/tasks",
     "jobs": "/executions",

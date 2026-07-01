@@ -15,7 +15,7 @@
   const runtimeListKeys = [
     'agents','agentAssets','discoveryHits','discoveryErrors','discoveryLog','mcpServers','consents','tools','skills',
     'tasks','jobs','processes','taskEvents','findings','evidenceItems','reports','components','redteamRuns',
-    'attackPaths','policyDrafts','retests','backupRecords','heatmap','completeness'
+    'attackPaths','policyDrafts','retests','backupRecords','heatmap','completeness','toxicFlows'
   ];
   const runtimeObjectKeys = [
     'selectedAsset','selectedTask','selectedMcp','selectedTool','selectedConsent','selectedSkill','selectedCase','selectedRedteamRun',
@@ -187,6 +187,24 @@ data(){
       return this.tools.filter(t=>{
         const labels=t.labels || [];
         return labels.includes('shell_exec') || labels.includes('network_send') || labels.includes('external_sink') || labels.includes('secret_env') || labels.includes('file_read');
+      });
+    },
+    mcpToxicFlowRows(){
+      const persisted=(this.toxicFlows || []).filter(f=>['high','critical'].includes(f.riskClass) || String(f.risk||'').includes('高'));
+      if(persisted.length) return persisted;
+      return this.mcpToxicTools.flatMap(t=>{
+        const labels=t.labels || [];
+        return labels.filter(l=>['shell_exec','process_spawn','network_send','external_sink','secret_env','file_read','private_data'].includes(l)).map(l=>({
+          id:(t.id||t.name)+'-'+l,
+          server:t.server,
+          tool:t.name,
+          source:l,
+          sink:l==='network_send'||l==='external_sink'?'external':l==='secret_env'?'mcp server':'local boundary',
+          policy:l==='network_send'||l==='external_sink'?'https-allowlist-required':l==='secret_env'?'redact-before-persist':'human-consent',
+          risk:'高',
+          riskClass:'high',
+          status:'需审批'
+        }));
       });
     },
     mcpShadowPairs(){
@@ -1383,6 +1401,7 @@ data(){
         const res=await this.apiPost('/api/v1/mcp-servers/'+encodeURIComponent(server.id)+'/inspect', {});
         if(res.server){ this.mergeRecords('mcpServers', [res.server]); this.selectedMcp=res.server; }
         if(res.tools && res.tools.length){ this.mergeRecords('tools', res.tools); this.selectedTool=res.tools[0]; }
+        if(res.flows && res.flows.length) this.mergeRecords('toxicFlows', res.flows);
         if(res.findings && res.findings.length) this.mergeRecords('findings', res.findings);
         if(res.evidence) this.mergeRecords('evidenceItems', [res.evidence]);
         this.mcpInspection=res.inspection || null;
@@ -1399,6 +1418,7 @@ data(){
         const flows=await this.apiGet('/api/v1/tools/'+encodeURIComponent(tool.id)+'/flows');
         this.selectedTool=Object.assign({}, tool, detail.item || {}, {flows:flows.items || []});
         this.mergeRecords('tools', [this.selectedTool]);
+        if(flows.items && flows.items.length) this.mergeRecords('toxicFlows', flows.items);
         this.toastMsg('Tool Signature 已加载：'+(this.selectedTool.signature || this.selectedTool.id));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.mcpBusy=false; }

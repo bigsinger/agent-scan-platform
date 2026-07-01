@@ -1468,6 +1468,57 @@ def test_discovery_hit_asset_actions_are_persisted():
     assert exported.json()["counts"]["hits"] >= 1
 
 
+def test_mcp_static_inspection_persists_tool_flows(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "mcp-flows.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    discovery = client.post(
+        "/api/v1/discovery-runs",
+        json={"path": "tests/fixtures/sample_agent_project", "scope": "regression-sample"},
+    )
+    assert discovery.status_code == 200
+    server = discovery.json()["mcp_servers"][0]
+
+    inspected = client.post(f"/api/v1/mcp-servers/{server['id']}/inspect", json={})
+
+    assert inspected.status_code == 200
+    payload = inspected.json()
+    assert payload["safe_mode"] == "local-readonly"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["mcp_started"] is False
+    assert payload["inspection"]["flow_count"] == len(payload["flows"])
+    assert payload["inspection"]["toxic_flow_count"] >= 3
+    flow_kinds = {flow["kind"] for flow in payload["flows"]}
+    assert {"process_exec", "external_send", "secret_env"}.issubset(flow_kinds)
+    assert all(flow["tool_id"] for flow in payload["flows"])
+    assert all(flow["mutates_installed_agents"] is False for flow in payload["flows"])
+    assert all(flow["mcp_started"] is False for flow in payload["flows"])
+    assert len(store.list_records("toxic_flow")) == len(payload["flows"])
+    assert len(store.list_records("tool_label")) >= len(payload["tools"])
+
+    process_tool = next(tool for tool in payload["tools"] if "shell_exec" in tool["labels"])
+    flows_response = client.get(f"/api/v1/tools/{process_tool['id']}/flows")
+    assert flows_response.status_code == 200
+    flows_payload = flows_response.json()
+    assert flows_payload["total"] == len(flows_payload["items"])
+    assert flows_payload["safe_mode"] == "local-readonly"
+    assert flows_payload["mutates_installed_agents"] is False
+    assert {flow["kind"] for flow in flows_payload["items"]} == {"process_exec"}
+
+    all_flows = client.get("/api/v1/toxic-flows")
+    assert all_flows.status_code == 200
+    assert all_flows.json()["total"] == len(payload["flows"])
+
+    evidence_download = client.get(payload["inspection"]["download"])
+    assert evidence_download.status_code == 200
+    evidence = json.loads(evidence_download.text)
+    assert evidence["schema"] == "agent-security-mcp-static-inspection@4.1"
+    assert len(evidence["toxic_flows"]) == len(payload["flows"])
+    assert evidence["mutates_installed_agents"] is False
+    assert evidence["mcp_started"] is False
+
+
 def test_manual_agent_and_bulk_consent_actions_are_persisted(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "assets-consents.db")
     store.initialize()

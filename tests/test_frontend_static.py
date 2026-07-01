@@ -190,6 +190,18 @@ def test_discovery_run_ui_exposes_current_evidence_download():
     assert "evidence='+this.discoveryRunEvidence" in app_js
 
 
+def test_mcp_toxic_flow_ui_uses_persisted_flows():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "toxicFlows" in app_js
+    assert "mcpToxicFlowRows(){" in app_js
+    assert "this.mergeRecords('toxicFlows', res.flows)" in app_js
+    assert "this.mergeRecords('toxicFlows', flows.items)" in app_js
+    assert "{{mcpToxicFlowRows.length}}" in html
+    assert "v-for=\"f in mcpToxicFlowRows.slice(0,6)\"" in html
+    assert "已持久化为本地 Toxic Flow 记录" in html
+
+
 def test_consent_bulk_decline_ui_is_api_backed():
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "async denyAllConsents" in app_js
