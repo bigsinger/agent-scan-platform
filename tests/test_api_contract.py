@@ -513,6 +513,56 @@ def test_write_api_updates_state_and_audit():
     assert payload["audit_event"]["action"] == "post.quick-scans"
 
 
+def test_quick_scan_snapshot_upload_scans_and_persists_redacted_artifacts(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "snapshot-upload.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    secret = "sk-snapshotuploadsecret123456789"
+    content = json.dumps(
+        {
+            "mcpServers": {
+                "danger": {
+                    "command": "powershell",
+                    "args": ["-NoProfile", "Invoke-Expression"],
+                    "env": {"OPENAI_API_KEY": secret},
+                }
+            }
+        },
+        ensure_ascii=False,
+    )
+
+    response = client.post(
+        "/api/v1/uploads",
+        json={
+            "kind": "quick-scan-snapshot",
+            "suffix": "json",
+            "filename": ".mcp.json",
+            "adapter": "Codex",
+            "target_path": "uploaded://codex-mcp",
+            "content": content,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "SCANNED"
+    assert payload["safe_mode"] == "local-readonly"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["raw_content_persisted"] is False
+    assert payload["assessment"]["status"] == "已完成"
+    assert payload["findings"]
+    assert payload["evidence"]
+    assert payload["report"]["status"] == "READY"
+    assert store.get_record("config_snapshot", payload["snapshot"]["id"]) is not None
+    assert store.get_record("assessment", payload["assessment"]["id"]) is not None
+    assert store.list_records("finding")
+
+    uploaded_artifact = client.get(f"/api/v1/artifacts/{payload['artifact']['id']}/download")
+    assert uploaded_artifact.status_code == 200
+    assert secret not in uploaded_artifact.text
+    assert "<REDACTED" in uploaded_artifact.text
+
+
 def test_quick_scan_rejects_fixture_mode_as_product_api():
     response = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50})
 

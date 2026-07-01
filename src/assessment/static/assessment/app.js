@@ -1155,8 +1155,13 @@ data(){
       this.quickBusy=true; this.apiError='';
       try {
         const content=(this.form.snapshotContent || '').trim() || JSON.stringify({target_path:this.form.targetPath || '', mode:this.quickMode, created_at:new Date().toISOString()}, null, 2);
-        const res=await this.apiPost('/api/v1/uploads', {content, suffix:'json', kind:'quick-scan-snapshot'});
-        this.uploadResult=res.artifact; this.toastMsg('快照已保存：'+res.artifact.id);
+        const res=await this.apiPost('/api/v1/uploads', {content, suffix:'json', kind:'quick-scan-snapshot', target_path:this.form.targetPath, adapter:this.form.adapter});
+        this.uploadResult=res.artifact;
+        if(res.assessment){ this.mergeRecords('tasks', [res.assessment]); this.selectedTask=res.assessment; }
+        if(res.findings){ this.mergeRecords('findings', res.findings); if(res.findings.length) this.selectedFinding=res.findings[0]; }
+        if(res.evidence){ this.mergeRecords('evidenceItems', res.evidence); if(res.evidence.length) this.selectedEvidence=res.evidence[0]; }
+        if(res.report){ this.mergeRecords('reports', [res.report]); this.selectedReport=res.report; }
+        this.toastMsg('快照已保存并扫描：'+(res.findings ? res.findings.length : 0)+' 项风险');
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.quickBusy=false; }
     },

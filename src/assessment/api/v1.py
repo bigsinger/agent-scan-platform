@@ -617,8 +617,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["audit_event"] = store.audit_event(path_action(method, path), "assessment", scan.assessment["id"], {"body": body})
         return result
     elif path == "/uploads":
-        content = body.get("content") or json.dumps(body, ensure_ascii=False, indent=2)
-        result["artifact"] = store.write_artifact("upload", content, suffix=str(body.get("suffix") or "json"), metadata={"source": "api-upload"})
+        result.update(handle_upload(store, state, body))
     elif path == "/discovery-runs":
         discovery = LocalScanEngine(store).run_discovery(body)
         result["run"] = discovery.run
@@ -918,6 +917,163 @@ def unsupported_write_operation(store: Any, method: str, path: str, body: dict) 
             "mutates_installed_agents": False,
         },
     )
+
+
+def handle_upload(store: Any, state: dict, body: dict) -> dict:
+    kind = str(body.get("kind") or "upload")
+    suffix = str(body.get("suffix") or "json").strip(".") or "json"
+    content = body.get("content")
+    raw_content = str(content if content is not None else json.dumps(body, ensure_ascii=False, indent=2))
+    if kind == "quick-scan-snapshot":
+        return ingest_quick_scan_snapshot(store, state, body, raw_content, suffix)
+    artifact = store.write_artifact(kind, raw_content, suffix=suffix, metadata={"source": "api-upload", "safe_mode": "local-write-artifact"})
+    return {"artifact": artifact, "status": "UPLOADED", "mutates_installed_agents": False}
+
+
+def ingest_quick_scan_snapshot(store: Any, state: dict, body: dict, raw_content: str, suffix: str) -> dict:
+    checked_at = utc_now()
+    raw_sha256 = stable_hash(raw_content, 64)
+    redacted_content = redact_text(raw_content, max_len=max(200_000, len(raw_content) + 1))
+    snapshot_filename = snapshot_upload_filename(body, suffix)
+    artifact = store.write_artifact(
+        "quick-scan-snapshot",
+        redacted_content,
+        suffix=suffix,
+        metadata={
+            "source": "quick-scan-upload",
+            "raw_sha256": raw_sha256,
+            "redacted": True,
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        },
+    )
+    adapter = str(body.get("adapter") or "Uploaded Snapshot")
+    target_label = str(body.get("target_path") or body.get("path") or snapshot_filename)
+    synthetic_path = REPO_ROOT / ".uploaded_snapshots" / snapshot_filename
+    display_path = safe_display_path(synthetic_path, REPO_ROOT)
+    snapshot_id = "cfg_upload_" + stable_hash(raw_sha256 + ":" + snapshot_filename, 20)
+    snapshot = {
+        "id": snapshot_id,
+        "agent": adapter,
+        "type": "UploadedSnapshot",
+        "path": display_path,
+        "target": redact_text(target_label, max_len=300),
+        "path_hash": stable_hash(display_path, 32),
+        "sha256": raw_sha256,
+        "artifact_id": artifact["id"],
+        "artifact_path": artifact["relative_path"],
+        "source": "quick-scan-upload",
+        "scope": "Uploaded",
+        "status": "READY",
+        "last_seen_at": checked_at,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+    store.upsert_record("config_snapshot", snapshot, status="READY")
+
+    assessment = {
+        "id": new_id("asm"),
+        "name": str(body.get("name") or "上传快照快速扫描"),
+        "target": snapshot["target"],
+        "adapter": adapter,
+        "profile": "quick-experience",
+        "stage": "LOCAL_STATIC",
+        "progress": 90,
+        "critical": 0,
+        "high": 0,
+        "slot": "local",
+        "status": "运行中",
+        "started_at": checked_at,
+        "safe_mode": "local-readonly",
+        "remote_analysis": False,
+        "mutates_installed_agents": False,
+        "source": "quick-scan-snapshot",
+        "snapshot_id": snapshot_id,
+        "snapshot_artifact_id": artifact["id"],
+        "files_scanned": 1,
+        "files_skipped": 0,
+    }
+    store.upsert_record("assessment", assessment, status="RUNNING")
+    matches = analyze_text(synthetic_path, raw_content, REPO_ROOT)
+    engine = LocalScanEngine(store)
+    evidence = [engine._evidence_from_match(assessment["id"], match, REPO_ROOT) for match in matches]
+    findings = engine._findings_from_matches(assessment, matches, evidence)
+    store.upsert_records("evidence", evidence, status="READY")
+    store.upsert_records("finding", findings, status="NEEDS_REVIEW")
+    p0 = len([finding for finding in findings if "P0" in str(finding.get("severity")) or "严重" in str(finding.get("severity"))])
+    p1 = len([finding for finding in findings if "P1" in str(finding.get("severity")) or "高危" in str(finding.get("severity"))])
+    assessment.update(
+        {
+            "status": "已完成",
+            "stage": "DONE",
+            "progress": 100,
+            "critical": p0,
+            "high": p1,
+            "finding_count": len(findings),
+            "evidence_count": len(evidence),
+            "finished_at": utc_now(),
+        }
+    )
+    store.upsert_record("assessment", assessment, status="COMPLETED")
+    event = store.scan_event(
+        assessment["id"],
+        "snapshot_scan.completed",
+        {
+            "message": f"上传快照本地扫描完成：命中 {len(findings)} 项风险",
+            "snapshot_id": snapshot_id,
+            "artifact_id": artifact["id"],
+            "finding_count": len(findings),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        },
+    )
+    report = ReportRenderer(store).create_report(
+        assessment,
+        findings,
+        evidence,
+        discovery={"snapshot": snapshot, "source_artifact": artifact, "safe_mode": "local-readonly", "mutates_installed_agents": False},
+    )
+    merge_state_record(state, "tasks", assessment)
+    for finding in findings:
+        merge_state_record(state, "findings", finding)
+    for item in evidence:
+        merge_state_record(state, "evidenceItems", item)
+    merge_state_record(state, "reports", report)
+    state["selectedTask"] = assessment
+    state["selectedReport"] = report
+    if findings:
+        state["selectedFinding"] = findings[0]
+    if evidence:
+        state["selectedEvidence"] = evidence[0]
+    return {
+        "status": "SCANNED",
+        "artifact": artifact,
+        "snapshot": snapshot,
+        "assessment": assessment,
+        "findings": findings,
+        "evidence": evidence,
+        "report": report,
+        "event": {"seq": event["seq"], "time": event["created_at"], "type": event["type"], "text": event["payload"].get("message", "")},
+        "files_scanned": 1,
+        "files_skipped": 0,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "raw_content_persisted": False,
+    }
+
+
+def snapshot_upload_filename(body: dict, suffix: str) -> str:
+    raw = str(body.get("filename") or body.get("path") or body.get("target_path") or "")
+    name = Path(raw).name if raw else "quick-scan-snapshot"
+    if not name or name in {".", ".."}:
+        name = "quick-scan-snapshot"
+    if "." not in name:
+        name = f"{name}.{suffix or 'json'}"
+    if "mcp" not in name.lower() and str(body.get("kind") or "") == "quick-scan-snapshot":
+        stem = Path(name).stem
+        ext = Path(name).suffix or ".json"
+        name = f"{stem}.mcp{ext}"
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name)[:120] or "quick-scan-snapshot.mcp.json"
 
 
 def run_backup_restore_drill(store: Any, state: dict, backup_id: str, body: dict | None = None) -> dict:

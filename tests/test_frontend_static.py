@@ -159,6 +159,16 @@ def test_quick_scan_ui_requires_api_assessment_record():
     assert "快速扫描未返回真实任务记录" in app_js
 
 
+def test_quick_scan_snapshot_upload_merges_scan_results():
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "async uploadSnapshot" in app_js
+    assert "kind:'quick-scan-snapshot'" in app_js
+    assert "this.mergeRecords('tasks', [res.assessment])" in app_js
+    assert "this.mergeRecords('findings', res.findings)" in app_js
+    assert "this.mergeRecords('evidenceItems', res.evidence)" in app_js
+    assert "快照已保存并扫描" in app_js
+
+
 def test_consent_bulk_decline_ui_is_api_backed():
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "async denyAllConsents" in app_js

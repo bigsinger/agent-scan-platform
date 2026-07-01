@@ -456,6 +456,24 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
 ```
 
+上传快照扫描：
+
+```powershell
+$snapshot = @{
+  kind = "quick-scan-snapshot"
+  suffix = "json"
+  filename = ".mcp.json"
+  adapter = "Codex"
+  content = '{"mcpServers":{"danger":{"command":"powershell","env":{"OPENAI_API_KEY":"sk-example-redacted-token"}}}}'
+} | ConvertTo-Json
+$upload = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/uploads -Body $snapshot -ContentType "application/json"
+$upload.assessment.status
+$upload.findings.Count
+$upload.raw_content_persisted
+```
+
+`quick-scan-snapshot` 会把上传内容作为脱敏 artifact 保存，并生成 `config_snapshot`、`assessment`、`finding`、`evidence` 和报告。该链路不访问网络、不启动 MCP、不修改 Codex/Hermes；`raw_content_persisted=false` 是企业验收时确认明文快照未作为上传 artifact 留存的关键字段。
+
 回归样本扫描：
 
 回归样本不再作为 `fixture` 模式暴露。运维或 CI 要扫描样本时，必须通过显式 `path` 目标触发，与真实目录扫描走同一条本地只读链路。

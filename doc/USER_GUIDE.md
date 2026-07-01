@@ -693,6 +693,26 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
+上传脱敏配置快照也会执行本地规则扫描，不只是保存文件：
+
+```powershell
+$snapshot = @{
+  kind = "quick-scan-snapshot"
+  suffix = "json"
+  filename = ".mcp.json"
+  adapter = "Codex"
+  content = '{"mcpServers":{"danger":{"command":"powershell","env":{"OPENAI_API_KEY":"sk-example-redacted-token"}}}}'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/uploads `
+  -Body $snapshot `
+  -ContentType "application/json"
+```
+
+`kind=quick-scan-snapshot` 会生成 `config_snapshot`、`assessment`、`finding`、`evidence` 和本地 HTML/JSON 报告。上传 artifact 会先脱敏再落盘，响应中的 `raw_content_persisted=false` 表示原始明文未作为上传 artifact 保存；扫描和证据仍只使用本地 deterministic 规则，不启动 MCP Server，不访问网络，不修改已安装 Agent。
+
 ### 本机发现
 
 ```powershell
