@@ -903,6 +903,7 @@ def agent_scan_compat() -> dict:
     rules = rule_catalog()
     mappings = issue_mappings_for_store(store, store.get_state())
     bridge_hash = agent_scan_bridge_hash()
+    discovery_coverage = agent_scan_discovery_coverage_rows(adapter_catalog(store))
     return {
         "id": "agent_scan_compat_local",
         "name": "snyk/agent-scan compatible bridge",
@@ -918,6 +919,22 @@ def agent_scan_compat() -> dict:
         "supported_issue_codes": sorted({str(item.get("code") or item.get("id")) for item in mappings if item.get("status") != "DISABLED"}),
         "rule_count": len(rules),
         "mapping_count": len(mappings),
+        "discovery_coverage": discovery_coverage,
+        "discovery_coverage_summary": {
+            "agents": len(discovery_coverage),
+            "observed_cells": sum(
+                1
+                for row in discovery_coverage
+                for cell in row.get("cells", {}).values()
+                if cell.get("status") == "OBSERVED"
+            ),
+            "not_run": sum(
+                1
+                for row in discovery_coverage
+                for cell in row.get("cells", {}).values()
+                if cell.get("status") == "NOT_RUN"
+            ),
+        },
         "last_self_test_status": compat.get("last_self_test_status") or "NOT_RUN",
         "last_self_test_at": compat.get("last_self_test_at") or "",
         "last_self_test_artifact_id": compat.get("last_self_test_artifact_id") or "",
@@ -931,6 +948,41 @@ def agent_scan_compat() -> dict:
         },
         "checks": compat.get("checks", []),
     }
+
+
+def agent_scan_discovery_coverage_rows(adapters: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for adapter in adapters:
+        cells = {cell.get("id"): cell for cell in adapter.get("coverage_matrix", []) if cell.get("id")}
+        product = str(adapter.get("product") or adapter.get("name") or adapter.get("id") or "")
+        bridge_observed = any(
+            (cells.get(cell_id) or {}).get("status") == "OBSERVED"
+            for cell_id in ["global_config", "project_config", "mcp", "skills", "permissions", "memory"]
+        )
+        rows.append(
+            {
+                "id": adapter.get("id") or canonical_adapter_id(product),
+                "agent": product,
+                "source": "local_adapter_catalog",
+                "evidence": adapter.get("evidence") or "",
+                "mutates_installed_agents": False,
+                "cells": {
+                    "discoverer": {
+                        "status": "OBSERVED" if bridge_observed else "NOT_RUN",
+                        "detail": adapter.get("discoverer") or "local-readonly well-known paths",
+                    },
+                    "extension": {
+                        "status": adapter.get("coverage") or "NEEDS_SELF_TEST",
+                        "detail": f"{product} 本地桥接适配器，未知版本降级为只读通用扫描。",
+                    },
+                    "global_config": cells.get("global_config") or adapter_coverage_cell("global_config", "Global Config", "NOT_FOUND", "当前 SQLite 尚无全局配置证据"),
+                    "project_config": cells.get("project_config") or adapter_coverage_cell("project_config", "Project", "NOT_FOUND", "当前 SQLite 尚无项目配置证据"),
+                    "mcp": cells.get("mcp") or adapter_coverage_cell("mcp", "MCP", "NOT_FOUND", "当前 SQLite 尚无 MCP 记录"),
+                    "skills": cells.get("skills") or adapter_coverage_cell("skills", "Skills", "NOT_FOUND", "当前 SQLite 尚无 Skill 记录"),
+                },
+            }
+        )
+    return rows
 
 
 def agent_scan_status() -> dict:

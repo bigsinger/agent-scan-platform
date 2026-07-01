@@ -335,6 +335,43 @@ data(){
         };
       });
     },
+    agentScanDiscoveryColumns(){
+      return [
+        {id:'discoverer', name:'发现器'},
+        {id:'extension', name:'本地扩展'},
+        {id:'global_config', name:'Global'},
+        {id:'project_config', name:'Project'},
+        {id:'mcp', name:'MCP'},
+        {id:'skills', name:'Skills'}
+      ];
+    },
+    agentScanDiscoveryRows(){
+      const compatRows=(this.agentScanCompat && this.agentScanCompat.discovery_coverage) || [];
+      const sourceRows=compatRows.length ? compatRows : this.adapterCoverageRows.map(row => {
+        const byId={};
+        row.cells.forEach(cell => { byId[cell.id]=cell; });
+        return {
+          id:row.id,
+          agent:row.adapter,
+          evidence:'',
+          cells:{
+            discoverer:{status:row.cells.some(cell=>cell.status==='OBSERVED')?'OBSERVED':'NOT_RUN', detail:'来自当前适配器运行态目录'},
+            extension:{status:'READONLY_GENERIC', detail:'未知版本降级为只读通用扫描'},
+            global_config:byId.global_config,
+            project_config:byId.project_config,
+            mcp:byId.mcp,
+            skills:byId.skills
+          }
+        };
+      });
+      return sourceRows.map(row => {
+        const normalized={id:row.id, agent:row.agent, evidence:row.evidence || '', cells:{}};
+        this.agentScanDiscoveryColumns.forEach(column => {
+          normalized.cells[column.id]=(row.cells && row.cells[column.id]) || {status:'NOT_FOUND', detail:'当前 SQLite 尚无该覆盖项证据'};
+        });
+        return normalized;
+      });
+    },
     completenessStats(){
       const rows=this.completeness || [];
       const summary=this.completenessSummary || {};

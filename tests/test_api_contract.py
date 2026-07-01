@@ -328,6 +328,13 @@ def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_pa
     assert patch_body["total"] >= 5
     assert "0001-local-pipeline" not in json.dumps(patch_body, ensure_ascii=False)
     assert all(item["mutates_installed_agents"] is False for item in patch_body["items"])
+    compat_before = client.get("/api/v1/agent-scan/compat").json()
+    coverage = compat_before["discovery_coverage"]
+    assert {row["id"] for row in coverage} >= {"codex", "hermes", "claude-code", "openclaw"}
+    assert all(row["mutates_installed_agents"] is False for row in coverage)
+    assert all({"discoverer", "extension", "global_config", "project_config", "mcp", "skills"} <= set(row["cells"]) for row in coverage)
+    assert "Cursor/VSCode/Windsurf/Kiro" not in json.dumps(coverage, ensure_ascii=False)
+    assert compat_before["discovery_coverage_summary"]["agents"] == len(coverage)
 
     response = client.post("/api/v1/agent-scan/self-test", json={})
     assert response.status_code == 200

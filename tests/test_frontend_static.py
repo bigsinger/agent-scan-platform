@@ -56,12 +56,20 @@ def test_agent_scan_compat_ui_is_api_backed():
     assert "上游源码哈希验证通过" not in html
     assert "兼容自测完成：64/64 通过" not in html
     assert "64/64" not in html
+    assert "专用 Discoverer" not in html
+    assert "Cursor/VSCode/Windsurf/Kiro" not in html
+    assert "<td>✓</td>" not in html
     assert 'data-testid="agent-scan-self-test"' in html
     assert "@click=\"refreshAgentScanCompat()\"" in html
     assert "@click=\"runAgentScanSelfTest\"" in html
     assert "agentScanSelfTestResult" in html
+    assert "v-for=\"row in agentScanDiscoveryRows\"" in html
+    assert "v-for=\"col in agentScanDiscoveryColumns\"" in html
     assert "async refreshAgentScanCompat" in app_js
     assert "async runAgentScanSelfTest" in app_js
+    assert "agentScanDiscoveryRows()" in app_js
+    assert "agentScanDiscoveryColumns()" in app_js
+    assert "discovery_coverage" in app_js
     assert "/api/v1/agent-scan/self-test" in app_js
 
 
