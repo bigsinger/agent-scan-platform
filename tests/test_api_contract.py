@@ -154,6 +154,15 @@ def test_empty_runtime_state_does_not_expose_prototype_seed(monkeypatch, tmp_pat
         "reports",
         "components",
         "redteamRuns",
+        "caseLibrary",
+        "redCases",
+        "profiles",
+        "scanners",
+        "schedules",
+        "integrations",
+        "licenses",
+        "dbTables",
+        "taskStages",
     ]:
         assert state[key] == [], key
     for key in [
@@ -166,14 +175,34 @@ def test_empty_runtime_state_does_not_expose_prototype_seed(monkeypatch, tmp_pat
         "selectedRedteamRun",
         "selectedFinding",
         "selectedEvidence",
+        "selectedProfile",
+        "selectedRetest",
     ]:
         assert state[key] == {}, key
+    assert state["ruleRows"], "rule catalog should remain available in an empty runtime"
+    assert state["selectedRule"] == state["ruleRows"][0]
     runtime_payload = json.dumps(
-        {key: state[key] for key in ["agentAssets", "tasks", "findings", "selectedAsset", "selectedTask", "planJson"]},
+        {
+            key: state[key]
+            for key in [
+                "agentAssets",
+                "tasks",
+                "findings",
+                "caseLibrary",
+                "profiles",
+                "ruleRows",
+                "selectedRule",
+                "selectedAsset",
+                "selectedTask",
+                "planJson",
+            ]
+        },
         ensure_ascii=False,
     )
     assert "claude-code-repo-demo" not in runtime_payload
     assert "agt_cc_001" not in runtime_payload
+    assert "64/64" not in runtime_payload
+    assert "84+" not in runtime_payload
     assert state["dashboardMetrics"]["agents"] == 0
     assert state["dashboardMetrics"]["p0_p1"] == 0
 

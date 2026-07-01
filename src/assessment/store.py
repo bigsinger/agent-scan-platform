@@ -45,6 +45,16 @@ RUNTIME_SEED_LIST_KEYS = {
     "retests",
     "backupRecords",
     "heatmap",
+    "caseLibrary",
+    "redCases",
+    "profiles",
+    "ruleRows",
+    "scanners",
+    "schedules",
+    "integrations",
+    "licenses",
+    "dbTables",
+    "taskStages",
 }
 
 RUNTIME_SEED_OBJECT_KEYS = {
@@ -62,6 +72,8 @@ RUNTIME_SEED_OBJECT_KEYS = {
     "selectedPolicyDraft",
     "selectedReport",
     "selectedRule",
+    "selectedProfile",
+    "selectedRetest",
 }
 
 PROTOTYPE_RUNTIME_TABLES = [
@@ -693,6 +705,12 @@ def runtime_empty_seed_state(state: dict) -> dict:
         "redteamCaseId": "",
         "redteamMode": "dry-run",
     }
+    sanitized["quickModes"] = [
+        mode for mode in state.get("quickModes", []) if isinstance(mode, dict) and mode.get("id") != "fixture"
+    ]
+    sanitized["completeness"] = completeness_rows()
+    sanitized["apiError"] = ""
+    sanitized["runtimeMode"] = "api"
     sanitized["planJson"] = json.dumps(
         {
             "adapter": "auto-detect",
@@ -705,6 +723,18 @@ def runtime_empty_seed_state(state: dict) -> dict:
         },
         ensure_ascii=False,
         indent=2,
+    )
+    sanitized["ruleYaml"] = "尚未选择规则。请先从规则库创建或加载本地规则。"
+    sanitized["scannerManifest"] = "\n".join(
+        [
+            "apiVersion: assessment.security/v1",
+            "kind: ScannerManifest",
+            "metadata:",
+            "  status: empty",
+            "spec:",
+            "  source: SQLite scanner_plugin",
+            "  safe_mode: local-readonly",
+        ]
     )
     return sanitized
 

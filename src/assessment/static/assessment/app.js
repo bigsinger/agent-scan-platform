@@ -671,7 +671,7 @@ data(){
           this.syncRouteFromLocation();
         }
       } catch (err) {
-        this.apiError='后端 API 暂不可用，当前显示本地种子数据。';
+        this.apiError='后端 API 暂不可用，当前显示本地空态配置；不会展示原型样例数据。';
       }
     },
     async apiGet(path){ return this.apiRequest(path); },

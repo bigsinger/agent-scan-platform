@@ -53,6 +53,61 @@ def main() -> int:
     if page_count != args.expect_pages:
         raise SystemExit(f"expected {args.expect_pages} pages, got {page_count}")
 
+    runtime_seed_keys = [
+        "agents",
+        "agentAssets",
+        "discoveryHits",
+        "discoveryErrors",
+        "discoveryLog",
+        "mcpServers",
+        "consents",
+        "tools",
+        "skills",
+        "tasks",
+        "jobs",
+        "processes",
+        "taskEvents",
+        "findings",
+        "evidenceItems",
+        "reports",
+        "components",
+        "redteamRuns",
+        "attackPaths",
+        "policyDrafts",
+        "retests",
+        "backupRecords",
+        "heatmap",
+        "caseLibrary",
+        "redCases",
+        "profiles",
+        "ruleRows",
+        "scanners",
+        "schedules",
+        "integrations",
+        "licenses",
+        "dbTables",
+        "taskStages",
+    ]
+    for key in runtime_seed_keys:
+        if seed.get(key):
+            raise SystemExit(f"prototype runtime seed must be empty: {key}")
+
+    seed_text = json.dumps(seed, ensure_ascii=False)
+    prototype_tokens = [
+        "claude-code-repo-demo",
+        "agt_cc_001",
+        "asm_v4_",
+        "/workspace/demo",
+        "64/64",
+        "84+",
+        "openclaw-gateway-lab",
+        "hermes-profile-dev",
+        "codex-project-a",
+    ]
+    for token in prototype_tokens:
+        if token in seed_text:
+            raise SystemExit(f"prototype token remains in seed: {token}")
+
     manifest = json.loads((static / "vendor" / "vendor-manifest.json").read_text(encoding="utf-8"))
     vue = static / "vendor" / "vue.global.prod.js"
     actual_sha = hashlib.sha256(vue.read_bytes()).hexdigest()

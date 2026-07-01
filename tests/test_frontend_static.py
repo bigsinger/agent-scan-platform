@@ -30,6 +30,85 @@ def test_vendor_manifest_matches_vue_runtime():
     assert hashlib.sha256(vue.read_bytes()).hexdigest() == manifest["vue.global.prod.js"]["sha256"]
 
 
+def test_frontend_seed_fallback_does_not_ship_prototype_runtime_data():
+    seed = json.loads((STATIC / "assessment" / "seed.json").read_text(encoding="utf-8"))
+    seed_js = (STATIC / "assessment" / "seed.js").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    empty_runtime_keys = [
+        "agents",
+        "agentAssets",
+        "discoveryHits",
+        "discoveryErrors",
+        "discoveryLog",
+        "mcpServers",
+        "consents",
+        "tools",
+        "skills",
+        "tasks",
+        "jobs",
+        "processes",
+        "taskEvents",
+        "findings",
+        "evidenceItems",
+        "reports",
+        "components",
+        "redteamRuns",
+        "attackPaths",
+        "policyDrafts",
+        "retests",
+        "backupRecords",
+        "heatmap",
+        "caseLibrary",
+        "redCases",
+        "profiles",
+        "ruleRows",
+        "scanners",
+        "schedules",
+        "integrations",
+        "licenses",
+        "dbTables",
+        "taskStages",
+    ]
+    for key in empty_runtime_keys:
+        assert seed[key] == [], key
+    for key in [
+        "selectedAsset",
+        "selectedTask",
+        "selectedMcp",
+        "selectedTool",
+        "selectedConsent",
+        "selectedSkill",
+        "selectedCase",
+        "selectedRedteamRun",
+        "selectedFinding",
+        "selectedEvidence",
+        "selectedAttackPath",
+        "selectedPolicyDraft",
+        "selectedReport",
+        "selectedRule",
+        "selectedProfile",
+        "selectedRetest",
+    ]:
+        assert seed[key] == {}, key
+    assert [mode["id"] for mode in seed["quickModes"]] == ["machine", "path", "mcp"]
+    assert len(seed["completeness"]) == 48
+    assert "后端 API 暂不可用，当前显示本地种子数据。" not in app_js
+    assert "当前显示本地空态配置" in app_js
+    combined = json.dumps(seed, ensure_ascii=False) + seed_js
+    for token in [
+        "claude-code-repo-demo",
+        "agt_cc_001",
+        "asm_v4_",
+        "/workspace/demo",
+        "64/64",
+        "84+",
+        "openclaw-gateway-lab",
+        "hermes-profile-dev",
+        "codex-project-a",
+    ]:
+        assert token not in combined
+
+
 def test_adapter_self_test_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
