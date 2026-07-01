@@ -360,8 +360,11 @@ data/backups/app-YYYYMMDDHHMMSS.db
 完整性检查：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/integrity-check
+$integrity = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/integrity-check
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($integrity.download)" -OutFile sqlite-integrity-maintenance.json
 ```
+
+`integrity-check` 返回原有 `integrity.status`，同时生成 `sqlite-maintenance` artifact，记录 `PRAGMA integrity_check` 结果、数据库大小、WAL 状态、表清单和 `post.sqlite.integrity_check` 审计事件。证据包只写本系统 SQLite/artifact，不访问或修改已安装 Agent。
 
 实现完整性矩阵：
 
@@ -376,8 +379,11 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($completeness.download)" -OutFile
 WAL checkpoint：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/checkpoint
+$checkpoint = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/checkpoint
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($checkpoint.download)" -OutFile sqlite-checkpoint-maintenance.json
 ```
+
+Checkpoint 会执行 `PRAGMA wal_checkpoint(TRUNCATE)`，并生成同样 schema 的 `sqlite-maintenance` artifact，便于在 POC 或日常巡检中留存维护证据。
 
 备份记录：
 
@@ -398,8 +404,11 @@ $drill.drill.download
 数据库压缩：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/vacuum
+$vacuum = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/vacuum
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($vacuum.download)" -OutFile sqlite-vacuum-maintenance.json
 ```
+
+Vacuum 只压缩本系统 `data/db/app.db`，执行后生成 `sqlite-maintenance` artifact 和 `post.sqlite.vacuum` 审计事件；不会处理或改写任何 Agent 安装目录、配置目录或进程。
 
 ## 8. 运维巡检
 

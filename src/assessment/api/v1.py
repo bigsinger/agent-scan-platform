@@ -196,32 +196,101 @@ async def sqlite_backup() -> dict:
 
 @router.post("/database/integrity-check")
 async def database_integrity_check() -> dict:
-    return {"ok": True, "integrity": get_store().integrity_check()}
+    store = get_store()
+    return sqlite_maintenance_response(store, "database.integrity_check", "integrity", store.integrity_check())
 
 
 @router.post("/sqlite/integrity-check")
 async def sqlite_integrity_check() -> dict:
-    return {"ok": True, "integrity": get_store().integrity_check()}
+    store = get_store()
+    return sqlite_maintenance_response(store, "sqlite.integrity_check", "integrity", store.integrity_check())
 
 
 @router.post("/database/checkpoint")
 async def database_checkpoint() -> dict:
-    return {"ok": True, "checkpoint": get_store().checkpoint()}
+    store = get_store()
+    return sqlite_maintenance_response(store, "database.checkpoint", "checkpoint", store.checkpoint())
 
 
 @router.post("/sqlite/checkpoint")
 async def sqlite_checkpoint() -> dict:
-    return {"ok": True, "checkpoint": get_store().checkpoint()}
+    store = get_store()
+    return sqlite_maintenance_response(store, "sqlite.checkpoint", "checkpoint", store.checkpoint())
 
 
 @router.post("/database/vacuum")
 async def database_vacuum() -> dict:
-    return {"ok": True, "vacuum": get_store().vacuum()}
+    store = get_store()
+    return sqlite_maintenance_response(store, "database.vacuum", "vacuum", store.vacuum())
 
 
 @router.post("/sqlite/vacuum")
 async def sqlite_vacuum() -> dict:
-    return {"ok": True, "vacuum": get_store().vacuum()}
+    store = get_store()
+    return sqlite_maintenance_response(store, "sqlite.vacuum", "vacuum", store.vacuum())
+
+
+def sqlite_maintenance_response(store: Any, operation: str, result_key: str, result: dict) -> dict:
+    checked_at = utc_now()
+    status = str(result.get("status") or "UNKNOWN")
+    db_status = store.database_status()
+    database = {
+        "path": db_status.get("path", "data/db/app.db"),
+        "mode": db_status.get("mode"),
+        "state": db_status.get("state"),
+        "file_bytes": db_status.get("file_bytes", 0),
+        "sqlite_bytes": db_status.get("sqlite_bytes", 0),
+        "page_count": db_status.get("page_count", 0),
+        "page_size": db_status.get("page_size", 0),
+        "table_count": len(db_status.get("tables", [])),
+        "wal_checkpoint": db_status.get("wal_checkpoint", []),
+    }
+    payload = {
+        "schema": "agent-security-sqlite-maintenance@4.1",
+        "operation": operation,
+        "status": status,
+        "result": result,
+        "database": database,
+        "tables": db_status.get("tables", []),
+        "safe_mode": "local-maintenance",
+        "mutates_installed_agents": False,
+        "mutates_agent_files": False,
+        "boundary": "SQLite 运维只操作本系统 data/db/app.db 与 data/artifacts；不会读取、启动或修改 Codex/Hermes 等已安装 Agent。",
+        "executed_at": checked_at,
+    }
+    artifact = store.write_artifact(
+        "sqlite-maintenance",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"operation": operation, "status": status, "safe_mode": "local-maintenance"},
+    )
+    audit_event = store.audit_event(
+        "post." + operation,
+        "artifact",
+        artifact["id"],
+        {
+            "operation": operation,
+            "status": status,
+            "artifact_id": artifact["id"],
+            "mutates_installed_agents": False,
+        },
+    )
+    return {
+        "ok": True,
+        result_key: result,
+        "maintenance": {
+            "schema": payload["schema"],
+            "operation": operation,
+            "status": status,
+            "database": database,
+            "safe_mode": payload["safe_mode"],
+            "mutates_installed_agents": False,
+            "executed_at": checked_at,
+        },
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "audit_event": audit_event,
+    }
 
 
 @router.get("/assessments/{id}/events")

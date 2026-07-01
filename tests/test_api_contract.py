@@ -577,11 +577,42 @@ def test_quick_scan_rejects_fixture_mode_as_product_api():
     assert precheck.json()["error"]["validation_errors"][0]["field"] == "mode"
 
 
-def test_database_maintenance_endpoints():
+def test_database_maintenance_endpoints(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "maintenance.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
     assert client.get("/api/v1/database/status").status_code == 200
-    assert client.post("/api/v1/database/integrity-check").json()["integrity"]["status"] == "PASS"
-    assert client.post("/api/v1/sqlite/integrity-check").json()["integrity"]["status"] == "PASS"
-    assert client.post("/api/v1/sqlite/checkpoint").json()["checkpoint"]["status"] == "DONE"
+    integrity = client.post("/api/v1/database/integrity-check").json()
+    assert integrity["integrity"]["status"] == "PASS"
+    assert integrity["maintenance"]["schema"] == "agent-security-sqlite-maintenance@4.1"
+    assert integrity["maintenance"]["mutates_installed_agents"] is False
+    assert integrity["artifact"]["kind"] == "sqlite-maintenance"
+    assert integrity["download"].startswith("/api/v1/artifacts/")
+    integrity_artifact = client.get(integrity["download"])
+    assert integrity_artifact.status_code == 200
+    assert "agent-security-sqlite-maintenance@4.1" in integrity_artifact.text
+    assert '"mutates_installed_agents": false' in integrity_artifact.text
+
+    sqlite_integrity = client.post("/api/v1/sqlite/integrity-check").json()
+    assert sqlite_integrity["integrity"]["status"] == "PASS"
+    assert sqlite_integrity["artifact"]["kind"] == "sqlite-maintenance"
+    checkpoint = client.post("/api/v1/sqlite/checkpoint").json()
+    assert checkpoint["checkpoint"]["status"] == "DONE"
+    assert checkpoint["maintenance"]["operation"] == "sqlite.checkpoint"
+    vacuum = client.post("/api/v1/sqlite/vacuum").json()
+    assert vacuum["vacuum"]["status"] == "DONE"
+    assert vacuum["maintenance"]["operation"] == "sqlite.vacuum"
+    assert store.get_record("artifact", vacuum["artifact"]["id"]) is not None
+
+    with store.connect() as conn:
+        event = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (vacuum["artifact"]["id"],),
+        ).fetchone()
+    assert event["action"] == "post.sqlite.vacuum"
+    assert json.loads(event["payload_json"])["mutates_installed_agents"] is False
+
     backup = client.post("/api/v1/database/backup")
     assert backup.status_code == 200
     assert backup.json()["backup"]["sha256"]
