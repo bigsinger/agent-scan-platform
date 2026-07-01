@@ -371,6 +371,26 @@ def test_task_detail_findings_and_evidence_tabs_are_data_backed():
     assert "evidence_ids" in app_js
 
 
+def test_task_detail_jobs_events_and_approval_are_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "job_006" not in html
+    assert "Last-Event-ID: 1841" not in html
+    assert "id: 1842" not in html
+    assert "当前 2 个 stdio MCP Server 等待审批" not in html
+    assert "{{selectedTaskJobs.length}} / {{taskStages.length}}" in html
+    assert "v-for=\"j in selectedTaskJobs\"" in html
+    assert "v-if=\"!selectedTaskJobs.length\"" in html
+    assert "{{selectedTaskEventSourceSnippet}}" in html
+    assert "selectedTaskPendingConsents.length" in html
+    assert "selectedTaskJobs()" in app_js
+    assert "selectedTaskPendingConsents()" in app_js
+    assert "selectedTaskEventSourceSnippet()" in app_js
+    assert "path.match(/^\\/assessment\\/tasks\\/([^/]+)/)" in app_js
+    assert "this.pushRoute('task-detail')" in app_js
+    assert "refreshTaskEvents(t, true)" in app_js
+
+
 def test_finding_detail_uses_real_finding_and_evidence_data():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

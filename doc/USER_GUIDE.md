@@ -659,6 +659,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($sync.sync.download)" -OutFile re
 - 重试任务：任务列表、任务详情和失败 Job 行的“重试”会调用 `/api/v1/tasks/{id}/retry`，基于原任务创建新的 `QUEUED` 测评记录，保留 `source_task_id` / `retry_of` 和 `task.retry_queued` 事件，便于审计和复现。
 - 取消任务：把任务状态写为 `CANCELLED`，记录本地审计；当前实现不杀已安装 Agent 进程。
 - 刷新事件：从 SQLite `scan_event` 读取任务事件流。
+- Job / 事件流 / 审批页签：按当前任务的 `assessment_id`、`task_id`、`scan_event` 和 `mcp_consent` 关联数据展示，不再显示固定 Job ID、固定 SSE 序号或固定待审批数量。
+- 任务详情深链：点击“详情”会进入 `/assessment/tasks/{id}`，直接打开该地址时会按任务 ID 选中任务并读取事件流。
 - 风险 / 证据页签：按当前任务 `assessment_id`、Finding `evidence_ids` 和 Evidence `finding_id` 展示真实扫描结果，可直接进入风险详情、确认风险、创建复测、预览或下载脱敏证据。
 - 生成报告：基于指定任务生成 HTML/JSON 报告制品。
 

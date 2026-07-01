@@ -420,6 +420,69 @@ data(){
         {name:'stdio MCP', value:task.mcp_policy || plan.stdio_mcp || profile.mcp_policy || 'per-server-consent'}
       ];
     },
+    selectedTaskJobs(){
+      const task=this.selectedTask || {};
+      const taskId=String(task.id || '');
+      if(!taskId) return [];
+      return (this.jobs || []).filter(job=>{
+        const fields=[
+          job.assessment_id,
+          job.task_id,
+          job.assessment,
+          job.task,
+          job.target_task_id,
+          job.source_task_id,
+          job.retry_of
+        ].map(v=>String(v || ''));
+        return fields.includes(taskId);
+      }).map(job=>{
+        const state=job.state || job.status || '-';
+        return Object.assign({}, job, {
+          state,
+          stage: job.stage || job.phase || '-',
+          scanner: job.scanner || job.name || job.runner || '-',
+          process: job.process || job.pid || job.execution_id || '-',
+          progress: job.progress || job.percent || 0,
+          findings: job.findings || job.finding_count || 0
+        });
+      });
+    },
+    selectedTaskPendingConsents(){
+      const task=this.selectedTask || {};
+      const taskId=String(task.id || '');
+      const pendingStatuses=['待审批','PENDING','OPEN','WAITING_CONSENT'];
+      const pending=(this.consents || []).filter(c=>pendingStatuses.includes(String(c.status || '')));
+      if(!taskId) return pending;
+      return pending.filter(c=>{
+        const fields=[
+          c.assessment_id,
+          c.task_id,
+          c.assessment,
+          c.task,
+          c.scope,
+          c.target_task_id
+        ].map(v=>String(v || ''));
+        return fields.includes(taskId);
+      });
+    },
+    selectedTaskEventSourceSnippet(){
+      const task=this.selectedTask || {};
+      const taskId=task.id || '<task_id>';
+      const events=this.taskEvents || [];
+      const last=events.length ? events[events.length-1] : null;
+      const lines=['GET /api/v1/tasks/'+taskId+'/events'];
+      if(last && last.seq!==undefined && last.seq!==null) lines.push('Last-Event-ID: '+last.seq);
+      lines.push('');
+      if(last){
+        lines.push('event: '+(last.type || 'task.event'));
+        lines.push('id: '+(last.seq!==undefined && last.seq!==null ? last.seq : '-'));
+        lines.push('data: '+JSON.stringify({text:last.text || last.message || '', time:last.time || last.created_at || ''}));
+      } else {
+        lines.push('event: task.empty');
+        lines.push('data: {"message":"当前任务暂无事件"}');
+      }
+      return lines.join('\n');
+    },
     selectedRuleDefinition(){
       const rule=this.selectedRule || {};
       if(!rule.id) return '尚未选择规则。请先从规则列表选择一条本地规则。';
@@ -704,6 +767,14 @@ data(){
         const found=(this.agentAssets || []).find(a=>String(a.id)===agentId || String(a.name)===agentId);
         if(found) this.selectedAsset=found;
         if(this.current==='agent-detail') this.loadAgentDetail(found || {id:agentId});
+      }
+      const taskMatch=path.match(/^\/assessment\/tasks\/([^/]+)/);
+      if(taskMatch){
+        const taskId=decodeURIComponent(taskMatch[1]);
+        this._routeTaskId=taskId;
+        const found=(this.tasks || []).find(t=>String(t.id)===taskId || String(t.name)===taskId);
+        if(found) this.selectedTask=found;
+        if(this.current==='task-detail') this.refreshTaskEvents(found || {id:taskId}, true);
       }
       if(this.current==='abom' && this.selectedAsset && this.selectedAsset.id){
         this.loadAgentAbom(this.selectedAsset);
@@ -2160,7 +2231,7 @@ data(){
       URL.revokeObjectURL(url);
     },
     openAgent(a){this.selectedAsset=a;this.agentTab='概览';this.current='agent-detail';this.pushRoute('agent-detail');window.scrollTo(0,0);this.loadAgentDetail(a);},
-    openTask(t){this.selectedTask=t;this.taskTab='执行概览';this.current='task-detail';window.scrollTo(0,0);},
+    openTask(t){this.selectedTask=t;this.taskTab='执行概览';this.current='task-detail';this.pushRoute('task-detail');window.scrollTo(0,0);this.refreshTaskEvents(t, true);},
     openSkill(s){this.selectedSkill=s;this.skillTab='概览';this.current='skill-detail';this.pushRoute('skill-detail');window.scrollTo(0,0);this.loadSkillDetail(s);},
     openFinding(f){this.selectedFinding=f;this.findingTab='概览';this.current='finding-detail';window.scrollTo(0,0);},
     async saveAssessmentDraft(){
@@ -2209,15 +2280,15 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
-    async refreshTaskEvents(task){
+    async refreshTaskEvents(task, silent=false){
       if(!task || !task.id) return;
-      this.opsBusy=true; this.apiError='';
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
       try {
         const res=await this.apiGet('/api/v1/tasks/'+encodeURIComponent(task.id)+'/events');
         this.taskEvents=res.items || [];
-        this.toastMsg('事件流已刷新：'+this.taskEvents.length+' 条');
-      } catch (err) { this.apiError=this.describeError(err); }
-      finally { this.opsBusy=false; }
+        if(!silent) this.toastMsg('事件流已刷新：'+this.taskEvents.length+' 条');
+      } catch (err) { if(!silent) this.apiError=this.describeError(err); }
+      finally { if(!silent) this.opsBusy=false; }
     },
     async submitAssessment(){
       this.opsBusy=true; this.apiError='';
