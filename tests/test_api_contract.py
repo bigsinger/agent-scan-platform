@@ -1764,6 +1764,41 @@ def test_discovery_run_changes_only_returns_current_delta(monkeypatch, tmp_path)
     assert second["mutates_installed_agents"] is False
 
 
+def test_skill_scan_sync_and_changes_only_are_real_discovery_modes(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "skill-scan-changes.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    body = {
+        "target_path": "tests/fixtures/sample_agent_project",
+        "limit": 20,
+        "discover": True,
+        "include_agent_configs": False,
+        "include_mcp": False,
+        "include_skills": True,
+    }
+
+    first = client.post("/api/v1/skill-scans", json=body)
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["scan_mode"] == "sync-and-scan"
+    assert first_payload["counts"]["checked"] >= 1
+    assert first_payload["discovery_options"]["include_skills"] is True
+    assert first_payload["discovery_options"]["include_mcp"] is False
+    assert first_payload["discovery"]["mcp_servers"] == []
+    assert first_payload["skills"]
+
+    second = client.post("/api/v1/skill-scans", json={**body, "changes_only": True})
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["scan_mode"] == "changes-only"
+    assert second_payload["discovery_options"]["changes_only"] is True
+    assert second_payload["change_summary"]["returned"] == 0
+    assert second_payload["counts"]["checked"] == 0
+    assert second_payload["skills"] == []
+    assert second_payload["findings"] == []
+    assert second_payload["mutates_installed_agents"] is False
+
+
 def test_discovery_hit_asset_actions_are_persisted():
     discovery = client.post(
         "/api/v1/discovery-runs",

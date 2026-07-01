@@ -1926,7 +1926,8 @@ data(){
       this.skillBusy=true; this.apiError='';
       try {
         const target=(this.form.targetPath || '').trim();
-        const payload=target ? {target_path:target, limit:80} : {limit:80};
+        const payload={limit:80, discover:true, include_agent_configs:false, include_mcp:false, include_skills:true};
+        if(target) payload.target_path=target;
         const res=await this.apiPost('/api/v1/skill-scans', payload);
         this.skillScanResult=res;
         if(res.discovery){
@@ -1944,12 +1945,34 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.skillBusy=false; }
     },
+    async runChangedSkillScan(){
+      this.skillBusy=true; this.apiError='';
+      try {
+        const target=(this.form.targetPath || '').trim();
+        const payload={limit:80, discover:true, changes_only:true, include_agent_configs:false, include_mcp:false, include_skills:true};
+        if(target) payload.target_path=target;
+        const res=await this.apiPost('/api/v1/skill-scans', payload);
+        this.skillScanResult=res;
+        if(res.discovery){
+          if((res.discovery.hits || []).length) this.mergeRecords('discoveryHits', res.discovery.hits || []);
+          if((res.discovery.skills || []).length) this.mergeRecords('skills', res.discovery.skills || []);
+          this.discoveryErrors=res.discovery.errors || [];
+        }
+        this.mergeRecords('skills', res.skills || []);
+        this.mergeRecords('findings', res.findings || []);
+        this.mergeRecords('evidenceItems', res.evidence || []);
+        const changes=res.change_summary || {};
+        this.toastMsg('Skill 变化扫描完成：变化 '+(changes.returned||0)+' 项，扫描 '+((res.counts&&res.counts.checked)||0)+' 个');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.skillBusy=false; }
+    },
     async scanSkill(skill){
       if(!skill || !skill.id) return;
       this.skillBusy=true; this.apiError='';
       try {
         const target=(this.form.targetPath || '').trim();
-        const payload=target ? {skill_id:skill.id, target_path:target, limit:1} : {skill_id:skill.id, limit:1};
+        const payload={skill_id:skill.id, limit:1, discover:true, include_agent_configs:false, include_mcp:false, include_skills:true};
+        if(target) payload.target_path=target;
         const res=await this.apiPost('/api/v1/skill-scans', payload);
         this.skillScanResult=res;
         this.mergeRecords('skills', res.skills || []);

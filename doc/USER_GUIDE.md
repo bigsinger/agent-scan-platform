@@ -473,7 +473,8 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 
 常见操作：
 
-- “同步并扫描”：先执行只读发现，再对发现到的 Skill 根目录做静态扫描。
+- “同步并扫描”：调用 `POST /api/v1/skill-scans` 并传入 `discover=true`，先执行只读本机发现，再对发现到的 Skill 根目录做静态扫描。
+- “扫描变化项”：调用同一接口并传入 `changes_only=true`。系统会根据上一轮发现的 `path_hash + sha256` 只返回新建或变化的 Skill；没有变化时返回 `checked=0`，不会退回全量扫描。
 - “扫描”：只扫描当前 Skill，不执行 Skill 中的脚本。
 - “详情”：读取脱敏 `SKILL.md`、渲染差异、文件树、规则命中和证据。
 - “导出脱敏副本”：生成本系统 artifact，内容已脱敏，不覆盖原 Skill 文件。
@@ -484,7 +485,9 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 API 示例：
 
 ```powershell
-$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/skill-scans -Body (@{ target_path = "tests\fixtures\sample_agent_project"; limit = 20 } | ConvertTo-Json) -ContentType "application/json"
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/skill-scans -Body (@{ target_path = "tests\fixtures\sample_agent_project"; limit = 20; discover = $true; include_agent_configs = $false; include_mcp = $false; include_skills = $true } | ConvertTo-Json) -ContentType "application/json"
+$delta = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/skill-scans -Body (@{ target_path = "tests\fixtures\sample_agent_project"; limit = 20; discover = $true; changes_only = $true; include_agent_configs = $false; include_mcp = $false; include_skills = $true } | ConvertTo-Json) -ContentType "application/json"
+$delta.change_summary
 $skill = $scan.skills[0]
 Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)"
 Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"

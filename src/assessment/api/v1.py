@@ -4939,13 +4939,19 @@ def extract_domains(text: str) -> list[str]:
 def run_skill_scan(store: Any, state: dict, body: dict) -> dict:
     discovery_payload = dict(body)
     discovery_payload.setdefault("scope", "skill-scan")
+    discovery_payload.setdefault("include_agent_configs", False)
+    discovery_payload.setdefault("include_mcp", False)
+    discovery_payload.setdefault("include_skills", True)
     discovery = None
-    if any(discovery_payload.get(key) for key in ("path", "target_path", "paths", "additional_paths")):
+    should_discover = truthy(body.get("discover")) or truthy(body.get("sync")) or truthy(body.get("changes_only")) or any(
+        discovery_payload.get(key) for key in ("path", "target_path", "paths", "additional_paths")
+    )
+    if should_discover:
         discovery = LocalScanEngine(store).run_discovery(discovery_payload)
         state = store.get_state()
 
     skill_id = str(body.get("skill_id") or body.get("id") or "")
-    records = discovery.skills if discovery and discovery.skills else combine_items(real_items_for_path("/skills"), state.get("skills", []))
+    records = discovery.skills if discovery is not None else combine_items(real_items_for_path("/skills"), state.get("skills", []))
     if skill_id:
         records = [item for item in records if item.get("id") == skill_id or item.get("name") == skill_id]
     limit = max(1, min(int(body.get("limit") or 20), 100))
@@ -4967,11 +4973,14 @@ def run_skill_scan(store: Any, state: dict, body: dict) -> dict:
         "status": "COMPLETED",
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
+        "scan_mode": "changes-only" if truthy(body.get("changes_only")) else "sync-and-scan" if should_discover else "existing-records",
         "skills": public_skill_records(checked),
         "findings": findings,
         "evidence": evidence,
         "skipped": skipped,
         "counts": {"checked": len(checked), "findings": len(findings), "evidence": len(evidence), "skipped": len(skipped)},
+        "change_summary": discovery.run.get("change_summary", {}) if discovery else {},
+        "discovery_options": discovery.run.get("discovery_options", {}) if discovery else {},
         "discovery": {
             "run": discovery.run,
             "hits": discovery.hits,
@@ -4992,7 +5001,18 @@ def run_skill_scan(store: Any, state: dict, body: dict) -> dict:
     )
     payload["artifact"] = artifact
     payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
-    store.audit_event("post.skill-scans", "skill", skill_id or "all", {"checked": len(checked), "skipped": len(skipped), "safe_mode": "local-readonly"})
+    store.audit_event(
+        "post.skill-scans",
+        "skill",
+        skill_id or "all",
+        {
+            "checked": len(checked),
+            "skipped": len(skipped),
+            "scan_mode": payload["scan_mode"],
+            "change_summary": payload["change_summary"],
+            "safe_mode": "local-readonly",
+        },
+    )
     return payload
 
 

@@ -332,8 +332,13 @@ PYTHONPATH=src python -m uvicorn assessment.main:app --host 127.0.0.1 --port 800
 Skill 专项 POC 可以单独验证：
 
 ```powershell
-$body = @{ target_path = "tests\fixtures\sample_agent_project"; limit = 20 } | ConvertTo-Json
+$body = @{ target_path = "tests\fixtures\sample_agent_project"; limit = 20; discover = $true; include_agent_configs = $false; include_mcp = $false; include_skills = $true } | ConvertTo-Json
 $scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/skill-scans -Body $body -ContentType "application/json"
+$deltaBody = @{ target_path = "tests\fixtures\sample_agent_project"; limit = 20; discover = $true; changes_only = $true; include_agent_configs = $false; include_mcp = $false; include_skills = $true } | ConvertTo-Json
+$delta = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/skill-scans -Body $deltaBody -ContentType "application/json"
+$delta.scan_mode
+$delta.counts.checked
+$delta.change_summary
 $skill = $scan.skills[0]
 Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/files"
 Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/render-diff"
@@ -342,6 +347,8 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/skills/$($skil
 ```
 
 上述 `quarantine` 是本系统内的逻辑隔离状态和审计记录，只写 SQLite 与 artifact，不移动、不重命名、不覆盖客户机器上的 Skill 文件。
+
+`扫描变化项` 的验收重点是第二次无变化时 `$delta.scan_mode=changes-only` 且 `$delta.counts.checked=0`，证明页面没有把变化扫描伪装成全量扫描。
 
 Skill 发现记录会在 SQLite 中保留内部 `real_path`，便于后续详情、文件树、脱敏导出和复测继续读取同一个本机目录。API 响应、前端列表和导出 artifact 必须剥离 `real_path`，只返回脱敏 `path`；如果记录没有内部真实路径，详情/导出不会回退读取仓库回归样本。
 

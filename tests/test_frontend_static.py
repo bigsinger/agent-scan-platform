@@ -269,6 +269,18 @@ def test_discovery_run_ui_exposes_current_evidence_download():
     assert "selectedAsset.probe_method||'-'" in html
 
 
+def test_skill_scan_ui_has_real_sync_and_changes_only_actions():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert '@click="runSkillScan"' in html
+    assert '@click="runChangedSkillScan"' in html
+    assert "async runChangedSkillScan()" in app_js
+    assert "discover:true, include_agent_configs:false, include_mcp:false, include_skills:true" in app_js
+    assert "changes_only:true" in app_js
+    assert "skillScanResult.scan_mode" in html
+    assert "skillScanResult.change_summary" in html
+
+
 def test_sandbox_policy_ui_has_editable_controls_and_runtime_decisions():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
