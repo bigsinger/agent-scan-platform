@@ -376,6 +376,64 @@ data(){
       if(rows.length) return rows.slice(0, 6);
       return [{name:'动态用例', status:'EMPTY', detail:'当前 SQLite 尚未加载红队用例'}];
     },
+    selectedRedteamCaseVariables(){
+      const c=this.selectedCase || {};
+      const rows=[];
+      const seen=new Set();
+      const displayValue=value => {
+        if(Array.isArray(value)) return value.filter(v=>v!==null && v!==undefined && v!=='').map(v=>String(v)).join('/') || '未指定';
+        if(value && typeof value==='object'){
+          for(const key of ['value','default','example','sample']) if(value[key]!==undefined && value[key]!==null && value[key]!=='') return String(value[key]);
+          for(const key of ['values','enum','options','choices']) if(Array.isArray(value[key])) return displayValue(value[key]);
+          const min=value.minimum!==undefined ? value.minimum : value.min;
+          const max=value.maximum!==undefined ? value.maximum : value.max;
+          if(min!==undefined && min!=='' && max!==undefined && max!=='') return String(min)+'..'+String(max);
+          return '未指定';
+        }
+        return value===undefined || value===null || value==='' ? '未指定' : String(value);
+      };
+      const add=(name, value, source, required) => {
+        const cleanName=String(name || '').trim();
+        if(!cleanName) return;
+        const key=cleanName.toLowerCase();
+        if(seen.has(key)) return;
+        rows.push({name:cleanName, value:displayValue(value), source:source || 'variables', required:!!required});
+        seen.add(key);
+      };
+      const addFromValue=(name, value, source) => {
+        if(value && typeof value==='object' && !Array.isArray(value)){
+          add(value.name || value.key || value.id || name, value.value!==undefined ? value.value : value, value.source || source, value.required);
+        } else if(!name && typeof value==='string') {
+          add(value, '', source, false);
+        } else {
+          add(name || value, value, source, false);
+        }
+      };
+      const raw=c.variables;
+      if(Array.isArray(raw)) raw.forEach(item => addFromValue('', item, 'variables'));
+      else if(raw && typeof raw==='object') Object.keys(raw).forEach(name => addFromValue(name, raw[name], 'variables'));
+      else if(typeof raw==='string') raw.split(/[,;\s]+/).forEach(name => add(name, '', 'variables', false));
+      const schemas=[
+        ['variable_schema', c.variable_schema],
+        ['payload_schema.variables', c.payload_schema && c.payload_schema.variables],
+        ['input_schema.variables', c.input_schema && c.input_schema.variables],
+        ['parameters', c.parameters],
+        ['params', c.params],
+        ['inputs', c.inputs]
+      ];
+      schemas.forEach(([source, schema]) => {
+        if(Array.isArray(schema)) schema.forEach(item => addFromValue('', item, source));
+        else if(schema && typeof schema==='object') Object.keys(schema).forEach(name => addFromValue(name, schema[name], source));
+      });
+      const input=String([c.input, c.sample, c.payload, c.prompt_template].filter(Boolean).join('\n'));
+      const pattern=/\{\{\s*([A-Za-z_][A-Za-z0-9_.-]{0,63})\s*\}\}|\$\{\s*([A-Za-z_][A-Za-z0-9_.-]{0,63})\s*\}|<<\s*([A-Za-z_][A-Za-z0-9_.-]{0,63})\s*>>/g;
+      let match;
+      while((match=pattern.exec(input))){
+        const name=match[1] || match[2] || match[3];
+        add(name, '', 'input-template', true);
+      }
+      return rows;
+    },
     selectedTaskProfile(){
       const task=this.selectedTask || {};
       const id=task.profile_id || task.profile || '';

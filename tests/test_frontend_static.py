@@ -326,6 +326,21 @@ def test_finding_history_ui_is_api_backed():
     assert "状态来自本系统 Finding 记录。" not in html
 
 
+def test_redteam_case_variables_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "<tr><td>language</td><td>zh-CN/en</td></tr>" not in html
+    assert "<tr><td>encoding</td><td>plain/base64/zero-width</td></tr>" not in html
+    assert "<tr><td>turn</td><td>1~8</td></tr>" not in html
+    assert "selectedRedteamCaseVariables()" in app_js
+    assert "c.variable_schema" in app_js
+    assert "c.payload_schema && c.payload_schema.variables" in app_js
+    assert "input-template" in app_js
+    assert "v-if=\"selectedRedteamCaseVariables.length\"" in html
+    assert "v-for=\"v in selectedRedteamCaseVariables\"" in html
+    assert "{{v.value}}" in html
+
+
 def test_sqlite_backup_restore_drill_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

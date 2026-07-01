@@ -981,7 +981,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         run_id = path.split("/")[-1]
         result["run"] = update_structured_record(store, state, "redteam_run", "redteamRuns", run_id, body)
     elif path == "/redteam-cases":
-        case = upsert_named_record(store, state, "redteam_case", "caseLibrary", body, "case", status="DRAFT")
+        case = create_redteam_case(store, state, body)
         result["case"] = case
     elif path.startswith("/redteam-cases/") and path.endswith("/validate"):
         case_id = path.split("/")[-2]
@@ -1544,7 +1544,12 @@ def get_item_route(path: str, state: dict) -> dict | None:
     if len(parts) >= 2 and parts[0] == "scanners":
         return {"item": get_store().get_record("scanner_plugin", parts[1]) or find_item(state.get("scanners", []), parts[1])}
     if len(parts) >= 2 and parts[0] == "redteam-cases":
-        return {"item": get_store().get_record("redteam_case", parts[1]) or find_item(state.get("caseLibrary", []), parts[1]) or find_item(state.get("redCases", []), parts[1])}
+        case = (
+            get_store().get_record("redteam_case", parts[1])
+            or find_item(state.get("caseLibrary", []), parts[1])
+            or find_item(state.get("redCases", []), parts[1])
+        )
+        return {"item": normalize_redteam_case(case) if case else {"id": parts[1], "status": "NOT_FOUND"}}
     if len(parts) >= 2 and parts[0] == "redteam-runs":
         return redteam_run_detail(get_store(), state, parts[1])
     if len(parts) >= 2 and parts[0] == "retests":
@@ -1710,6 +1715,8 @@ def enrich_items(key: str, items: list[dict]) -> list[dict]:
         return [decorate_evidence_item(item) for item in items]
     if key == "ruleRows":
         return [decorate_rule_item(item) for item in items]
+    if key in {"caseLibrary", "redCases"}:
+        return [normalize_redteam_case(item) for item in items]
     return items
 
 
@@ -6213,6 +6220,26 @@ def update_structured_record(store: Any, state: dict, table: str, state_key: str
     return updated
 
 
+def create_redteam_case(store: Any, state: dict, body: dict) -> dict:
+    case = normalize_redteam_case(body)
+    case.setdefault("created_at", utc_now())
+    updated = store.upsert_record("redteam_case", case, status=str(case.get("status") or "DRAFT"))
+    merge_state_record(state, "caseLibrary", updated)
+    merge_state_record(state, "redCases", updated)
+    store.audit_event(
+        "post.redteam-cases",
+        "redteam_case",
+        str(updated.get("id")),
+        {
+            "status": updated.get("status"),
+            "variable_count": updated.get("variable_count", 0),
+            "safe_mode": updated.get("safe_mode"),
+            "mutates_installed_agents": False,
+        },
+    )
+    return updated
+
+
 def create_redteam_run(store: Any, state: dict, body: dict) -> dict:
     case = resolve_redteam_case(store, state, body)
     input_text = str(body.get("input") or body.get("payload") or case.get("input") or case.get("sample") or "")
@@ -6354,14 +6381,14 @@ def resolve_redteam_case(store: Any, state: dict, body: dict) -> dict:
             "status": "等待",
         }
     case = normalize_redteam_case(case)
-    if not store.get_record("redteam_case", case["id"]):
-        store.upsert_record("redteam_case", case, status=str(case.get("status") or "DRAFT"))
-        merge_state_record(state, "caseLibrary", case)
-    return case
+    updated = store.upsert_record("redteam_case", case, status=str(case.get("status") or "DRAFT"))
+    merge_state_record(state, "caseLibrary", updated)
+    merge_state_record(state, "redCases", updated)
+    return updated
 
 
 def normalize_redteam_case(case: dict) -> dict:
-    item = dict(case)
+    item = dict(case or {})
     name = str(item.get("name") or item.get("id") or "redteam-case")
     item.setdefault("id", "case_" + stable_hash(name, 16))
     item.setdefault("name", name)
@@ -6373,7 +6400,151 @@ def normalize_redteam_case(case: dict) -> dict:
     item.setdefault("version", "local@4.1")
     item.setdefault("safe_mode", "dry-run")
     item.setdefault("status", "DRAFT")
+    variables = normalize_redteam_case_variables(item)
+    item["variables"] = variables
+    item["variable_count"] = len(variables)
     return item
+
+
+def normalize_redteam_case_variables(case: dict) -> list[dict]:
+    rows: list[dict] = []
+    seen: set[str] = set()
+
+    def add_variable(name: Any, value: Any = "", source: str = "variables", required: bool = False, description: str = "") -> None:
+        variable_name = str(name or "").strip()
+        if not variable_name:
+            return
+        identity = variable_name.lower()
+        if identity in seen:
+            return
+        display_value, raw_values = redteam_variable_display(value)
+        row = {
+            "name": variable_name[:96],
+            "value": display_value,
+            "source": source,
+            "required": bool(required),
+        }
+        if raw_values:
+            row["values"] = raw_values
+        if description:
+            row["description"] = str(description)[:240]
+        rows.append(row)
+        seen.add(identity)
+
+    raw_variables = case.get("variables")
+    if isinstance(raw_variables, dict):
+        for name, value in raw_variables.items():
+            if isinstance(value, dict):
+                add_variable(
+                    value.get("name") or name,
+                    redteam_schema_value(value),
+                    str(value.get("source") or "variables"),
+                    bool(value.get("required")),
+                    str(value.get("description") or value.get("desc") or ""),
+                )
+            else:
+                add_variable(name, value, "variables")
+    elif isinstance(raw_variables, list):
+        for value in raw_variables:
+            if isinstance(value, dict):
+                add_variable(
+                    value.get("name") or value.get("key") or value.get("id"),
+                    redteam_schema_value(value),
+                    str(value.get("source") or "variables"),
+                    bool(value.get("required")),
+                    str(value.get("description") or value.get("desc") or ""),
+                )
+            else:
+                add_variable(value, "", "variables")
+    elif isinstance(raw_variables, str):
+        for name in re.split(r"[,;\s]+", raw_variables):
+            add_variable(name, "", "variables")
+
+    for source, schema in redteam_variable_schema_sources(case):
+        if isinstance(schema, dict):
+            for name, value in schema.items():
+                if isinstance(value, dict):
+                    add_variable(
+                        value.get("name") or name,
+                        redteam_schema_value(value),
+                        source,
+                        bool(value.get("required")),
+                        str(value.get("description") or value.get("desc") or ""),
+                    )
+                else:
+                    add_variable(name, value, source)
+        elif isinstance(schema, list):
+            for value in schema:
+                if isinstance(value, dict):
+                    add_variable(
+                        value.get("name") or value.get("key") or value.get("id"),
+                        redteam_schema_value(value),
+                        source,
+                        bool(value.get("required")),
+                        str(value.get("description") or value.get("desc") or ""),
+                    )
+                else:
+                    add_variable(value, "", source)
+
+    template_text = "\n".join(str(case.get(key) or "") for key in ("input", "sample", "payload", "prompt_template"))
+    for name in extract_redteam_template_variables(template_text):
+        add_variable(name, "", "input-template", required=True)
+    return rows[:64]
+
+
+def redteam_variable_schema_sources(case: dict) -> list[tuple[str, Any]]:
+    payload_schema = case.get("payload_schema") if isinstance(case.get("payload_schema"), dict) else {}
+    input_schema = case.get("input_schema") if isinstance(case.get("input_schema"), dict) else {}
+    return [
+        ("variable_schema", case.get("variable_schema")),
+        ("payload_schema.variables", payload_schema.get("variables")),
+        ("input_schema.variables", input_schema.get("variables")),
+        ("parameters", case.get("parameters")),
+        ("params", case.get("params")),
+        ("inputs", case.get("inputs")),
+    ]
+
+
+def redteam_schema_value(value: dict) -> Any:
+    for key in ("value", "default", "example", "sample"):
+        if value.get(key) not in (None, ""):
+            return value.get(key)
+    for key in ("values", "enum", "options", "choices"):
+        if value.get(key) not in (None, ""):
+            return value.get(key)
+    minimum = value.get("minimum", value.get("min"))
+    maximum = value.get("maximum", value.get("max"))
+    if minimum not in (None, "") and maximum not in (None, ""):
+        return f"{minimum}..{maximum}"
+    return ""
+
+
+def redteam_variable_display(value: Any) -> tuple[str, list[str]]:
+    if isinstance(value, (list, tuple, set)):
+        values = [redact_text(str(item))[:120] for item in value if item not in (None, "")]
+        return ("/".join(values[:8]) if values else "未指定", values[:32])
+    if isinstance(value, dict):
+        return redteam_variable_display(redteam_schema_value(value))
+    if value in (None, ""):
+        return "未指定", []
+    return redact_text(str(value))[:240], []
+
+
+def extract_redteam_template_variables(text: str) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    pattern = re.compile(
+        r"\{\{\s*([A-Za-z_][A-Za-z0-9_.-]{0,63})\s*\}\}"
+        r"|\$\{\s*([A-Za-z_][A-Za-z0-9_.-]{0,63})\s*\}"
+        r"|<<\s*([A-Za-z_][A-Za-z0-9_.-]{0,63})\s*>>"
+    )
+    for match in pattern.finditer(text or ""):
+        name = next((group for group in match.groups() if group), "")
+        key = name.lower()
+        if name and key not in seen:
+            names.append(name)
+            seen.add(key)
+    return names
 
 
 def redteam_queue_cases(cases: list[dict], seed_cases: list[dict]) -> list[dict]:
@@ -6754,6 +6925,8 @@ def validate_redteam_case(store: Any, state: dict, case_id: str) -> dict:
         "case_id": normalized.get("id", case_id),
         "validation_errors": errors,
         "warnings": warnings,
+        "variables": normalized.get("variables", []),
+        "variable_count": normalized.get("variable_count", 0),
         "safe_mode": "dry-run",
         "checked_at": utc_now(),
     }

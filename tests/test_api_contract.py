@@ -1233,6 +1233,50 @@ def test_redteam_dry_run_creates_local_evidence_without_agent_mutation():
     assert stopped.json()["run"]["status"] == "STOPPED"
 
 
+def test_redteam_case_variables_are_normalized_from_record_and_template(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "redteam-variables.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    created = client.post(
+        "/api/v1/redteam-cases",
+        json={
+            "id": "CASE-VARIABLES-LOCAL",
+            "name": "Contract Redteam Variables",
+            "type": "Indirect Injection",
+            "safe_mode": "dry-run",
+            "input": "请使用 {{language}} 和 ${encoding} 执行第 <<turn>> 轮 dry-run。",
+            "variables": {
+                "language": {"values": ["zh-CN", "en"], "required": True},
+                "encoding": ["plain", "base64"],
+            },
+            "variable_schema": {
+                "turn": {"minimum": 1, "maximum": 8, "required": True},
+            },
+        },
+    )
+
+    assert created.status_code == 200
+    case = created.json()["case"]
+    variables = {item["name"]: item for item in case["variables"]}
+    assert case["variable_count"] == 3
+    assert variables["language"]["value"] == "zh-CN/en"
+    assert variables["language"]["required"] is True
+    assert variables["encoding"]["value"] == "plain/base64"
+    assert variables["turn"]["value"] == "1..8"
+    assert variables["turn"]["source"] == "variable_schema"
+    assert store.get_record("redteam_case", "CASE-VARIABLES-LOCAL")["variable_count"] == 3
+
+    validation = client.post("/api/v1/redteam-cases/CASE-VARIABLES-LOCAL/validate", json={})
+    assert validation.status_code == 200
+    assert validation.json()["validation"]["status"] == "PASS"
+    assert validation.json()["validation"]["variable_count"] == 3
+
+    listed = client.get("/api/v1/redteam-cases")
+    listed_case = next(item for item in listed.json()["items"] if item["id"] == "CASE-VARIABLES-LOCAL")
+    assert listed_case["variables"][0]["name"] == "language"
+
+
 def test_capability_management_actions_are_persisted():
     rule = client.post("/api/v1/rules", json={"id": "TEST-RULE-LOCAL", "name": "Contract Rule", "severity": "中危 P2"})
     assert rule.status_code == 200
