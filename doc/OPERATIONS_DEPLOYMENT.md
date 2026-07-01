@@ -473,6 +473,7 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile quick
 ```
 
 快速扫描历史只读取本系统 SQLite 中的 assessment/report/finding/evidence/scan_event 记录，并生成 `quick-scan-history` artifact；它用于复盘和验收留档，不会重新扫描客户目录、不启动 MCP、不修改 Codex/Hermes。
+前端快速扫描页的“最近快速扫描”表也调用该接口，不再从原型 seed 或当前会话任务数组拼接历史。
 
 上传快照扫描：
 

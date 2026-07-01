@@ -153,10 +153,19 @@ def test_agent_scan_compat_ui_is_api_backed():
 
 
 def test_quick_scan_ui_requires_api_assessment_record():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "mode:this.quickMode" in app_js
     assert "asm_quick_" not in app_js
     assert "快速扫描未返回真实任务记录" in app_js
+    assert "v-for=\"t in quickHistory\"" in html
+    assert "tasks.slice(0,4)" not in html
+    assert "refreshQuickHistory()" in html
+    assert "exportQuickHistory" in html
+    assert "async refreshQuickHistory" in app_js
+    assert "async exportQuickHistory" in app_js
+    assert "/api/v1/quick-scans/recent?page_size=20" in app_js
+    assert "/api/v1/quick-scans/recent/export" in app_js
 
 
 def test_quick_scan_snapshot_upload_merges_scan_results():

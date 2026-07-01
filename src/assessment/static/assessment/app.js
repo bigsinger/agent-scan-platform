@@ -28,6 +28,8 @@
     runtimeObjectKeys.forEach(key => { state[key] = {}; });
     state.form = Object.assign({}, defaultFormState);
     state.quickEstimate = Object.assign({configs:0, mcp_servers:0, skills:0, scan_files:0, agents:0, status:'未检查'}, state.quickEstimate || {});
+    state.quickHistory = [];
+    state.quickHistorySummary = {};
     state.uploadResult = null;
     state.skillScanResult = null;
     state.mcpInspection = null;
@@ -46,6 +48,8 @@ data(){
     resetRuntimeCollections(initial);
     initial.form = Object.assign({}, defaultFormState, initial.form || {});
     initial.quickEstimate = Object.assign({configs:0, mcp_servers:0, skills:0, scan_files:0, agents:0, status:'未检查'}, initial.quickEstimate || {});
+    initial.quickHistory = [];
+    initial.quickHistorySummary = {};
     initial.quickBusy = false;
     initial.uploadResult = null;
     initial.discoveryErrors = initial.discoveryErrors || [];
@@ -651,6 +655,9 @@ data(){
       if(this.current==='agent-scan'){
         this.refreshAgentScanCompat({silent:true});
       }
+      if(this.current==='quick-scan'){
+        this.refreshQuickHistory({silent:true});
+      }
       if(this.current==='completeness'){
         this.refreshCompleteness({silent:true});
       }
@@ -785,7 +792,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -1153,6 +1160,30 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.quickBusy=false; }
     },
+    async refreshQuickHistory(options){
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/quick-scans/recent?page_size=20');
+        this.quickHistory=res.items || [];
+        this.quickHistorySummary=res.summary || {};
+        if(!silent) this.toastMsg('快速扫描历史已刷新：'+(res.total || this.quickHistory.length)+' 条');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async exportQuickHistory(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/quick-scans/recent/export');
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.downloadJson(res, 'agent-scan-platform-quick-scan-history.json');
+        this.toastMsg('快速扫描历史已导出：'+((res.summary&&res.summary.total_scans)||0)+' 条');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
     async uploadSnapshot(){
       this.quickBusy=true; this.apiError='';
       try {
@@ -1163,6 +1194,7 @@ data(){
         if(res.findings){ this.mergeRecords('findings', res.findings); if(res.findings.length) this.selectedFinding=res.findings[0]; }
         if(res.evidence){ this.mergeRecords('evidenceItems', res.evidence); if(res.evidence.length) this.selectedEvidence=res.evidence[0]; }
         if(res.report){ this.mergeRecords('reports', [res.report]); this.selectedReport=res.report; }
+        await this.refreshQuickHistory({silent:true});
         this.toastMsg('快照已保存并扫描：'+(res.findings ? res.findings.length : 0)+' 项风险');
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.quickBusy=false; }
@@ -1174,6 +1206,7 @@ data(){
         this.mergeScanResponse(res);
         const t = res.assessment;
         if(!t || !t.id) throw new Error('快速扫描未返回真实任务记录');
+        await this.refreshQuickHistory({silent:true});
         this.mergeRecords('tasks', [t]); this.selectedTask=t; this.go('task-detail'); this.toastMsg('快速扫描已完成本地只读分析');
       } catch (err) { this.apiError = this.describeError(err); }
       finally { this.quickBusy=false; }
@@ -1602,6 +1635,11 @@ data(){
       if(!evidence || !evidence.id) return;
       window.open((evidence.download || ('/api/v1/evidence/'+encodeURIComponent(evidence.id)+'/download')), '_blank', 'noopener');
       this.toastMsg('已请求下载脱敏证据 JSON');
+    },
+    downloadQuickHistoryReport(row){
+      if(!row || !row.report_download) return;
+      window.open(row.report_download, '_blank', 'noopener');
+      this.toastMsg('已请求下载快速扫描报告');
     },
     async buildAttackPath(){
       this.opsBusy=true; this.apiError='';

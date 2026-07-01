@@ -150,10 +150,11 @@
       <div class="callout green">本地模式不会要求 SNYK_TOKEN；关闭互联网时仍可完成核心扫描。machine 模式只扫描已发现的 Agent 配置、MCP 和 Skill 文件。</div>
     </div>
   </div>
-  <div class="card"><div class="card-head"><h2>最近快速扫描</h2><button class="btn sm" @click="go('tasks')">全部任务</button></div>
-    <table><thead><tr><th>任务</th><th>目标</th><th>模式</th><th>风险</th><th>耗时</th><th>状态</th><th>操作</th></tr></thead><tbody>
-      <tr v-for="t in tasks.slice(0,4)"><td>{{t.name}}</td><td>{{t.target}}</td><td>本地</td><td>{{t.critical}} / {{t.high}}</td><td>{{t.duration||t.elapsed||'-'}}</td><td><span :class="['badge',statusClass(t.status)]">{{t.status}}</span></td><td><button class="btn sm" @click="openTask(t)">查看</button><button class="btn sm" :disabled="opsBusy" @click="cloneTask(t)">复制</button></td></tr>
-      <tr v-if="!tasks.length"><td colspan="7" class="muted">尚无快速扫描记录。点击“扫描本机”或填写路径后开始本地只读扫描。</td></tr>
+  <div class="card"><div class="card-head"><div><h2>最近快速扫描</h2><div class="desc">来自 SQLite 的真实扫描历史，包含任务、报告、风险、证据和事件计数。</div></div><div><button class="btn sm" :disabled="opsBusy" @click="refreshQuickHistory()">刷新</button><button class="btn sm" :disabled="opsBusy" @click="exportQuickHistory">导出历史</button><button class="btn sm" @click="go('tasks')">全部任务</button></div></div>
+    <div class="statline" style="margin:10px 0 14px"><div><span class="muted small">扫描</span><div class="kpi">{{quickHistorySummary.total_scans||0}}</div></div><div><span class="muted small">风险</span><div class="kpi">{{quickHistorySummary.findings||0}}</div></div><div><span class="muted small">证据</span><div class="kpi">{{quickHistorySummary.evidence||0}}</div></div><div><span class="muted small">报告</span><div class="kpi">{{quickHistorySummary.reports||0}}</div></div></div>
+    <table><thead><tr><th>任务</th><th>目标</th><th>文件</th><th>风险</th><th>证据/事件</th><th>状态</th><th>操作</th></tr></thead><tbody>
+      <tr v-for="t in quickHistory" :key="t.id"><td><div>{{t.name}}</div><div class="mono small">{{t.id}}</div></td><td>{{t.target}}</td><td>{{t.files_scanned||0}} / {{t.files_skipped||0}}</td><td>P0 {{t.severity&&t.severity.p0||0}} · P1 {{t.severity&&t.severity.p1||0}} · 共 {{t.finding_count||0}}</td><td>{{t.evidence_count||0}} / {{t.events&&t.events.count||0}}</td><td><span :class="['badge',statusClass(t.status)]">{{t.status||t.stage}}</span></td><td><button class="btn sm" @click="openTask(t)">查看</button><button class="btn sm" :disabled="!t.report_download" @click="downloadQuickHistoryReport(t)">报告</button></td></tr>
+      <tr v-if="!quickHistory.length"><td colspan="7" class="muted">尚无快速扫描记录。点击“扫描本机”或填写路径后开始本地只读扫描。</td></tr>
     </tbody></table>
   </div>
 </div>
