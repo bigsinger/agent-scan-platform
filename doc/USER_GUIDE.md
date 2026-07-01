@@ -492,6 +492,8 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 - 整改建议。
 - 状态。
 
+风险详情页会读取当前 Finding 的真实字段：概览、复现步骤、证据链、受影响组件、根因与整改、标准映射和历史。证据链只展示按 `finding_id` / `evidence_ids` 关联的本系统脱敏 Evidence；没有复现步骤时显示可审计空状态，不再展示固定示例步骤或固定 `ev_01` 证据。
+
 严重度解释：
 
 | 等级 | 含义 |

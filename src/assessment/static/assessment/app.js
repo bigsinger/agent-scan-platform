@@ -242,6 +242,15 @@ data(){
         return (taskId && e.assessment_id===taskId) || findingIds.has(findingId) || evidenceIds.has(id);
       });
     },
+    selectedFindingEvidence(){
+      const finding=this.selectedFinding || {};
+      const findingId=String(finding.id || '');
+      const evidenceIds=new Set(Array.isArray(finding.evidence_ids) ? finding.evidence_ids.map(String) : (finding.evidence_ids ? [String(finding.evidence_ids)] : []));
+      return (this.evidenceItems || []).filter(e=>{
+        const id=String(e.id || '');
+        return (findingId && e.finding_id===findingId) || evidenceIds.has(id);
+      });
+    },
     selectedAgentComponents(){
       return (this.agentDetail && this.agentDetail.components) || (this.components || []).filter(c=>this.recordMatchesAgent(c, this.selectedAsset));
     },
@@ -467,6 +476,12 @@ data(){
       const status=task.status || task.state_code || '';
       if(status==='DRAFT' || status==='草稿') return false;
       return !this.isActiveTask(task);
+    },
+    findingReproductionSteps(finding){
+      const raw=finding && finding.reproduction_steps;
+      if(Array.isArray(raw)) return raw.filter(Boolean);
+      if(typeof raw==='string') return raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+      return [];
     },
     mergeRecords(key, items){
       if(!items || !items.length) return;

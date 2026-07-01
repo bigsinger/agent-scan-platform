@@ -118,3 +118,16 @@ def test_task_detail_findings_and_evidence_tabs_are_data_backed():
     assert "selectedTaskEvidence()" in app_js
     assert "assessment_id" in app_js
     assert "evidence_ids" in app_js
+
+
+def test_finding_detail_uses_real_finding_and_evidence_data():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "ev_01 · source" not in html
+    assert "casepack: claude-code-core@4.0" not in html
+    assert "2026-06-26" not in html
+    assert "selectedFindingEvidence.length" in html
+    assert "v-for=\"e in selectedFindingEvidence\"" in html
+    assert "findingReproductionSteps(selectedFinding)" in html
+    assert "selectedFindingEvidence()" in app_js
+    assert "findingReproductionSteps(finding)" in app_js
