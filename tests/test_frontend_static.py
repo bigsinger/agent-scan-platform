@@ -146,3 +146,19 @@ def test_retest_diff_ui_is_api_backed():
     assert "selectedRetest" in app_js
     assert "async loadRetestDiff" in app_js
     assert "'/api/v1/retests/'+encodeURIComponent(retest.id)+'/diff'" in app_js
+
+
+def test_report_readiness_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "Jinja2" not in html
+    assert "Chromium" not in html
+    assert "最近失败" not in html
+    assert "standard@4.0.0" not in html
+    assert "范围/授权</td><td><span class=\"badge low\">✓" not in html
+    assert "v-for=\"row in reportReadinessRows\"" in html
+    assert "reportRenderingStatus.engine" in html
+    assert "refreshReportPreview(selectedReport)" in html
+    assert "reportReadinessRows()" in app_js
+    assert "reportRenderingStatus()" in app_js
+    assert "async refreshReportPreview" in app_js

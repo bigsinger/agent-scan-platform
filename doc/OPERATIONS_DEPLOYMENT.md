@@ -443,6 +443,17 @@ Invoke-WebRequest `
   -OutFile report.html
 ```
 
+报告预览和制品状态验收：
+
+```powershell
+$preview = Invoke-RestMethod "http://127.0.0.1:8000/api/v1/reports/$($report.report.id)"
+$preview.preview.readiness
+$preview.preview.rendering
+$preview.preview.artifacts
+```
+
+`preview.readiness` 按当前报告 JSON snapshot、Finding/Evidence 数量和 HTML/JSON artifact 文件存在性生成；`preview.rendering.pdf_status` 在未配置 PDF 渲染器时保持 `UNAVAILABLE`。该接口只读取本系统 `report`、`artifact` 和 `data/reports` 文件，不启动或修改 Codex/Hermes/Claude Code。
+
 风险闭环：
 
 ```powershell

@@ -254,6 +254,31 @@ data(){
         return (findingId && e.finding_id===findingId) || evidenceIds.has(id);
       });
     },
+    reportReadinessRows(){
+      const rows=this.reportPreviewData && Array.isArray(this.reportPreviewData.readiness) ? this.reportPreviewData.readiness : [];
+      if(rows.length) return rows;
+      if(this.selectedReport && this.selectedReport.id) {
+        return [{name:'报告预览', status:'PENDING', detail:'点击“预览”或“刷新状态”读取当前报告制品状态'}];
+      }
+      return [{name:'报告记录', status:'MISSING', detail:'尚未生成报告'}];
+    },
+    reportRenderingStatus(){
+      return (this.reportPreviewData && this.reportPreviewData.rendering) || {
+        engine:'local-html-json-renderer',
+        html_status:this.selectedReport&&this.selectedReport.html_path?'PENDING':'MISSING',
+        json_status:this.selectedReport&&this.selectedReport.json_path?'PENDING':'MISSING',
+        pdf_status:'UNAVAILABLE',
+        pdf_reason:'当前本地版本未配置 PDF 渲染器',
+        template:this.selectedReport&&this.selectedReport.template || '-',
+        formats:this.selectedReport&&this.selectedReport.formats || '-',
+        artifact_bytes:this.selectedReport&&this.selectedReport.size || 0,
+        last_error:''
+      };
+    },
+    reportRenderCalloutClass(){
+      const r=this.reportRenderingStatus;
+      return ['callout', r.html_status==='READY' && r.json_status==='READY' ? 'green' : 'amber'];
+    },
     selectedAgentComponents(){
       return (this.agentDetail && this.agentDetail.components) || (this.components || []).filter(c=>this.recordMatchesAgent(c, this.selectedAsset));
     },
@@ -466,8 +491,8 @@ data(){
       if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED') return 'blue';
       if(s==='等待审批'||s==='部分完成'||s==='WARN'||s==='NOT_RUN'||s==='未运行') return 'medium';
-      if(s==='PENDING'||s==='OPEN') return 'medium';
-      if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED') return 'critical';
+      if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE') return 'medium';
+      if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED'||s==='MISSING'||s==='NOT_FOUND') return 'critical';
       return 'gray';
     },
     isActiveTask(task){
@@ -1111,15 +1136,24 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
-    async openReportPreview(report){
+    selectReport(report){
       if(!report || !report.id) return;
       this.selectedReport=report;
-      this.reportPreview=true;
+      this.reportPreviewData=null;
+    },
+    async refreshReportPreview(report){
+      if(!report || !report.id) return;
+      this.selectedReport=report;
       try {
         const res=await this.apiGet('/api/v1/reports/'+encodeURIComponent(report.id));
         this.selectedReport=Object.assign({}, report, res.item || {});
         this.reportPreviewData=res.preview || null;
       } catch (err) { this.apiError=this.describeError(err); }
+    },
+    async openReportPreview(report){
+      if(!report || !report.id) return;
+      this.reportPreview=true;
+      await this.refreshReportPreview(report);
     },
     downloadReport(report){
       if(!report || !report.id) return;

@@ -744,9 +744,9 @@ def get_item_route(path: str, state: dict) -> dict | None:
         item = get_store().get_record("report", parts[1]) or find_item(state.get("reports", []), parts[1])
         if len(parts) == 2:
             item = item or {"id": parts[1], "status": "NOT_FOUND"}
-            return {"item": item, "preview": report_preview(item)}
+            return {"item": item, "preview": report_preview(item, get_store())}
         if parts[2:] == ["preview"]:
-            return {"item": item, "preview": report_preview(item)}
+            return {"item": item, "preview": report_preview(item, get_store())}
     if len(parts) >= 2 and parts[0] == "profiles":
         profile = resolve_assessment_profile(get_store(), state, parts[1])
         if profile:
@@ -2351,11 +2351,150 @@ def normalize_tool_name(name: str) -> str:
     return normalized.strip("_")
 
 
-def report_preview(report: dict | None) -> dict:
+def data_relative_path(relative: Any) -> Path | None:
+    if not relative:
+        return None
+    candidate = (DATA_DIR / str(relative)).resolve()
+    data_root = DATA_DIR.resolve()
+    try:
+        candidate.relative_to(data_root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def report_artifact_state(store: Any, report: dict, kind: str) -> dict:
+    artifact_id = report.get(f"{kind}_artifact_id")
+    artifact = store.get_record("artifact", str(artifact_id)) if artifact_id else None
+    relative = artifact.get("relative_path") if artifact else report.get(f"{kind}_path")
+    path = data_relative_path(relative)
+    exists = bool(path and path.exists() and path.is_file())
+    size = artifact.get("size") if artifact else (path.stat().st_size if exists and path else 0)
+    return {
+        "artifact_id": artifact_id or "",
+        "relative_path": relative or "",
+        "exists": exists,
+        "size": int(size or 0),
+        "sha256": artifact.get("sha256") if artifact else "",
+        "content_type": artifact.get("content_type") if artifact else "",
+    }
+
+
+def read_report_snapshot(json_state: dict) -> tuple[dict | None, str]:
+    path = data_relative_path(json_state.get("relative_path"))
+    if not path or not path.exists() or not path.is_file():
+        return None, "JSON artifact is not present on disk"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), ""
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"JSON artifact cannot be read: {exc}"
+
+
+def summarize_preview_findings(findings: list[dict], report_summary: dict | None = None) -> dict:
+    summary = dict(report_summary or {})
+    for key in ["p0", "p1", "p2", "other"]:
+        summary.setdefault(key, 0)
+    if report_summary:
+        return summary
+    for finding in findings:
+        severity = str(finding.get("severity") or "")
+        if "P0" in severity or "严重" in severity:
+            summary["p0"] += 1
+        elif "P1" in severity or "高危" in severity:
+            summary["p1"] += 1
+        elif "P2" in severity or "中危" in severity:
+            summary["p2"] += 1
+        else:
+            summary["other"] += 1
+    return summary
+
+
+def report_readiness_row(name: str, status: str, detail: str) -> dict:
+    return {"name": name, "status": status, "detail": detail}
+
+
+def safe_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def report_preview(report: dict | None, store: Any | None = None) -> dict:
+    store = store or get_store()
+    report = report or {"id": "unknown", "status": "NOT_FOUND"}
+    html_state = report_artifact_state(store, report, "html")
+    json_state = report_artifact_state(store, report, "json")
+    snapshot, snapshot_error = read_report_snapshot(json_state)
+    assessment = (snapshot or {}).get("assessment") or {}
+    findings = (snapshot or {}).get("findings") or []
+    evidence = (snapshot or {}).get("evidence") or []
+    summary = summarize_preview_findings(findings, report.get("summary"))
+    finding_count = safe_int(report.get("finding_count"), len(findings))
+    evidence_count = len(evidence)
+    artifact_ready = html_state["exists"] and json_state["exists"]
+    readiness = [
+        report_readiness_row(
+            "任务与范围",
+            "READY" if report.get("assessment_id") or assessment.get("id") else "MISSING",
+            str(report.get("assessment_id") or assessment.get("id") or "未关联 assessment"),
+        ),
+        report_readiness_row(
+            "目标快照",
+            "READY" if assessment.get("target") or report.get("task") else "EMPTY",
+            str(assessment.get("target") or report.get("task") or "报告未包含目标字段"),
+        ),
+        report_readiness_row(
+            "风险统计",
+            "READY" if report.get("summary") or snapshot else "MISSING",
+            f"P0={summary.get('p0', 0)} P1={summary.get('p1', 0)} P2={summary.get('p2', 0)}",
+        ),
+        report_readiness_row(
+            "风险列表",
+            "READY" if finding_count else "EMPTY",
+            f"{finding_count} findings",
+        ),
+        report_readiness_row(
+            "证据快照",
+            "READY" if evidence_count else "EMPTY",
+            f"{evidence_count} evidence records",
+        ),
+        report_readiness_row(
+            "HTML/JSON 制品",
+            "READY" if artifact_ready else "MISSING",
+            f"HTML={html_state['exists']} JSON={json_state['exists']}",
+        ),
+        report_readiness_row(
+            "下载接口",
+            "READY" if html_state["exists"] and report.get("id") else "MISSING",
+            f"/api/v1/reports/{report.get('id', 'unknown')}/download",
+        ),
+    ]
+    rendering = {
+        "engine": "local-html-json-renderer",
+        "html_status": "READY" if html_state["exists"] else "MISSING",
+        "json_status": "READY" if json_state["exists"] else "MISSING",
+        "pdf_status": "UNAVAILABLE",
+        "pdf_reason": "PDF/Chromium renderer is not configured in this local build",
+        "template": report.get("template") or "local-standard@4.1",
+        "formats": report.get("formats") or "HTML/JSON",
+        "artifact_bytes": html_state["size"] + json_state["size"],
+        "last_error": snapshot_error or report.get("last_error") or "",
+    }
     return {
         "title": (report or {}).get("name", "Agent 安全测评报告"),
-        "status": (report or {}).get("status", "READY"),
-        "sections": ["执行摘要", "风险列表", "证据", "复测建议"],
+        "status": (report or {}).get("status", "NOT_FOUND"),
+        "sections": [row["name"] for row in readiness],
+        "readiness": readiness,
+        "rendering": rendering,
+        "counts": {
+            "findings": finding_count,
+            "evidence": evidence_count,
+            "artifacts": int(html_state["exists"]) + int(json_state["exists"]),
+        },
+        "summary": summary,
+        "artifacts": {"html": html_state, "json": json_state},
+        "mutates_installed_agents": False,
         "download": f"/api/v1/reports/{(report or {}).get('id', 'unknown')}/download",
     }
 

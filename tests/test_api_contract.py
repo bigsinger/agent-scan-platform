@@ -485,7 +485,15 @@ def test_report_evidence_and_risk_closure_actions():
     assert report["status"] == "READY"
     preview = client.get(f"/api/v1/reports/{report['id']}")
     assert preview.status_code == 200
-    assert preview.json()["preview"]["download"].endswith("/download")
+    preview_body = preview.json()["preview"]
+    assert preview_body["download"].endswith("/download")
+    assert preview_body["mutates_installed_agents"] is False
+    assert preview_body["rendering"]["engine"] == "local-html-json-renderer"
+    assert preview_body["rendering"]["html_status"] == "READY"
+    assert preview_body["rendering"]["json_status"] == "READY"
+    assert preview_body["rendering"]["pdf_status"] == "UNAVAILABLE"
+    assert any(row["name"] == "HTML/JSON 制品" and row["status"] == "READY" for row in preview_body["readiness"])
+    assert preview_body["counts"]["artifacts"] == 2
     download = client.get(f"/api/v1/reports/{report['id']}/download")
     assert download.status_code == 200
     assert "Agent 安全测评能力模块 V4.1" in download.text

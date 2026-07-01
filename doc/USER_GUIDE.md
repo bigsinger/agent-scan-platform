@@ -592,6 +592,8 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
    /api/v1/reports/{report_id}/download
    ```
 
+报告中心的“章节完整性”和“渲染能力”来自 `GET /api/v1/reports/{report_id}` 的 `preview.readiness`、`preview.rendering` 和 artifact 状态。系统只展示本地已生成 HTML/JSON 制品的真实存在性、大小和模板版本；当前本地版本未配置 PDF 渲染器时会显示 `UNAVAILABLE`，不会伪造 Chromium 或 PDF 可用状态。
+
 报告内容：
 
 - 执行边界。
