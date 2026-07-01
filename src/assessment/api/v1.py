@@ -264,7 +264,8 @@ async def third_party_notice(id: str) -> dict:
 
 @router.get("/completeness/export")
 async def completeness_export() -> dict:
-    return {"format": "json", "items": completeness_rows(), "exported_at": utc_now()}
+    rows = completeness_runtime_rows()
+    return {"format": "json", "summary": completeness_summary(rows), "items": rows, "exported_at": utc_now()}
 
 
 @router.get("/licenses/export")
@@ -343,7 +344,10 @@ async def generic_get(resource: str, request: Request) -> dict:
         run_id = path.split("/")[-1]
         return redteam_run_detail(get_store(), state, run_id)
     if path == "/completeness":
-        return page(completeness_rows(), request)
+        rows = completeness_runtime_rows()
+        payload = page(rows, request)
+        payload["summary"] = completeness_summary(rows)
+        return payload
     if path == "/licenses/export":
         return await licenses_export()
     if path == "/discovery-hits/export":
@@ -779,6 +783,73 @@ def page(items: list[dict], request: Request | None, total: int | None = None) -
     start = max(0, (page_num - 1) * page_size)
     end = start + page_size
     return {"items": items[start:end], "total": len(items) if total is None else total, "page": page_num, "page_size": page_size}
+
+
+def completeness_doc_root() -> Path:
+    candidate = REPO_ROOT / "doc" / "agent_security_assessment_v4_1_full"
+    return candidate if candidate.exists() else REPO_ROOT / "doc"
+
+
+def completeness_runtime_rows() -> list[dict]:
+    doc_root = completeness_doc_root()
+    contract_pairs = {(method, path) for method, path in API_CONTRACTS}
+    contract_pairs.update((method, path.split("?", 1)[0]) for method, path in API_CONTRACTS)
+    rows: list[dict] = []
+    for row in completeness_rows():
+        item = dict(row)
+        prototype_path = doc_root / str(item.get("prototype", ""))
+        spec_path = doc_root / str(item.get("spec", ""))
+        audit_ok = prototype_path.exists() and spec_path.exists()
+        api_refs = [part.strip() for part in str(item.get("api", "")).split("；") if part.strip()]
+        contract_ok = bool(api_refs)
+        missing_api: list[str] = []
+        for ref in api_refs:
+            if " " not in ref:
+                contract_ok = False
+                missing_api.append(ref)
+                continue
+            method, path = ref.split(" ", 1)
+            if (method, path) not in contract_pairs and (method, path.split("?", 1)[0]) not in contract_pairs:
+                contract_ok = False
+                missing_api.append(ref)
+        item["audit"] = "PASS" if audit_ok else "MISSING_DOC"
+        item["contract"] = "PASS" if contract_ok else "MISSING_API"
+        item["e2e"] = "NOT_ASSERTED"
+        item["status"] = "待验证" if item["e2e"] != "PASS" else "已验收"
+        item["prototype_exists"] = prototype_path.exists()
+        item["spec_exists"] = spec_path.exists()
+        item["missing_api"] = missing_api
+        rows.append(item)
+    return rows
+
+
+def completeness_summary(rows: list[dict] | None = None) -> dict:
+    current_rows = rows if rows is not None else completeness_runtime_rows()
+    try:
+        sqlite_tables = len(get_store().database_status().get("tables", []))
+    except Exception:
+        sqlite_tables = 0
+    try:
+        rule_count = len(rule_catalog())
+    except Exception:
+        rule_count = 0
+    gaps = [
+        row
+        for row in current_rows
+        if row.get("audit") != "PASS" or row.get("contract") != "PASS" or row.get("e2e") != "PASS"
+    ]
+    return {
+        "pages": len(current_rows),
+        "apis": len(API_CONTRACTS),
+        "sqlite_tables": sqlite_tables,
+        "rules": rule_count,
+        "audit_passed": sum(1 for row in current_rows if row.get("audit") == "PASS"),
+        "contract_passed": sum(1 for row in current_rows if row.get("contract") == "PASS"),
+        "e2e_passed": sum(1 for row in current_rows if row.get("e2e") == "PASS"),
+        "gaps": len(gaps),
+        "doc_root": str(completeness_doc_root().relative_to(REPO_ROOT)).replace("\\", "/"),
+        "updated_at": utc_now(),
+    }
 
 
 def enrich_items(key: str, items: list[dict]) -> list[dict]:
@@ -5642,7 +5713,8 @@ def runtime_state() -> dict:
         state[key] = enrich_items(key, real_items)
     state["profiles"] = combine_items(real_items_for_path("/profiles"), state.get("profiles", []))
 
-    state["completeness"] = completeness_rows()
+    state["completeness"] = completeness_runtime_rows()
+    state["completenessSummary"] = completeness_summary(state["completeness"])
     state["sqliteStatus"] = store.database_status()
     state["guardStatus"] = PassiveGuard(store).status()
     state["dashboardMetrics"] = dashboard_metrics(state)
@@ -5775,7 +5847,7 @@ def real_items_for_path(path: str) -> list[dict]:
     if path in {"/executions", "/executor"}:
         return get_store().list_records("process_execution")
     if path == "/completeness":
-        return completeness_rows()
+        return completeness_runtime_rows()
     table = TABLE_KEYS.get(path)
     if not table:
         return []

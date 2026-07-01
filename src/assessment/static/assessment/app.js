@@ -15,7 +15,7 @@
   const runtimeListKeys = [
     'agentAssets','discoveryHits','discoveryErrors','discoveryLog','mcpServers','consents','tools','skills',
     'tasks','jobs','processes','taskEvents','findings','evidenceItems','reports','components','redteamRuns',
-    'attackPaths','policyDrafts','retests','backupRecords','heatmap'
+    'attackPaths','policyDrafts','retests','backupRecords','heatmap','completeness'
   ];
   const runtimeObjectKeys = [
     'selectedAsset','selectedTask','selectedMcp','selectedTool','selectedConsent','selectedSkill','selectedCase','selectedRedteamRun',
@@ -32,6 +32,7 @@
     state.mcpInspection = null;
     state.scheduleLastRun = null;
     state.retestDiff = null;
+    state.completenessSummary = {};
   }
   try {
     const { createApp } = Vue;
@@ -103,6 +104,7 @@ data(){
     initial.adapterSelfTestResult = null;
     initial.agentScanCompat = initial.agentScanCompat || {version:'0.5.12-compatible', source_state:'LOCAL_BRIDGE_ONLY', compatibility:{status:'NOT_RUN', passed:0, warnings:0, failed:0, total:0}};
     initial.agentScanSelfTestResult = null;
+    initial.completenessSummary = initial.completenessSummary || {};
     initial.selectedProfile = initial.selectedProfile || (initial.profiles && initial.profiles[0]) || {};
     initial.profileValidation = null;
     initial.settingsState = initial.settings || {};
@@ -309,6 +311,25 @@ data(){
         {name:'安全边界', status:'PASS', detail:'规则测试只运行本地 deterministic analyzer，不启动或修改已安装 Agent'}
       ];
     },
+    completenessStats(){
+      const rows=this.completeness || [];
+      const summary=this.completenessSummary || {};
+      const rowApis=new Set();
+      rows.forEach(row => String(row.api || '').split('；').map(x=>x.trim()).filter(Boolean).forEach(x=>rowApis.add(x)));
+      const gaps=rows.filter(row => row.audit!=='PASS' || row.contract!=='PASS' || row.e2e!=='PASS').length;
+      return {
+        pages:Number(summary.pages ?? rows.length),
+        apis:Number(summary.apis ?? rowApis.size),
+        sqlite_tables:Number(summary.sqlite_tables ?? ((this.sqliteStatus&&this.sqliteStatus.tables||[]).length)),
+        rules:Number(summary.rules ?? ((this.ruleRows || []).length)),
+        gaps:Number(summary.gaps ?? gaps),
+        audit_passed:Number(summary.audit_passed ?? rows.filter(row=>row.audit==='PASS').length),
+        contract_passed:Number(summary.contract_passed ?? rows.filter(row=>row.contract==='PASS').length),
+        e2e_passed:Number(summary.e2e_passed ?? rows.filter(row=>row.e2e==='PASS').length),
+        doc_root:summary.doc_root || 'doc/agent_security_assessment_v4_1_full',
+        updated_at:summary.updated_at || ''
+      };
+    },
     reportReadinessRows(){
       const rows=this.reportPreviewData && Array.isArray(this.reportPreviewData.readiness) ? this.reportPreviewData.readiness : [];
       if(rows.length) return rows;
@@ -487,6 +508,9 @@ data(){
       if(this.current==='agent-scan'){
         this.refreshAgentScanCompat({silent:true});
       }
+      if(this.current==='completeness'){
+        this.refreshCompleteness({silent:true});
+      }
     },
     async loadBootstrap(){
       try {
@@ -572,7 +596,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -594,8 +618,8 @@ data(){
       if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED') return 'blue';
       if(s==='等待审批'||s==='部分完成'||s==='WARN'||s==='NOT_RUN'||s==='未运行'||s==='NO_MATCH'||s==='DRAFT'||s==='草稿') return 'medium';
-      if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE'||s==='REQUIRES_CONFIG'||s==='NEEDS_SELF_TEST') return 'medium';
-      if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED'||s==='MISSING'||s==='NOT_FOUND') return 'critical';
+      if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE'||s==='REQUIRES_CONFIG'||s==='NEEDS_SELF_TEST'||s==='NOT_ASSERTED'||s==='待验证') return 'medium';
+      if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED'||s==='MISSING'||s==='NOT_FOUND'||s==='MISSING_DOC'||s==='MISSING_API') return 'critical';
       return 'gray';
     },
     isActiveTask(task){
@@ -1772,9 +1796,25 @@ data(){
     async exportCompleteness(){
       try {
         const res=await this.apiGet('/api/v1/completeness/export');
+        if(res.summary) this.completenessSummary=res.summary;
+        if(res.items) this.completeness=res.items;
         this.downloadJson(res, 'agent-scan-platform-completeness.json');
         this.toastMsg('完整性矩阵已导出');
       } catch (err) { this.apiError=this.describeError(err); }
+    },
+    async refreshCompleteness(options){
+      const silent=options && options.silent;
+      if(!silent) { this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/completeness?page_size=200');
+        this.completeness=res.items || [];
+        this.completenessSummary=res.summary || {};
+        if(!silent) this.toastMsg('完整性矩阵已刷新：'+(res.total || this.completeness.length)+' 条');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
     },
     downloadJson(payload, filename){
       const blob=new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});

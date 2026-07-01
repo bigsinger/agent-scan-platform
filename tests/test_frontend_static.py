@@ -187,3 +187,21 @@ def test_rule_management_ui_uses_real_rule_state():
     assert "ruleStats()" in app_js
     assert "ruleGateRows()" in app_js
     assert "selectRule(rule)" in app_js
+
+
+def test_completeness_matrix_ui_uses_runtime_summary():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert '<div class="metric-label">页面/详情</div><div class="metric-value">48' not in html
+    assert '<div class="metric-label">API</div><div class="metric-value">141' not in html
+    assert '<div class="metric-label">SQLite 表</div><div class="metric-value">49' not in html
+    assert '<div class="metric-label">缺口</div><div class="metric-value">0' not in html
+    assert "<td><span class=\"check\">✓</span></td><td><span class=\"check\">✓</span></td><td><span class=\"check\">✓</span></td>" not in html
+    assert "completenessStats.pages" in html
+    assert "completenessStats.sqlite_tables" in html
+    assert "statusClass(x.audit)" in html
+    assert "statusClass(x.contract)" in html
+    assert "statusClass(x.e2e)" in html
+    assert "completenessStats()" in app_js
+    assert "async refreshCompleteness" in app_js
+    assert "/api/v1/completeness?page_size=200" in app_js

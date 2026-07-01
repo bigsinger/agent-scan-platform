@@ -332,6 +332,15 @@ data/backups/app-YYYYMMDDHHMMSS.db
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/integrity-check
 ```
 
+实现完整性矩阵：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/completeness?page_size=200
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/completeness/export
+```
+
+`/api/v1/completeness` 的 `summary` 会从当前 V4.1 契约、`doc/agent_security_assessment_v4_1_full` 的 prototype/spec 文件、本机 SQLite 状态和本地规则目录派生。`E2E=NOT_ASSERTED` 表示当前只有契约/文档覆盖，尚未由自动化端到端用例证明；运维评审时不要把它解释为验收通过。
+
 WAL checkpoint：
 
 ```powershell

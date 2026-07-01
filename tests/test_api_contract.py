@@ -196,11 +196,20 @@ def test_store_initialization_purges_legacy_prototype_seed_records(tmp_path):
 def test_all_spec_pages_have_completeness_rows():
     response = client.get("/api/v1/completeness?page_size=100")
     assert response.status_code == 200
-    rows = response.json()["items"]
+    payload = response.json()
+    rows = payload["items"]
     assert len(rows) == 48
     assert rows[0]["id"] == "P01"
     assert rows[-1]["id"] == "D14"
     assert {row["route"] for row in rows} >= {"/assessment/mcp-consent", "/assessment/python-exec", "/assessment/api-debug"}
+    assert payload["summary"]["pages"] == 48
+    assert payload["summary"]["apis"] == len(API_CONTRACTS)
+    assert payload["summary"]["sqlite_tables"] > 0
+    assert payload["summary"]["rules"] > 0
+    assert {row["audit"] for row in rows} == {"PASS"}
+    assert {row["contract"] for row in rows} == {"PASS"}
+    assert {row["e2e"] for row in rows} == {"NOT_ASSERTED"}
+    assert payload["summary"]["gaps"] == len(rows)
 
 
 def test_openapi_contains_v4_1_contract_endpoints():

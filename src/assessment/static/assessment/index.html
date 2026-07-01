@@ -742,9 +742,10 @@ safe_mode: local-readonly</div></div>
 <!-- P34 COMPLETENESS -->
 <div v-if="current==='completeness'">
   <div class="card"><div class="card-head"><div><h2>实现完整性矩阵</h2><div class="desc">页面 → Route → API → SQLite Entity → 状态 → Audit → Contract Test → E2E。任意列缺失不得标记完成。</div></div><button class="btn" @click="exportCompleteness">导出矩阵</button></div>
-    <div class="grid g5"><div class="metric"><div class="metric-label">页面/详情</div><div class="metric-value">48</div></div><div class="metric"><div class="metric-label">API</div><div class="metric-value">141</div></div><div class="metric"><div class="metric-label">SQLite 表</div><div class="metric-value">49</div></div><div class="metric"><div class="metric-label">基线规则</div><div class="metric-value">84</div></div><div class="metric"><div class="metric-label">缺口</div><div class="metric-value">0</div></div></div>
-    <div class="toolbar" style="margin-top:14px"><input class="search" placeholder="搜索页面 / API / 实体"><select><option>全部分组</option><option>发现资产</option><option>检测执行</option><option>结果闭环</option><option>管理</option></select><select><option>全部状态</option><option>已设计</option><option>开发中</option><option>阻塞</option><option>已验收</option></select></div>
-    <div class="table-wrap"><table><thead><tr><th>ID</th><th>页面</th><th>Route</th><th>核心 API</th><th>Entity</th><th>Audit</th><th>Contract</th><th>E2E</th><th>状态</th></tr></thead><tbody><tr v-for="x in completeness"><td>{{x.id}}</td><td>{{x.page}}</td><td class="mono">{{x.route}}</td><td>{{x.api}}</td><td>{{x.entity}}</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="badge low">已设计</span></td></tr></tbody></table></div>
+    <div class="grid g5"><div class="metric"><div class="metric-label">页面/详情</div><div class="metric-value">{{completenessStats.pages}}</div></div><div class="metric"><div class="metric-label">API</div><div class="metric-value">{{completenessStats.apis}}</div></div><div class="metric"><div class="metric-label">SQLite 表</div><div class="metric-value">{{completenessStats.sqlite_tables}}</div></div><div class="metric"><div class="metric-label">本地规则</div><div class="metric-value">{{completenessStats.rules}}</div></div><div class="metric"><div class="metric-label">待验证</div><div class="metric-value">{{completenessStats.gaps}}</div></div></div>
+    <div class="callout" style="margin-top:14px">来源：{{completenessStats.doc_root}} · 文档 {{completenessStats.audit_passed}}/{{completenessStats.pages}} · API {{completenessStats.contract_passed}}/{{completenessStats.pages}} · E2E {{completenessStats.e2e_passed}}/{{completenessStats.pages}}</div>
+    <div class="toolbar" style="margin-top:14px"><input class="search" placeholder="搜索页面 / API / 实体"><select><option>全部分组</option><option>发现资产</option><option>检测执行</option><option>结果闭环</option><option>管理</option></select><select><option>全部状态</option><option>PASS</option><option>NOT_ASSERTED</option><option>MISSING_DOC</option><option>MISSING_API</option><option>待验证</option></select></div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>页面</th><th>Route</th><th>核心 API</th><th>Entity</th><th>Audit</th><th>Contract</th><th>E2E</th><th>状态</th></tr></thead><tbody><tr v-for="x in completeness"><td>{{x.id}}</td><td>{{x.page}}</td><td class="mono">{{x.route}}</td><td>{{x.api}}</td><td>{{x.entity}}</td><td><span :class="['badge',statusClass(x.audit)]">{{x.audit||'UNKNOWN'}}</span></td><td><span :class="['badge',statusClass(x.contract)]">{{x.contract||'UNKNOWN'}}</span></td><td><span :class="['badge',statusClass(x.e2e)]">{{x.e2e||'UNKNOWN'}}</span></td><td><span :class="['badge',statusClass(x.status)]">{{x.status||'UNKNOWN'}}</span></td></tr></tbody></table></div>
   </div>
   <div class="notice success"><b>AI 开发约束：</b>不得删除原型入口，不得用静态数据冒充 API，不得从 Worker 直写 SQLite，不得自动启动 stdio MCP，不得用可选云分析替代本地规则。</div>
 </div>
@@ -767,6 +768,6 @@ remote_analysis: false</div></div></div></div>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.24"></script>
+<script src="/static/assessment/app.js?v=4.1.25"></script>
 </body>
 </html>
