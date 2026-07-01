@@ -312,6 +312,20 @@ def test_finding_false_positive_ui_is_api_backed():
     assert "误报候选已写入 SQLite" in app_js
 
 
+def test_finding_history_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "selectedFindingHistory" in app_js
+    assert "async loadFindingHistory" in app_js
+    assert "selectFindingTab(tab)" in app_js
+    assert "'/api/v1/findings/'+encodeURIComponent(target.id)+'/history'" in app_js
+    assert "v-for=\"h in selectedFindingHistory\"" in html
+    assert "@click=\"selectFindingTab(x)\"" in html
+    assert "@click=\"loadFindingHistory(selectedFinding)\"" in html
+    assert "历史只读取本系统 SQLite finding/evidence/retest/audit_event" in html
+    assert "状态来自本系统 Finding 记录。" not in html
+
+
 def test_sqlite_backup_restore_drill_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

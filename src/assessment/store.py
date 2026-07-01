@@ -532,6 +532,39 @@ class AssessmentStore:
             )
         return events
 
+    def list_audit_events(self, object_type: str | None = None, object_id: str | None = None, limit: int = 500) -> list[dict]:
+        limit = max(1, min(limit, 5000))
+        query = "SELECT seq, actor, action, object_type, object_id, payload_json, created_at FROM audit_event"
+        clauses = []
+        params: list[Any] = []
+        if object_type:
+            clauses.append("object_type=?")
+            params.append(object_type)
+        if object_id:
+            clauses.append("object_id=?")
+            params.append(object_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY seq ASC LIMIT ?"
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        events = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            events.append(
+                {
+                    "seq": row["seq"],
+                    "actor": row["actor"],
+                    "action": row["action"],
+                    "object_type": row["object_type"],
+                    "object_id": row["object_id"],
+                    "payload": payload,
+                    "created_at": row["created_at"],
+                }
+            )
+        return events
+
     def write_artifact(
         self,
         kind: str,

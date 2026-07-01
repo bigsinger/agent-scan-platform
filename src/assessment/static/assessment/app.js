@@ -37,6 +37,7 @@
     state.scheduleLastRun = null;
     state.reportSyncLastDownload = '';
     state.retestDiff = null;
+    state.selectedFindingHistory = [];
     state.completenessSummary = {};
     state.executionLog = null;
     state.executionTermination = null;
@@ -111,6 +112,7 @@ data(){
     initial.reportSyncLastDownload = '';
     initial.selectedRetest = initial.selectedRetest || ((initial.retests || [])[0]) || {};
     initial.retestDiff = initial.retestDiff || null;
+    initial.selectedFindingHistory = initial.selectedFindingHistory || [];
     initial.agentDetail = null;
     initial.abomData = null;
     initial.abomDiff = null;
@@ -916,6 +918,13 @@ data(){
         const found=(this.tasks || []).find(t=>String(t.id)===taskId || String(t.name)===taskId);
         if(found) this.selectedTask=found;
         if(this.current==='task-detail') this.refreshTaskEvents(found || {id:taskId}, true);
+      }
+      const findingMatch=path.match(/^\/assessment\/findings\/([^/]+)/);
+      if(findingMatch){
+        const findingId=decodeURIComponent(findingMatch[1]);
+        const found=(this.findings || []).find(f=>String(f.id)===findingId || String(f.title)===findingId);
+        if(found) this.selectedFinding=found;
+        if(this.current==='finding-detail') this.loadFindingHistory(found || {id:findingId}, {silent:true});
       }
       if(this.current==='abom' && this.selectedAsset && this.selectedAsset.id){
         this.loadAgentAbom(this.selectedAsset);
@@ -1819,12 +1828,32 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
+    async loadFindingHistory(finding, options){
+      const target=finding || this.selectedFinding;
+      if(!target || !target.id) {
+        this.selectedFindingHistory=[];
+        return;
+      }
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/findings/'+encodeURIComponent(target.id)+'/history');
+        this.selectedFindingHistory=res.items || [];
+        if(!silent) this.toastMsg('风险历史已刷新：'+(res.total || this.selectedFindingHistory.length)+' 条');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { if(!silent) this.opsBusy=false; }
+    },
+    selectFindingTab(tab){
+      this.findingTab=tab;
+      if(tab==='历史') this.loadFindingHistory(this.selectedFinding, {silent:true});
+    },
     async acceptFinding(finding){
       if(!finding || !finding.id) return;
       this.opsBusy=true; this.apiError='';
       try {
         const res=await this.apiPost('/api/v1/findings/'+encodeURIComponent(finding.id)+'/accept', {reason:'本地人工确认'});
         if(res.finding){ this.mergeRecords('findings', [res.finding]); this.selectedFinding=res.finding; }
+        await this.loadFindingHistory(this.selectedFinding, {silent:true});
         this.toastMsg('风险状态已写入：已接受风险');
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -1835,6 +1864,7 @@ data(){
       try {
         const res=await this.apiPost('/api/v1/findings/'+encodeURIComponent(finding.id)+'/false-positive', {reason:'本地人工标记误报候选'});
         if(res.finding){ this.mergeRecords('findings', [res.finding]); this.selectedFinding=res.finding; }
+        await this.loadFindingHistory(this.selectedFinding, {silent:true});
         this.toastMsg('误报候选已写入 SQLite，等待人工复核');
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -1849,6 +1879,7 @@ data(){
           this.selectedRetest=res.retest;
           await this.loadRetestDiff(res.retest, {silent:true});
         }
+        await this.loadFindingHistory(finding, {silent:true});
         this.go('retests');
         this.toastMsg('复测任务已排队：'+(res.retest&&res.retest.id || 'QUEUED'));
       } catch (err) { this.apiError=this.describeError(err); }
@@ -2374,7 +2405,14 @@ data(){
     openAgent(a){this.selectedAsset=a;this.agentTab='概览';this.current='agent-detail';this.pushRoute('agent-detail');window.scrollTo(0,0);this.loadAgentDetail(a);},
     openTask(t){this.selectedTask=t;this.taskTab='执行概览';this.current='task-detail';this.pushRoute('task-detail');window.scrollTo(0,0);this.refreshTaskEvents(t, true);},
     openSkill(s){this.selectedSkill=s;this.skillTab='概览';this.current='skill-detail';this.pushRoute('skill-detail');window.scrollTo(0,0);this.loadSkillDetail(s);},
-    openFinding(f){this.selectedFinding=f;this.findingTab='概览';this.current='finding-detail';window.scrollTo(0,0);},
+    openFinding(f){
+      this.selectedFinding=f || {};
+      this.findingTab='概览';
+      this.current='finding-detail';
+      this.pushRoute('finding-detail');
+      this.loadFindingHistory(this.selectedFinding, {silent:true});
+      window.scrollTo(0,0);
+    },
     async saveAssessmentDraft(){
       this.opsBusy=true; this.apiError='';
       try {

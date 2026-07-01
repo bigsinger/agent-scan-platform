@@ -1519,7 +1519,7 @@ def get_item_route(path: str, state: dict) -> dict | None:
             return page(artifacts, None)
     if len(parts) >= 2 and parts[0] == "findings":
         if len(parts) == 3 and parts[2] == "history":
-            return {"items": [{"status": "NEW", "at": utc_now()}, {"status": "NEEDS_REVIEW", "at": utc_now()}], "total": 2}
+            return finding_history(get_store(), state, parts[1])
         if len(parts) == 3 and parts[2] == "evidence":
             evidence = evidence_for_finding(get_store(), state, parts[1])
             return page(evidence, None)
@@ -5528,10 +5528,116 @@ def build_assessment_plan(body: dict, state: dict) -> dict:
 
 def update_finding_status(store: Any, state: dict, finding_id: str, status: str, body: dict) -> dict:
     finding = store.get_record("finding", finding_id) or find_item(state.get("findings", []), finding_id) or {"id": finding_id}
+    previous_status = finding.get("status")
     finding.update({"status": status, "accepted_reason": body.get("reason", ""), "updated_at": utc_now()})
     updated = store.upsert_record("finding", finding, status=status)
     merge_state_record(state, "findings", updated)
+    store.audit_event(
+        "finding.status_changed",
+        "finding",
+        finding_id,
+        {
+            "previous_status": previous_status,
+            "status": status,
+            "reason": body.get("reason", ""),
+            "mutates_installed_agents": False,
+        },
+    )
     return updated
+
+
+def finding_history(store: Any, state: dict, finding_id: str) -> dict:
+    finding = store.get_record("finding", finding_id) or find_item(state.get("findings", []), finding_id)
+    if not finding:
+        return {"items": [], "total": 0, "safe_mode": "local-readonly", "mutates_installed_agents": False}
+
+    rows: list[dict] = []
+
+    def add(kind: str, at: Any, status: str, title: str, detail: str = "", source: str = "sqlite", payload: dict | None = None) -> None:
+        payload = payload or {}
+        rows.append(
+            {
+                "id": "hist_" + stable_hash(f"{finding_id}:{kind}:{at}:{title}:{len(rows)}", 20),
+                "type": kind,
+                "at": at or utc_now(),
+                "status": status,
+                "title": title,
+                "detail": detail,
+                "source": source,
+                "payload": payload,
+                "mutates_installed_agents": False,
+            }
+        )
+
+    created_at = finding.get("created_at") or finding.get("time") or finding.get("updated_at")
+    add(
+        "finding.created",
+        created_at,
+        str(finding.get("status") or "已记录"),
+        "Finding 首次写入",
+        str(finding.get("title") or finding_id),
+        "finding",
+        {"finding_id": finding_id, "rule": finding.get("rule") or finding.get("rule_id")},
+    )
+
+    if finding.get("updated_at") and finding.get("updated_at") != created_at:
+        add(
+            "finding.current_status",
+            finding.get("updated_at"),
+            str(finding.get("status") or "已记录"),
+            "当前状态",
+            str(finding.get("accepted_reason") or finding.get("false_positive_reason") or finding.get("resolution") or "状态来自 Finding 记录"),
+            "finding",
+            {"finding_id": finding_id},
+        )
+
+    for evidence in evidence_for_finding(store, state, finding_id):
+        add(
+            "evidence.linked",
+            evidence.get("created_at") or evidence.get("time"),
+            str(evidence.get("redaction") or evidence.get("status") or "已脱敏"),
+            "关联证据",
+            f"{evidence.get('id')} · {evidence.get('type') or evidence.get('collector') or 'evidence'}",
+            "evidence",
+            {"evidence_id": evidence.get("id"), "artifact_id": evidence.get("artifact_id") or evidence.get("redacted_artifact_id")},
+        )
+
+    retests = [
+        item
+        for item in combine_items(store.list_records("retest_run", limit=500), state.get("retests", []))
+        if str(item.get("finding_id") or item.get("finding") or "") == finding_id
+    ]
+    for retest in retests:
+        add(
+            "retest.created",
+            retest.get("created_at") or retest.get("updated_at"),
+            str(retest.get("status") or "QUEUED"),
+            "复测任务",
+            f"{retest.get('id')} · {retest.get('scope') or '固化输入'}",
+            "retest_run",
+            {"retest_id": retest.get("id"), "safe_mode": retest.get("safe_mode") or "local-readonly"},
+        )
+
+    for event in store.list_audit_events(object_type="finding", object_id=finding_id, limit=500):
+        payload = event.get("payload") or {}
+        add(
+            "audit." + str(event.get("action") or "event"),
+            event.get("created_at"),
+            str(payload.get("status") or payload.get("resolution") or payload.get("decision") or "AUDITED"),
+            str(event.get("action") or "审计事件"),
+            str(payload.get("reason") or payload.get("confirm_reason") or payload.get("message") or "审计事件已写入"),
+            "audit_event",
+            {**payload, "seq": event.get("seq"), "actor": event.get("actor")},
+        )
+
+    rows.sort(key=lambda row: str(row.get("at") or ""))
+    return {
+        "items": rows,
+        "total": len(rows),
+        "finding_id": finding_id,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
 
 
 def mark_finding_false_positive(store: Any, state: dict, finding_id: str, body: dict) -> dict:
@@ -5598,6 +5704,12 @@ def create_retest(store: Any, state: dict, finding_id: str, body: dict) -> dict:
     updated = store.upsert_record("retest_run", retest, status="QUEUED")
     store.upsert_record("retest", updated, status="QUEUED")
     merge_state_record(state, "retests", updated)
+    store.audit_event(
+        "finding.retest_created",
+        "finding",
+        finding_id,
+        {"retest_id": updated["id"], "scope": updated.get("scope"), "mutates_installed_agents": False},
+    )
     return updated
 
 

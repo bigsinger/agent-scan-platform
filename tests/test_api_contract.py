@@ -249,6 +249,55 @@ def test_finding_false_positive_candidate_is_api_backed_and_audited(monkeypatch,
     assert "mutates_installed_agents" in audit_payload
 
 
+def test_finding_history_is_real_sqlite_timeline(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "finding-history.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    finding = store.upsert_record(
+        "finding",
+        {
+            "id": "finding-history-contract",
+            "title": "历史合同测试",
+            "severity": "高危 P1",
+            "status": "待复核",
+            "rule": "HISTORY-001",
+            "evidence_ids": ["ev-history-contract"],
+        },
+        status="待复核",
+    )
+    store.upsert_record(
+        "evidence",
+        {
+            "id": "ev-history-contract",
+            "finding_id": finding["id"],
+            "type": "config",
+            "redaction": "已脱敏",
+            "content": "redacted",
+        },
+        status="READY",
+    )
+
+    accept = client.post(f"/api/v1/findings/{finding['id']}/accept", json={"reason": "contract accept"})
+    assert accept.status_code == 200
+    retest = client.post(f"/api/v1/findings/{finding['id']}/retest", json={"scope": "固化输入"})
+    assert retest.status_code == 200
+    history = client.get(f"/api/v1/findings/{finding['id']}/history")
+
+    assert history.status_code == 200
+    body = history.json()
+    assert body["safe_mode"] == "local-readonly"
+    assert body["mutates_installed_agents"] is False
+    types = {item["type"] for item in body["items"]}
+    assert {"finding.created", "evidence.linked", "retest.created"}.issubset(types)
+    assert any(item["type"] == "audit.finding.status_changed" for item in body["items"])
+    assert any(item["type"] == "audit.finding.retest_created" for item in body["items"])
+    serialized = json.dumps(body, ensure_ascii=False)
+    assert "contract accept" in serialized
+    assert "ev-history-contract" in serialized
+    assert '"status": "NEW"' not in serialized
+    assert '"status": "NEEDS_REVIEW"' not in serialized
+
+
 def test_store_initialization_purges_legacy_prototype_seed_records(tmp_path):
     store = AssessmentStore(tmp_path / "legacy-seed.db")
     store.initialize()

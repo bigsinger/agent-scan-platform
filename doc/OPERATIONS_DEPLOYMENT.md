@@ -578,7 +578,7 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
-风险详情页的复现步骤、证据链、受影响组件、根因与整改、标准映射和历史均来自当前 Finding/Evidence 记录；没有可执行复现步骤时显示空状态，不注入示例 casepack 或固定证据 ID。企业验收时可用 `GET /api/v1/findings/<finding_id>/evidence` 与页面“证据链”逐项核对。误报操作只把 Finding 标记为 `误报待复核` 并写入 `finding.false_positive_candidate` 审计事件，保留证据和报告链路，不删除数据、不修改已安装 Agent。
+风险详情页的复现步骤、证据链、受影响组件、根因与整改、标准映射和历史均来自当前 Finding/Evidence 记录；没有可执行复现步骤时显示空状态，不注入示例 casepack 或固定证据 ID。企业验收时可用 `GET /api/v1/findings/<finding_id>/evidence` 与页面“证据链”逐项核对。`GET /api/v1/findings/<finding_id>/history` 会从 `finding`、关联 `evidence`、`retest_run` 和 `audit_event` 聚合真实历史，不返回固定 `NEW/NEEDS_REVIEW` 原型状态。误报操作只把 Finding 标记为 `误报待复核` 并写入 `finding.false_positive_candidate` 审计事件，确认风险会写入 `finding.status_changed`，创建复测会写入 `finding.retest_created`；这些动作保留证据和报告链路，不删除数据、不修改已安装 Agent。
 
 复测对比运维验收：
 
