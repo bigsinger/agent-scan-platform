@@ -763,9 +763,9 @@ def get_item_route(path: str, state: dict) -> dict | None:
     if len(parts) >= 2 and parts[0] == "retests":
         item = get_store().get_record("retest_run", parts[1]) or find_item(state.get("retests", []), parts[1])
         if len(parts) == 2:
-            return {"item": item}
+            return {"item": item or {"id": parts[1], "status": "NOT_FOUND"}}
         if parts[2:] == ["diff"]:
-            return {"item": item, "diff": {"before": item.get("before") if item else "P1", "after": item.get("after") if item else "待测", "changed": bool(item)}}
+            return {"item": item or {"id": parts[1], "status": "NOT_FOUND"}, "diff": retest_diff(get_store(), state, parts[1])}
     if len(parts) >= 2 and parts[0] == "attack-paths":
         return {"item": get_store().get_record("attack_path", parts[1]) or find_item(state.get("attackPaths", []), parts[1])}
     if len(parts) >= 2 and parts[0] == "policy-drafts":
@@ -3475,14 +3475,35 @@ def update_finding_status(store: Any, state: dict, finding_id: str, status: str,
 
 def create_retest(store: Any, state: dict, finding_id: str, body: dict) -> dict:
     finding = store.get_record("finding", finding_id) or find_item(state.get("findings", []), finding_id) or {}
+    linked_evidence = evidence_for_finding(store, state, finding_id) if finding else []
+    evidence_ids = []
+    for evidence in linked_evidence:
+        evidence_id = str(evidence.get("id") or "")
+        if evidence_id and evidence_id not in evidence_ids:
+            evidence_ids.append(evidence_id)
+    before_severity = finding.get("severity") or body.get("before") or "待测"
+    before_status = finding.get("status") or body.get("before_status") or "未记录"
+    before_rule = finding.get("rule") or finding.get("rule_id") or body.get("rule") or "未记录"
     retest = {
         "id": new_id("rt"),
         "finding": finding_id,
         "finding_id": finding_id,
+        "assessment_id": body.get("assessment_id") or finding.get("assessment_id") or finding.get("task"),
+        "source_finding_title": finding.get("title") or body.get("title") or finding_id,
         "target": body.get("target", finding.get("component", "local")),
         "scope": body.get("scope", "固化输入"),
-        "before": finding.get("severity", body.get("before", "待测")),
+        "before": before_severity,
         "after": "待测",
+        "before_status": before_status,
+        "after_status": "PENDING_RESCAN",
+        "before_severity": before_severity,
+        "after_severity": "待测",
+        "before_rule": before_rule,
+        "after_rule": before_rule,
+        "before_evidence_ids": evidence_ids,
+        "after_evidence_ids": [],
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
         "conclusion": "待执行",
         "status": "QUEUED",
         "created_at": utc_now(),
@@ -3491,6 +3512,74 @@ def create_retest(store: Any, state: dict, finding_id: str, body: dict) -> dict:
     store.upsert_record("retest", updated, status="QUEUED")
     merge_state_record(state, "retests", updated)
     return updated
+
+
+def non_empty_value(*values: Any, default: str = "未记录") -> Any:
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return default
+
+
+def retest_diff(store: Any, state: dict, retest_id: str) -> dict:
+    retest = (
+        store.get_record("retest_run", retest_id)
+        or store.get_record("retest", retest_id)
+        or find_item(state.get("retests", []), retest_id)
+        or {"id": retest_id, "status": "NOT_FOUND"}
+    )
+    finding_id = str(retest.get("finding_id") or retest.get("finding") or "")
+    finding = store.get_record("finding", finding_id) or find_item(state.get("findings", []), finding_id) or {}
+    before_evidence = evidence_for_finding(store, state, finding_id) if finding_id else []
+    after_evidence_ids = {str(item) for item in retest.get("after_evidence_ids", [])}
+    after_evidence_records = [
+        item
+        for item in combine_items(store.list_records("evidence"), state.get("evidenceItems", []))
+        if item.get("retest_id") == retest_id or (after_evidence_ids and str(item.get("id")) in after_evidence_ids)
+    ]
+    after_evidence = [decorate_evidence_item(item) for item in after_evidence_records]
+
+    before = {
+        "severity": non_empty_value(retest.get("before_severity"), finding.get("severity"), retest.get("before")),
+        "status": non_empty_value(retest.get("before_status"), finding.get("status")),
+        "rule": non_empty_value(retest.get("before_rule"), finding.get("rule"), finding.get("rule_id")),
+        "target": non_empty_value(retest.get("target"), finding.get("component"), finding.get("agent"), default="local"),
+        "evidence_count": len(before_evidence),
+    }
+    after = {
+        "severity": non_empty_value(retest.get("after_severity"), retest.get("after"), default="待测"),
+        "status": non_empty_value(retest.get("after_status"), retest.get("status"), default="QUEUED"),
+        "rule": non_empty_value(retest.get("after_rule"), before["rule"]),
+        "target": non_empty_value(retest.get("target"), before["target"], default="local"),
+        "evidence_count": len(after_evidence),
+    }
+
+    def row(signal: str, before_value: Any, after_value: Any) -> dict:
+        before_text = str(before_value)
+        after_text = str(after_value)
+        return {"signal": signal, "before": before_text, "after": after_text, "changed": before_text != after_text}
+
+    rows = [
+        row("严重度", before["severity"], after["severity"]),
+        row("风险状态", before["status"], after["status"]),
+        row("规则", before["rule"], after["rule"]),
+        row("目标组件", before["target"], after["target"]),
+        row("证据数量", before["evidence_count"], after["evidence_count"]),
+    ]
+    return {
+        "schema": "agent-security-retest-diff@4.1",
+        "retest_id": retest_id,
+        "finding_id": finding_id,
+        "status": retest.get("status", "NOT_FOUND"),
+        "safe_mode": retest.get("safe_mode") or "local-readonly",
+        "mutates_installed_agents": False,
+        "before": before,
+        "after": after,
+        "rows": rows,
+        "evidence": before_evidence,
+        "after_evidence": after_evidence,
+        "generated_at": utc_now(),
+    }
 
 
 def find_evidence_record(store: Any, state: dict, evidence_id: str) -> dict | None:

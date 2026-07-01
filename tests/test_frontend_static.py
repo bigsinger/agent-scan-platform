@@ -131,3 +131,18 @@ def test_finding_detail_uses_real_finding_and_evidence_data():
     assert "findingReproductionSteps(selectedFinding)" in html
     assert "selectedFindingEvidence()" in app_js
     assert "findingReproductionSteps(finding)" in app_js
+
+
+def test_retest_diff_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "复测对比读取当前记录" not in html
+    assert "隐藏指令执行" not in html
+    assert "越界 Tool Call" not in html
+    assert "剩余风险" not in html
+    assert "@click.stop=\"loadRetestDiff(r)\"" in html
+    assert "v-for=\"row in (retestDiff&&retestDiff.rows)||[]\"" in html
+    assert "retestDiff.safe_mode" in html
+    assert "selectedRetest" in app_js
+    assert "async loadRetestDiff" in app_js
+    assert "'/api/v1/retests/'+encodeURIComponent(retest.id)+'/diff'" in app_js

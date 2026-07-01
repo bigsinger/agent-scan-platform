@@ -527,7 +527,19 @@ def test_report_evidence_and_risk_closure_actions():
     accepted = client.post(f"/api/v1/findings/{finding['id']}/accept", json={"reason": "contract test"})
     assert accepted.json()["finding"]["status"] == "已接受风险"
     retest = client.post(f"/api/v1/findings/{finding['id']}/retest", json={"scope": "固化输入"})
-    assert retest.json()["retest"]["status"] == "QUEUED"
+    retest_body = retest.json()["retest"]
+    assert retest_body["status"] == "QUEUED"
+    assert retest_body["mutates_installed_agents"] is False
+    diff = client.get(f"/api/v1/retests/{retest_body['id']}/diff")
+    assert diff.status_code == 200
+    diff_body = diff.json()["diff"]
+    assert diff_body["schema"] == "agent-security-retest-diff@4.1"
+    assert diff_body["finding_id"] == finding["id"]
+    assert diff_body["mutates_installed_agents"] is False
+    assert diff_body["before"]["severity"] == finding["severity"]
+    assert diff_body["before"]["evidence_count"] >= 1
+    assert diff_body["rows"]
+    assert "隐藏指令执行" not in json.dumps(diff_body, ensure_ascii=False)
 
     evidence_export = client.get("/api/v1/evidence/export")
     assert evidence_export.status_code == 200

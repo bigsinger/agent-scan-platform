@@ -461,6 +461,22 @@ Invoke-RestMethod `
 
 风险详情页的复现步骤、证据链、受影响组件、根因与整改、标准映射和历史均来自当前 Finding/Evidence 记录；没有可执行复现步骤时显示空状态，不注入示例 casepack 或固定证据 ID。企业验收时可用 `GET /api/v1/findings/<finding_id>/evidence` 与页面“证据链”逐项核对。
 
+复测对比运维验收：
+
+```powershell
+$retest = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/retest `
+  -Body (@{ scope = "固化输入" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$diff = Invoke-RestMethod "http://127.0.0.1:8000/api/v1/retests/$($retest.retest.id)/diff"
+$diff.diff.rows
+$diff.diff.mutates_installed_agents
+```
+
+`retests/{id}/diff` 只读取本系统 `retest_run`、`finding`、`evidence` 记录并返回 `agent-security-retest-diff@4.1`；排队或待执行时保持“待测 / PENDING_RESCAN”，不会启动本机 Agent、不会修改 Codex/Hermes 配置，也不会伪造修复后通过结果。
+
 风险 CSV 导出：
 
 ```powershell

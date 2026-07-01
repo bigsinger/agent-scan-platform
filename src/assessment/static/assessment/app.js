@@ -19,7 +19,7 @@
   ];
   const runtimeObjectKeys = [
     'selectedAsset','selectedTask','selectedMcp','selectedTool','selectedConsent','selectedSkill','selectedCase','selectedRedteamRun',
-    'selectedFinding','selectedEvidence','selectedAttackPath','selectedPolicyDraft','selectedReport'
+    'selectedFinding','selectedEvidence','selectedAttackPath','selectedPolicyDraft','selectedReport','selectedRetest'
   ];
   const defaultFormState = {adapter:'自动识别', targetPath:'', discoveryPaths:'', snapshotContent:'', assessmentName:'', businessNote:'', redteamTarget:'local-agent-dry-run', redteamCaseId:'', redteamMode:'dry-run'};
   function resetRuntimeCollections(state) {
@@ -31,6 +31,7 @@
     state.skillScanResult = null;
     state.mcpInspection = null;
     state.scheduleLastRun = null;
+    state.retestDiff = null;
   }
   try {
     const { createApp } = Vue;
@@ -90,6 +91,8 @@ data(){
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
     initial.reportPreviewData = initial.reportPreviewData || null;
+    initial.selectedRetest = initial.selectedRetest || ((initial.retests || [])[0]) || {};
+    initial.retestDiff = initial.retestDiff || null;
     initial.agentDetail = null;
     initial.abomData = null;
     initial.abomDiff = null;
@@ -376,6 +379,7 @@ data(){
           if(this.selectedCase && this.selectedCase.id) this.form.redteamCaseId=this.selectedCase.id;
           if(!this.selectedRedteamRun || !this.selectedRedteamRun.id) this.selectedRedteamRun=(this.redteamRuns && this.redteamRuns[0]) || {};
           if(!this.selectedProfile || !(this.selectedProfile.id || this.selectedProfile.name)) this.selectedProfile=(this.profiles && this.profiles[0]) || {};
+          if(!this.selectedRetest || !this.selectedRetest.id) this.selectedRetest=(this.retests && this.retests[0]) || {};
           this.settingsState=payload.state.settings || this.settingsState || {};
           this.settingsValidation=(this.settingsState && this.settingsState.validation_errors) || [];
           await this.refreshExecutionCenter({silent:true});
@@ -1146,11 +1150,32 @@ data(){
       this.opsBusy=true; this.apiError='';
       try {
         const res=await this.apiPost('/api/v1/findings/'+encodeURIComponent(finding.id)+'/retest', {scope:'固化输入'});
-        if(res.retest){ this.mergeRecords('retests', [res.retest]); }
+        if(res.retest){
+          this.mergeRecords('retests', [res.retest]);
+          this.selectedRetest=res.retest;
+          await this.loadRetestDiff(res.retest, {silent:true});
+        }
         this.go('retests');
         this.toastMsg('复测任务已排队：'+(res.retest&&res.retest.id || 'QUEUED'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
+    },
+    selectRetest(retest){
+      if(!retest || !retest.id) return;
+      this.selectedRetest=retest;
+    },
+    async loadRetestDiff(retest, options){
+      if(!retest || !retest.id) return;
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      this.selectedRetest=retest;
+      try {
+        const res=await this.apiGet('/api/v1/retests/'+encodeURIComponent(retest.id)+'/diff');
+        this.selectedRetest=Object.assign({}, retest, res.item || {});
+        this.retestDiff=res.diff || null;
+        if(!silent) this.toastMsg('复测对比已加载：'+retest.id);
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { if(!silent) this.opsBusy=false; }
     },
     async exportFindings(){
       this.opsBusy=true; this.apiError='';

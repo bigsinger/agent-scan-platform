@@ -752,6 +752,18 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
+复测中心的“对比”按钮会读取 `GET /api/v1/retests/<retest_id>/diff`，根据当前 `retest_run`、原 Finding 和关联 Evidence 生成前后对比 rows。待执行或排队状态只显示“待测 / PENDING_RESCAN”，不会伪造已修复结论；接口返回 `mutates_installed_agents=false`，只读取本系统 SQLite 和脱敏证据记录。
+
+```powershell
+$retest = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/retest `
+  -Body (@{ scope = "固化输入" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod "http://127.0.0.1:8000/api/v1/retests/$($retest.retest.id)/diff"
+```
+
 ### 攻击路径和策略草案
 
 ```powershell
