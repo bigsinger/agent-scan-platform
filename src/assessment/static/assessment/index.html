@@ -555,6 +555,28 @@ safe_mode: {{selectedCase.safe_mode||'dry-run'}}</div></div><div class="card"><h
     </div>
   </div>
   <div class="grid g2">
+    <div class="card"><div class="card-head"><div><h2>策略编辑</h2><div class="desc">保存后写入 SQLite `sandbox_policy`，不会写入 Agent 配置。</div></div><button class="btn success" :disabled="opsBusy" @click="saveSandboxPolicy">保存策略</button></div>
+      <div class="form-grid">
+        <div class="field"><label>网络默认</label><select v-model="sandboxPolicy.network.default"><option value="deny">deny</option><option value="deny-by-default">deny-by-default</option></select></div>
+        <div class="field"><label>Subprocess</label><select v-model="sandboxPolicy.process.subprocess"><option value="deny-by-default">deny-by-default</option><option value="deny">deny</option></select></div>
+        <div class="field"><label>stdio MCP</label><select v-model="sandboxPolicy.process.stdio_mcp"><option value="per-server-consent">per-server-consent</option><option value="never-start">never-start</option><option value="approval-required">approval-required</option></select></div>
+        <div class="field"><label>最大并发</label><input type="number" min="1" max="16" v-model.number="sandboxPolicy.process.max_parallel"></div>
+        <div class="field"><label>超时秒</label><input type="number" min="30" max="3600" v-model.number="sandboxPolicy.limits.timeout_sec"></div>
+        <div class="field"><label>内存 MB</label><input type="number" min="128" max="65536" v-model.number="sandboxPolicy.limits.memory_mb"></div>
+        <div class="field"><label>输出 MB</label><input type="number" min="1" max="1024" v-model.number="sandboxPolicy.limits.output_mb"></div>
+        <div class="field full"><label>允许读路径</label><textarea :value="listToLines(sandboxPolicy.paths&&sandboxPolicy.paths.read)" @input="setSandboxList(['paths','read'],$event.target.value)"></textarea></div>
+        <div class="field full"><label>允许写路径</label><textarea :value="listToLines(sandboxPolicy.paths&&sandboxPolicy.paths.write)" @input="setSandboxList(['paths','write'],$event.target.value)"></textarea></div>
+        <div class="field full"><label>拒绝路径</label><textarea :value="listToLines(sandboxPolicy.paths&&sandboxPolicy.paths.deny)" @input="setSandboxList(['paths','deny'],$event.target.value)"></textarea></div>
+        <div class="field full"><label>允许网络 Host</label><textarea :value="listToLines(sandboxPolicy.network&&sandboxPolicy.network.allow)" @input="setSandboxList(['network','allow'],$event.target.value)" placeholder="每行一个域名；默认留空。"></textarea></div>
+        <div class="field full"><label>环境变量脱敏模式</label><textarea :value="listToLines(sandboxPolicy.env&&sandboxPolicy.env.deny_patterns)" @input="setSandboxList(['env','deny_patterns'],$event.target.value)"></textarea></div>
+      </div>
+    </div>
+    <div class="card"><div class="card-head"><div><h2>最近策略判定</h2><div class="desc">刷新或运行自测后展示 `policy_decision` 真实记录。</div></div><span class="badge blue">{{sandboxPolicyDecisions.length}} decisions</span></div>
+      <table><thead><tr><th>检查</th><th>期望</th><th>实际</th><th>状态</th></tr></thead><tbody><tr v-for="d in sandboxPolicyDecisions" :key="d.id"><td>{{d.name||d.check_id}}<div class="tiny muted">{{d.category}} · {{d.target}}</div></td><td>{{d.expected||'-'}}</td><td>{{d.actual||'-'}}</td><td><span :class="['badge',sandboxStatusClass(d.status)]">{{d.status}}</span></td></tr><tr v-if="!sandboxPolicyDecisions.length"><td colspan="4" class="muted">尚无策略判定记录，点击“运行逃逸自测”。</td></tr></tbody></table>
+      <div v-if="sandboxPolicyExport&&sandboxPolicyExport.download" class="callout green" style="margin-top:10px">最近导出：{{sandboxPolicyExport.policy_id}} · <a :href="sandboxPolicyExport.download" target="_blank" rel="noopener">下载 JSON</a></div>
+    </div>
+  </div>
+  <div class="grid g2">
     <div class="card"><div class="card-head"><div><h2>当前配置</h2><div class="desc">{{sandboxPolicy.version}} · {{sandboxPolicy.safe_mode}}</div></div><div><button class="btn sm" :disabled="opsBusy" @click="saveSandboxPolicy">保存</button><button class="btn sm" :disabled="opsBusy" @click="restoreSandboxDefaults">恢复默认</button><button class="btn sm soft" :disabled="opsBusy" @click="exportSandboxPolicy">导出</button></div></div><div class="code">{{sandboxPolicyYaml(sandboxPolicy)}}</div></div>
     <div class="card"><div class="card-head"><div><h2>自测结果</h2><div class="desc">{{sandboxTestResult.checked_at || '尚未运行'}} · Artifact {{sandboxTestResult.artifact_path || '未生成'}}</div></div><span :class="['badge',sandboxStatusClass(sandboxTestResult.status)]">{{sandboxTestResult.status}}</span></div><table><thead><tr><th>测试</th><th>期望</th><th>结果</th><th>状态</th></tr></thead><tbody><tr v-for="t in (sandboxTestResult.tests||[])" :key="t.id"><td>{{t.name}}<div class="tiny muted">{{t.category}} · {{t.target}}</div></td><td>{{t.expected}}</td><td>{{t.actual}}</td><td><span :class="['badge',sandboxStatusClass(t.status)]">{{t.status}}</span></td></tr><tr v-if="!(sandboxTestResult.tests||[]).length"><td colspan="4" class="muted">尚未运行本地沙箱策略自测。</td></tr></tbody></table><div class="callout amber">没有容器运行时时，不宣称“强沙箱”。本页只证明本模块扫描执行的进程级安全降级策略，不修改 Codex/Hermes 等已安装 Agent。</div><button v-if="sandboxTestResult.download" class="btn soft" style="margin-top:10px" @click="downloadSandboxTest">下载自测 JSON</button></div>
   </div>

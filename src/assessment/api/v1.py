@@ -784,7 +784,7 @@ async def generic_get(resource: str, request: Request) -> dict:
     if path == "/sandbox-policy/export":
         return export_sandbox_policy(get_store(), state)
     if path == "/sandbox-policy":
-        return {"policy": load_sandbox_policy(get_store(), state), "status": "ACTIVE"}
+        return sandbox_policy_response(get_store(), state)
     if path == "/settings/export":
         return export_settings(get_store(), state)
     if path == "/settings":
@@ -2932,6 +2932,23 @@ def load_sandbox_policy(store: Any, state: dict | None = None) -> dict:
     return policy
 
 
+def sandbox_policy_response(store: Any, state: dict | None = None) -> dict:
+    decisions = store.list_records("policy_decision", limit=50)
+    latest_test = next((item for item in decisions if item.get("test_run_id")), decisions[0] if decisions else {})
+    return {
+        "policy": load_sandbox_policy(store, state),
+        "status": "ACTIVE",
+        "recent_decisions": decisions,
+        "last_test": {
+            "id": latest_test.get("test_run_id", ""),
+            "status": latest_test.get("run_status") or latest_test.get("status") or "NOT_RUN",
+            "checked_at": latest_test.get("checked_at") or latest_test.get("created_at") or "",
+        },
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+    }
+
+
 def merge_sandbox_policy(values: dict) -> dict:
     policy = default_sandbox_policy()
     if not isinstance(values, dict):
@@ -2954,10 +2971,12 @@ def merge_sandbox_policy(values: dict) -> dict:
             "<system-config>/**" if str(item).replace("\\", "/").lower().startswith("c:/windows/system32/config") else item
             for item in deny
         ]
+    normalize_sandbox_collections(policy)
     return policy
 
 
 def save_sandbox_policy(store: Any, state: dict, body: dict) -> dict:
+    previous = load_sandbox_policy(store, state)
     policy = default_sandbox_policy() if body.get("reset") else merge_sandbox_policy(body)
     validation_errors = validate_sandbox_policy(policy)
     if validation_errors:
@@ -2967,8 +2986,60 @@ def save_sandbox_policy(store: Any, state: dict, body: dict) -> dict:
     policy["mutates_installed_agents"] = False
     updated = store.upsert_record("sandbox_policy", policy, status=str(policy.get("status") or "ACTIVE"))
     state["sandboxPolicy"] = updated
-    store.audit_event("put.sandbox-policy", "sandbox_policy", updated["id"], {"reset": bool(body.get("reset")), "safe_mode": updated["safe_mode"]})
+    store.audit_event(
+        "put.sandbox-policy",
+        "sandbox_policy",
+        updated["id"],
+        {
+            "reset": bool(body.get("reset")),
+            "safe_mode": updated["safe_mode"],
+            "changed": sorted(changed_policy_keys(previous, updated)),
+            "payload_redacted": redacted_sandbox_policy_payload(updated),
+        },
+    )
     return updated
+
+
+def normalize_sandbox_collections(policy: dict) -> None:
+    for section, keys in {
+        "paths": ("read", "write", "deny"),
+        "env": ("inherit", "deny_patterns"),
+        "network": ("allow", "metadata_endpoints"),
+    }.items():
+        values = policy.get(section)
+        if not isinstance(values, dict):
+            continue
+        for key in keys:
+            values[key] = normalize_list(values.get(key), [])
+    limits = policy.get("limits") if isinstance(policy.get("limits"), dict) else {}
+    limits["timeout_sec"] = max(30, min(coerce_int(limits.get("timeout_sec"), 600), 3600))
+    limits["memory_mb"] = max(128, min(coerce_int(limits.get("memory_mb"), 2048), 65536))
+    limits["output_mb"] = max(1, min(coerce_int(limits.get("output_mb"), 10), 1024))
+    policy["limits"] = limits
+    process = policy.get("process") if isinstance(policy.get("process"), dict) else {}
+    process["max_parallel"] = max(1, min(coerce_int(process.get("max_parallel"), 2), 16))
+    policy["process"] = process
+
+
+def changed_policy_keys(previous: dict, current: dict) -> set[str]:
+    ignored = {"updated_at"}
+    keys = set(previous) | set(current)
+    return {key for key in keys if key not in ignored and previous.get(key) != current.get(key)}
+
+
+def redacted_sandbox_policy_payload(policy: dict) -> dict:
+    payload = json.loads(json.dumps(policy, ensure_ascii=False))
+    paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
+    if isinstance(paths, dict):
+        for key in ("read", "write", "deny"):
+            paths[key] = [redact_local_path(item) for item in normalize_list(paths.get(key), [])]
+    env = payload.get("env") if isinstance(payload.get("env"), dict) else {}
+    if isinstance(env, dict):
+        env["deny_patterns"] = [redact_text(str(item), max_len=120) for item in normalize_list(env.get("deny_patterns"), [])]
+    network = payload.get("network") if isinstance(payload.get("network"), dict) else {}
+    if isinstance(network, dict):
+        network["allow"] = [redact_text(str(item), max_len=160) for item in normalize_list(network.get("allow"), [])]
+    return payload
 
 
 def validate_sandbox_policy(policy: dict) -> list[dict]:
@@ -2976,6 +3047,11 @@ def validate_sandbox_policy(policy: dict) -> list[dict]:
     network_default = str(policy.get("network", {}).get("default", "")).lower()
     if network_default not in {"deny", "deny-by-default"}:
         errors.append({"field": "network.default", "message": "network default must remain deny"})
+    metadata_hosts = {str(item).lower() for item in normalize_list(policy.get("network", {}).get("metadata_endpoints"), [])}
+    for index, host in enumerate(normalize_list(policy.get("network", {}).get("allow"), [])):
+        normalized = str(host).strip().lower()
+        if normalized in {"*", "0.0.0.0", "::", "169.254.169.254", "100.100.100.200"} or normalized in metadata_hosts:
+            errors.append({"field": f"network.allow[{index}]", "message": "network allowlist cannot include wildcard or metadata endpoints"})
     stdio_policy = str(policy.get("process", {}).get("stdio_mcp") or policy.get("stdio_mcp") or "").lower()
     if stdio_policy in {"allow", "always-allow", "auto-start"}:
         errors.append({"field": "process.stdio_mcp", "message": "stdio MCP cannot be auto-started by sandbox policy"})
@@ -2985,10 +3061,24 @@ def validate_sandbox_policy(policy: dict) -> list[dict]:
     deny_patterns = policy.get("env", {}).get("deny_patterns") or []
     if not any("TOKEN" in str(item).upper() for item in deny_patterns):
         errors.append({"field": "env.deny_patterns", "message": "token-like environment variables must be denied or redacted"})
+    required_denies = {"<home>/.ssh", "<home>/.gnupg"}
+    deny_text = "\n".join(str(item).replace("\\", "/").lower() for item in policy.get("paths", {}).get("deny") or [])
+    for required in required_denies:
+        if required not in deny_text:
+            errors.append({"field": "paths.deny", "message": f"{required}/** must remain denied"})
+    for index, pattern in enumerate(policy.get("paths", {}).get("read") or []):
+        text = str(pattern).replace("\\", "/").lower()
+        if text in {"/**", "c:/**", "c:/*", "<home>/**", "~/**"}:
+            errors.append({"field": f"paths.read[{index}]", "message": "read scope is too broad for local agent assessment"})
     for index, pattern in enumerate(policy.get("paths", {}).get("write") or []):
         text = str(pattern).replace("\\", "/").lower()
         if text in {"/**", "c:/**", "c:/*", "<home>/**", "~/**"} or text.startswith("<home>/.ssh"):
             errors.append({"field": f"paths.write[{index}]", "message": "write scope is too broad or targets sensitive user paths"})
+    limits = policy.get("limits", {})
+    if coerce_int(limits.get("timeout_sec"), 600) > 3600:
+        errors.append({"field": "limits.timeout_sec", "message": "timeout_sec cannot exceed 3600"})
+    if coerce_int(limits.get("output_mb"), 10) > 1024:
+        errors.append({"field": "limits.output_mb", "message": "output_mb cannot exceed 1024"})
     return errors
 
 
@@ -3036,6 +3126,8 @@ def run_sandbox_policy_test(store: Any, state: dict, body: dict) -> dict:
 
 
 def sandbox_policy_self_tests(policy: dict, test_run_id: str, checked_at: str) -> list[dict]:
+    stdio_policy = str(policy.get("process", {}).get("stdio_mcp", "per-server-consent")).lower()
+    mcp_expected = "DENY" if stdio_policy in {"never-start", "deny", "blocked"} else "REQUIRE_CONSENT"
     checks = [
         ("path.workspace_read", "路径策略", "工作区只读允许", "ALLOW_READ", sandbox_path_decision(policy, "read", REPO_ROOT / "README.md")),
         ("path.home_ssh_deny", "路径策略", "用户 SSH 目录拒绝", "DENY", sandbox_path_decision(policy, "read", Path.home() / ".ssh" / "id_rsa")),
@@ -3044,7 +3136,7 @@ def sandbox_policy_self_tests(policy: dict, test_run_id: str, checked_at: str) -
         ("env.secret_redaction", "环境策略", "敏感环境变量脱敏", "REDACT", sandbox_env_decision(policy, {"PATH": "safe", "HERMES_TOKEN": "secret-token", "Authorization": "Bearer token"})),
         ("network.metadata_deny", "网络策略", "云元数据地址阻断", "DENY", sandbox_network_decision(policy, "http://169.254.169.254/latest/meta-data")),
         ("process.subprocess_deny", "进程策略", "外部子进程默认拒绝", "DENY", sandbox_process_decision(policy, "powershell.exe -NoProfile Get-ChildItem")),
-        ("process.stdio_mcp_consent", "MCP 策略", "stdio MCP 需要逐项审批", "REQUIRE_CONSENT", sandbox_mcp_decision(policy, "stdio")),
+        ("process.stdio_mcp_consent", "MCP 策略", "stdio MCP 需要逐项审批或禁止启动", mcp_expected, sandbox_mcp_decision(policy, "stdio")),
     ]
     results: list[dict] = []
     for check_id, category, name, expected, decision in checks:

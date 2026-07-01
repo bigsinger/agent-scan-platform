@@ -931,6 +931,62 @@ def test_sandbox_policy_is_real_review_only_and_audited():
     assert "C:/Windows/System32/config" not in export_download.text
 
 
+def test_sandbox_policy_editable_controls_are_persisted_and_validated(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "sandbox-editable.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.put(
+        "/api/v1/sandbox-policy",
+        json={
+            "paths": {
+                "read": ["<workspace>/**", "<home>/.codex/**"],
+                "write": ["data/work/${job_id}/**", "data/artifacts/**"],
+                "deny": ["<home>/.ssh/**", "<home>/.gnupg/**"],
+            },
+            "env": {"inherit": ["PATH"], "deny_patterns": ["TOKEN", "SECRET", "PASSWORD", "AUTHORIZATION"]},
+            "network": {"default": "deny", "allow": ["internal.example"], "metadata_endpoints": ["169.254.169.254"]},
+            "process": {"subprocess": "deny-by-default", "stdio_mcp": "never-start", "max_parallel": 99},
+            "limits": {"timeout_sec": 99999, "memory_mb": 64, "output_mb": 99999},
+        },
+    )
+
+    assert response.status_code == 200
+    policy = response.json()["policy"]
+    assert policy["process"]["stdio_mcp"] == "never-start"
+    assert policy["process"]["max_parallel"] == 16
+    assert policy["limits"]["timeout_sec"] == 3600
+    assert policy["limits"]["memory_mb"] == 128
+    assert policy["limits"]["output_mb"] == 1024
+    assert store.get_record("sandbox_policy", "sandbox_default") is not None
+
+    test = client.post("/api/v1/sandbox-policy/test", json={})
+    assert test.status_code == 200
+    checks = {item["check_id"]: item for item in test.json()["test"]["tests"]}
+    assert checks["process.stdio_mcp_consent"]["expected"] == "DENY"
+    assert checks["process.stdio_mcp_consent"]["actual"] == "DENY"
+    assert test.json()["test"]["status"] == "PASS"
+
+    loaded = client.get("/api/v1/sandbox-policy")
+    assert loaded.status_code == 200
+    body = loaded.json()
+    assert body["recent_decisions"]
+    assert body["last_test"]["status"] == "PASS"
+    assert body["mutates_installed_agents"] is False
+
+    unsafe = client.put(
+        "/api/v1/sandbox-policy",
+        json={
+            "paths": {"read": ["<workspace>/**"], "write": ["data/work/${job_id}/**"], "deny": ["<home>/.ssh/**", "<home>/.gnupg/**"]},
+            "env": {"deny_patterns": ["TOKEN"]},
+            "network": {"default": "deny", "allow": ["*"]},
+            "process": {"subprocess": "deny-by-default", "stdio_mcp": "per-server-consent"},
+        },
+    )
+    assert unsafe.status_code == 422
+    assert "network.allow" in json.dumps(unsafe.json(), ensure_ascii=False)
+
+
 def test_module_settings_are_persisted_validated_exported_and_imported():
     loaded = client.get("/api/v1/settings")
     assert loaded.status_code == 200

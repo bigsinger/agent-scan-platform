@@ -117,6 +117,8 @@ data(){
       limits:{timeout_sec:600, memory_mb:2048, output_mb:10}
     }, initial.sandboxPolicy || {});
     initial.sandboxTestResult = initial.sandboxTestResult || {status:'未运行', tests:[]};
+    initial.sandboxPolicyDecisions = initial.sandboxPolicyDecisions || (initial.sandboxTestResult.tests || []);
+    initial.sandboxPolicyExport = null;
     initial.quickModes = (initial.quickModes || []).filter(mode => mode.id !== 'fixture');
     initial.backupRecords = initial.backupRecords || [];
     initial.backupDrillResult = null;
@@ -2287,6 +2289,17 @@ data(){
       if(['FAIL','FAILED','失败'].includes(status)) return 'critical';
       return 'gray';
     },
+    listToLines(value){
+      if(Array.isArray(value)) return value.join('\n');
+      if(value===undefined || value===null) return '';
+      return String(value);
+    },
+    setSandboxList(path, raw){
+      if(!Array.isArray(path) || path.length!==2) return;
+      const section=path[0], key=path[1];
+      if(!this.sandboxPolicy[section] || typeof this.sandboxPolicy[section] !== 'object') this.sandboxPolicy[section]={};
+      this.sandboxPolicy[section][key]=String(raw || '').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    },
     sandboxPolicyYaml(policy){
       const p=policy || this.sandboxPolicy || {};
       const paths=p.paths || {};
@@ -2326,6 +2339,10 @@ data(){
       try {
         const res=await this.apiGet('/api/v1/sandbox-policy');
         this.sandboxPolicy=res.policy || {};
+        this.sandboxPolicyDecisions=res.recent_decisions || [];
+        if(res.last_test && res.last_test.status && res.last_test.status !== 'NOT_RUN'){
+          this.sandboxTestResult=Object.assign({}, this.sandboxTestResult || {}, res.last_test, {tests:this.sandboxPolicyDecisions});
+        }
         this.toastMsg('沙箱策略已刷新：'+(this.sandboxPolicy.id || 'sandbox_default'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -2335,6 +2352,7 @@ data(){
       try {
         const res=await this.apiPut('/api/v1/sandbox-policy', this.sandboxPolicy || {});
         this.sandboxPolicy=res.policy || this.sandboxPolicy;
+        await this.refreshSandboxPolicy();
         this.toastMsg('沙箱策略已保存并审计：'+(this.sandboxPolicy.id || 'sandbox_default'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -2344,6 +2362,7 @@ data(){
       try {
         const res=await this.apiPut('/api/v1/sandbox-policy', {reset:true});
         this.sandboxPolicy=res.policy || {};
+        this.sandboxPolicyDecisions=[];
         this.toastMsg('已恢复本地只读默认策略');
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -2353,6 +2372,7 @@ data(){
       try {
         const res=await this.apiPost('/api/v1/sandbox-policy/test', {});
         this.sandboxTestResult=res.test || {status:'UNKNOWN', tests:[]};
+        this.sandboxPolicyDecisions=this.sandboxTestResult.tests || [];
         this.toastMsg('沙箱自测完成：'+this.sandboxTestResult.status+'，判定 '+((this.sandboxTestResult.tests||[]).length)+' 项');
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -2361,6 +2381,7 @@ data(){
       this.opsBusy=true; this.apiError='';
       try {
         const res=await this.apiGet('/api/v1/sandbox-policy/export');
+        this.sandboxPolicyExport=res;
         if(res.download) window.open(res.download, '_blank', 'noopener');
         this.toastMsg('沙箱策略已导出：'+(res.artifact&&res.artifact.id || '完成'));
       } catch (err) { this.apiError=this.describeError(err); }

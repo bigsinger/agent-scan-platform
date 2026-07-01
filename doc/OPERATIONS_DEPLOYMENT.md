@@ -730,8 +730,23 @@ Invoke-WebRequest `
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy
+$policyBody = @{
+  paths = @{
+    read = @("<workspace>/**", "<home>/.codex/**")
+    write = @('data/work/${job_id}/**', "data/artifacts/**")
+    deny = @("<home>/.ssh/**", "<home>/.gnupg/**")
+  }
+  env = @{ inherit = @("PATH"); deny_patterns = @("TOKEN", "SECRET", "PASSWORD", "AUTHORIZATION") }
+  network = @{ default = "deny"; allow = @("internal.example"); metadata_endpoints = @("169.254.169.254") }
+  process = @{ subprocess = "deny-by-default"; stdio_mcp = "never-start"; max_parallel = 2 }
+  limits = @{ timeout_sec = 600; memory_mb = 2048; output_mb = 10 }
+} | ConvertTo-Json -Depth 8
+Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8000/api/v1/sandbox-policy -Body $policyBody -ContentType "application/json"
 Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8000/api/v1/sandbox-policy -Body (@{ reset = $true } | ConvertTo-Json) -ContentType "application/json"
 $test = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sandbox-policy/test
+$test.test.tests | Where-Object check_id -eq "process.stdio_mcp_consent"
+$policyState = Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy
+$policyState.recent_decisions.Count
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($test.test.download)" -OutFile sandbox-policy-test.json
 $export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/sandbox-policy/export
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile sandbox-policy.json
@@ -740,9 +755,10 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile sandb
 沙箱策略交付建议：
 
 1. 把自测结果作为“进程级安全降级”证据，不宣称没有容器时具备强隔离。
-2. 检查 `network.default=deny`、`process.stdio_mcp=per-server-consent`、`process.subprocess=deny-by-default`。
+2. 检查 `network.default=deny`、`process.stdio_mcp=per-server-consent/never-start`、`process.subprocess=deny-by-default`。
 3. 自测 artifact 中不得出现原始敏感路径、Token、Authorization Header 或完整环境变量值。
-4. 企业如需真实运行时拦截，应由主平台或端点安全产品落地，本模块只输出策略、判定和审计证据。
+4. `GET /api/v1/sandbox-policy` 必须返回 `recent_decisions` 和 `last_test`，用于证明页面展示来自 SQLite 判定记录而非固定演示数据。
+5. 企业如需真实运行时拦截，应由主平台或端点安全产品落地，本模块只输出策略、判定和审计证据。
 
 任务生命周期运维操作只影响本系统任务记录、报告制品和审计事件，不会修改或终止已安装 Codex/Hermes：
 

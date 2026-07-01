@@ -254,7 +254,9 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($guard.download)" -OutFile passiv
 用途：
 
 - 查看本模块扫描执行的路径、环境变量、网络、进程和 stdio MCP 策略。
+- 在“策略编辑”中调整读/写/拒绝路径、环境变量脱敏模式、网络 Host allowlist、外部子进程策略、stdio MCP 策略和资源上限。
 - 运行本地策略自测，确认敏感路径、云元数据地址、外部子进程和 stdio MCP 默认不会被放行。
+- 查看最近 `policy_decision` 判定记录，核对每项期望值、实际判定和状态。
 - 导出 `agent-security-sandbox-policy@4.1` JSON，供企业评审或变更留档。
 
 安全边界：
@@ -268,9 +270,11 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($guard.download)" -OutFile passiv
 常用操作：
 
 - “运行逃逸自测”：生成 8 类策略判定，并返回可下载 JSON artifact。
-- “保存”：把当前策略写入 SQLite，并记录审计事件。
+- “保存策略”：把当前策略写入 SQLite，并记录审计事件。后端会强制 `network.default=deny/deny-by-default`、拒绝通配网络 allowlist、拒绝自动启动 stdio MCP、拒绝外部子进程放行，并把过大的资源上限归一到安全范围。
 - “恢复默认”：恢复本地只读默认策略。
 - “导出”：导出当前策略和最近判定项。
+
+`stdio_mcp=never-start` 是比逐 Server 审批更保守的策略；自测会把该模式期望值判定为 `DENY`，不会误报为失败。
 
 ## 4.3 Python 执行中心
 

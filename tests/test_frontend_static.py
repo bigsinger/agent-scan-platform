@@ -264,6 +264,29 @@ def test_discovery_run_ui_exposes_current_evidence_download():
     assert "x.change_status||'UNKNOWN'" in html
 
 
+def test_sandbox_policy_ui_has_editable_controls_and_runtime_decisions():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "策略编辑" in html
+    assert 'v-model="sandboxPolicy.network.default"' in html
+    assert 'v-model="sandboxPolicy.process.subprocess"' in html
+    assert 'v-model="sandboxPolicy.process.stdio_mcp"' in html
+    assert 'v-model.number="sandboxPolicy.process.max_parallel"' in html
+    assert 'v-model.number="sandboxPolicy.limits.timeout_sec"' in html
+    assert "setSandboxList(['paths','read']" in html
+    assert "setSandboxList(['paths','write']" in html
+    assert "setSandboxList(['paths','deny']" in html
+    assert "setSandboxList(['network','allow']" in html
+    assert "setSandboxList(['env','deny_patterns']" in html
+    assert "v-for=\"d in sandboxPolicyDecisions\"" in html
+    assert "sandboxPolicyExport&&sandboxPolicyExport.download" in html
+    assert "listToLines(value)" in app_js
+    assert "setSandboxList(path, raw)" in app_js
+    assert "this.sandboxPolicyDecisions=res.recent_decisions || []" in app_js
+    assert "this.sandboxPolicyDecisions=this.sandboxTestResult.tests || []" in app_js
+    assert "this.sandboxPolicyExport=res" in app_js
+
+
 def test_mcp_toxic_flow_ui_uses_persisted_flows():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
