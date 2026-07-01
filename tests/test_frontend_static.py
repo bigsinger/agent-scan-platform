@@ -162,3 +162,20 @@ def test_report_readiness_ui_is_api_backed():
     assert "reportReadinessRows()" in app_js
     assert "reportRenderingStatus()" in app_js
     assert "async refreshReportPreview" in app_js
+
+
+def test_rule_management_ui_uses_real_rule_state():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "<div class=\"metric-label\">基线</div><div class=\"metric-value\">84" not in html
+    assert "<div class=\"metric-label\">本地专项</div><div class=\"metric-value\">31" not in html
+    assert "<div class=\"metric-label\">产品专项</div><div class=\"metric-value\">67" not in html
+    assert "<div class=\"metric-label\">人工检查</div><div class=\"metric-value\">18" not in html
+    assert "人工签署</td><td><span class=\"badge medium\">待 1 人" not in html
+    assert "v-for=\"row in ruleGateRows\"" in html
+    assert "selectedRuleDefinition" in html
+    assert "ruleStats.total" in html
+    assert "selectRule(r)" in html
+    assert "ruleStats()" in app_js
+    assert "ruleGateRows()" in app_js
+    assert "selectRule(rule)" in app_js

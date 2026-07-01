@@ -931,6 +931,8 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/api/v1/rules/SECRET-KEY-001/publish
 ```
 
+规则库页面的统计卡和发布门禁来自当前 `/api/v1/rules` 结果、本地 `rule_catalog()` 回退和最近一次 `/api/v1/rules/{id}/test` 响应，不再展示原型固定的 84/31/67/18 数量。规则测试会写入本系统 `test_run`，标记 `safe_mode=local-deterministic` 和 `mutates_installed_agents=false`；测试过程只运行本地 deterministic analyzer，不启动 Codex/Hermes、不启动 stdio MCP，也不修改已安装 Agent。
+
 扫描器自测：
 
 ```powershell

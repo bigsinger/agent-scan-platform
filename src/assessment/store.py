@@ -60,6 +60,7 @@ RUNTIME_SEED_OBJECT_KEYS = {
     "selectedAttackPath",
     "selectedPolicyDraft",
     "selectedReport",
+    "selectedRule",
 }
 
 PROTOTYPE_RUNTIME_TABLES = [
