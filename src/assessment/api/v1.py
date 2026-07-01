@@ -490,6 +490,9 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path.startswith("/findings/") and path.endswith("/accept"):
         finding_id = path.split("/")[-2]
         result["finding"] = update_finding_status(store, state, finding_id, "已接受风险", body)
+    elif path.startswith("/findings/") and path.endswith("/false-positive"):
+        finding_id = path.split("/")[-2]
+        result["finding"] = mark_finding_false_positive(store, state, finding_id, body)
     elif path.startswith("/findings/") and path.endswith("/retest"):
         finding_id = path.split("/")[-2]
         result["retest"] = create_retest(store, state, finding_id, body)
@@ -3944,6 +3947,32 @@ def update_finding_status(store: Any, state: dict, finding_id: str, status: str,
     finding.update({"status": status, "accepted_reason": body.get("reason", ""), "updated_at": utc_now()})
     updated = store.upsert_record("finding", finding, status=status)
     merge_state_record(state, "findings", updated)
+    return updated
+
+
+def mark_finding_false_positive(store: Any, state: dict, finding_id: str, body: dict) -> dict:
+    finding = store.get_record("finding", finding_id) or find_item(state.get("findings", []), finding_id) or {"id": finding_id}
+    now = utc_now()
+    reason = str(body.get("reason") or body.get("false_positive_reason") or "本地人工标记误报候选")
+    finding.update(
+        {
+            "status": "误报待复核",
+            "false_positive": True,
+            "false_positive_reason": reason,
+            "resolution": "FALSE_POSITIVE_CANDIDATE",
+            "reviewed_at": now,
+            "updated_at": now,
+            "mutates_installed_agents": False,
+        }
+    )
+    updated = store.upsert_record("finding", finding, status="误报待复核")
+    merge_state_record(state, "findings", updated)
+    store.audit_event(
+        "finding.false_positive_candidate",
+        "finding",
+        finding_id,
+        {"reason": reason, "mutates_installed_agents": False},
+    )
     return updated
 
 

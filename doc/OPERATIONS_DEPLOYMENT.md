@@ -490,12 +490,18 @@ Invoke-RestMethod `
 
 Invoke-RestMethod `
   -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/false-positive `
+  -Body (@{ reason = "客户确认该路径为授权回归样本" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod `
+  -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/retest `
   -Body (@{ scope = "固化输入" } | ConvertTo-Json) `
   -ContentType "application/json"
 ```
 
-风险详情页的复现步骤、证据链、受影响组件、根因与整改、标准映射和历史均来自当前 Finding/Evidence 记录；没有可执行复现步骤时显示空状态，不注入示例 casepack 或固定证据 ID。企业验收时可用 `GET /api/v1/findings/<finding_id>/evidence` 与页面“证据链”逐项核对。
+风险详情页的复现步骤、证据链、受影响组件、根因与整改、标准映射和历史均来自当前 Finding/Evidence 记录；没有可执行复现步骤时显示空状态，不注入示例 casepack 或固定证据 ID。企业验收时可用 `GET /api/v1/findings/<finding_id>/evidence` 与页面“证据链”逐项核对。误报操作只把 Finding 标记为 `误报待复核` 并写入 `finding.false_positive_candidate` 审计事件，保留证据和报告链路，不删除数据、不修改已安装 Agent。
 
 复测对比运维验收：
 

@@ -178,6 +178,47 @@ def test_empty_runtime_state_does_not_expose_prototype_seed(monkeypatch, tmp_pat
     assert state["dashboardMetrics"]["p0_p1"] == 0
 
 
+def test_finding_false_positive_candidate_is_api_backed_and_audited(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "finding-false-positive.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    finding = store.upsert_record(
+        "finding",
+        {
+            "id": "finding-fp-contract",
+            "title": "误报候选合同测试",
+            "severity": "高危 P1",
+            "status": "待复核",
+            "rule": "CONTRACT-FP-001",
+        },
+        status="待复核",
+    )
+
+    response = client.post(
+        f"/api/v1/findings/{finding['id']}/false-positive",
+        json={"reason": "客户确认该路径为脱敏回归样本"},
+    )
+
+    assert response.status_code == 200
+    updated = response.json()["finding"]
+    assert updated["id"] == finding["id"]
+    assert updated["status"] == "误报待复核"
+    assert updated["false_positive"] is True
+    assert updated["false_positive_reason"] == "客户确认该路径为脱敏回归样本"
+    assert updated["resolution"] == "FALSE_POSITIVE_CANDIDATE"
+    assert updated["mutates_installed_agents"] is False
+    stored = store.get_record("finding", finding["id"])
+    assert stored["status"] == "误报待复核"
+    with store.connect() as conn:
+        audit_rows = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 5",
+            (finding["id"],),
+        ).fetchall()
+    audit_payload = json.dumps([dict(row) for row in audit_rows], ensure_ascii=False)
+    assert "finding.false_positive_candidate" in audit_payload
+    assert "mutates_installed_agents" in audit_payload
+
+
 def test_store_initialization_purges_legacy_prototype_seed_records(tmp_path):
     store = AssessmentStore(tmp_path / "legacy-seed.db")
     store.initialize()

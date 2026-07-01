@@ -525,9 +525,10 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 误报处理：
 
 1. 点击误报。
-2. 填写说明。
+2. 系统把 Finding 写为 `误报待复核`，保存 `false_positive_reason`、`reviewed_at` 和审计事件。
 3. 保留证据和审计记录。
 4. 后续规则调优时参考。
+5. 误报处理只修改本系统 SQLite 记录，不删除证据、不自动关闭风险、不修改 Codex/Hermes 或 MCP 配置。
 
 ## 8. 证据中心
 
@@ -758,6 +759,12 @@ Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/accept `
   -Body (@{ reason = "人工确认" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/findings/<finding_id>/false-positive `
+  -Body (@{ reason = "人工确认该命中为误报候选" } | ConvertTo-Json) `
   -ContentType "application/json"
 
 Invoke-RestMethod `

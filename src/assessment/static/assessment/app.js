@@ -749,7 +749,7 @@ data(){
       if(s==='已发布'||s==='PUBLISHED') return 'low';
       if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED'||s==='READONLY_GENERIC') return 'blue';
-      if(s==='等待审批'||s==='部分完成'||s==='WARN'||s==='NOT_RUN'||s==='未运行'||s==='NO_MATCH'||s==='DRAFT'||s==='草稿') return 'medium';
+      if(s==='等待审批'||s==='部分完成'||s==='误报待复核'||s==='WARN'||s==='NOT_RUN'||s==='未运行'||s==='NO_MATCH'||s==='DRAFT'||s==='草稿') return 'medium';
       if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE'||s==='REQUIRES_CONFIG'||s==='NEEDS_SELF_TEST'||s==='NOT_ASSERTED'||s==='待验证') return 'medium';
       if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED'||s==='MISSING'||s==='NOT_FOUND'||s==='MISSING_DOC'||s==='MISSING_API') return 'critical';
       return 'gray';
@@ -1442,6 +1442,16 @@ data(){
         const res=await this.apiPost('/api/v1/findings/'+encodeURIComponent(finding.id)+'/accept', {reason:'本地人工确认'});
         if(res.finding){ this.mergeRecords('findings', [res.finding]); this.selectedFinding=res.finding; }
         this.toastMsg('风险状态已写入：已接受风险');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async markFindingFalsePositive(finding){
+      if(!finding || !finding.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/findings/'+encodeURIComponent(finding.id)+'/false-positive', {reason:'本地人工标记误报候选'});
+        if(res.finding){ this.mergeRecords('findings', [res.finding]); this.selectedFinding=res.finding; }
+        this.toastMsg('误报候选已写入 SQLite，等待人工复核');
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },

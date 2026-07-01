@@ -141,6 +141,16 @@ def test_findings_export_ui_is_api_backed():
     assert "/api/v1/findings/export" in app_js
 
 
+def test_finding_false_positive_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "误报审批需人工理由，本轮未自动关闭风险" not in html
+    assert "@click=\"markFindingFalsePositive(selectedFinding)\"" in html
+    assert "async markFindingFalsePositive" in app_js
+    assert "'/api/v1/findings/'+encodeURIComponent(finding.id)+'/false-positive'" in app_js
+    assert "误报候选已写入 SQLite" in app_js
+
+
 def test_task_retry_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
