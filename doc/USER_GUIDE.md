@@ -662,6 +662,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($sync.sync.download)" -OutFile re
 - 风险 / 证据页签：按当前任务 `assessment_id`、Finding `evidence_ids` 和 Evidence `finding_id` 展示真实扫描结果，可直接进入风险详情、确认风险、创建复测、预览或下载脱敏证据。
 - 生成报告：基于指定任务生成 HTML/JSON 报告制品。
 
+任务列表底部“队列状态”和“恢复提示”来自当前 `task`、`scan_job`、`process_execution`、`mcp_consent`、`report` 与 `execution-supervisor` 状态，不再显示固定运行数、等待数、可用槽或固定恢复文案。无失败 Job、失败进程和可重试报告时显示真实空态。
+
 重试和取消都只影响本系统 SQLite 任务记录，不启动、不终止、不修改 Codex、Hermes、Claude Code、Cursor 或 stdio MCP Server。
 
 ## 10. API 使用示例

@@ -158,6 +158,45 @@ data(){
     queuedJobCount(){
       return (this.jobs || []).filter(j=>['QUEUED','WAITING_CONSENT','PENDING'].includes(j.status||j.state)).length;
     },
+    taskQueueSummary(){
+      const activeTasks=(this.tasks || []).filter(t=>this.isActiveTask(t));
+      const queuedTasks=(this.tasks || []).filter(t=>['QUEUED','PENDING','排队中','RETRY_QUEUED'].includes(t.status||t.state_code||t.stage)).length;
+      const waitingConsentTasks=(this.tasks || []).filter(t=>['WAITING_CONSENT','等待审批'].includes(t.status||t.state_code||t.stage)).length;
+      const slots=(this.supervisorStatus && this.supervisorStatus.slots) || {};
+      const max=Number(slots.max!=null ? slots.max : this.executionSlotMax) || 0;
+      const running=Number(slots.running!=null ? slots.running : Math.max(this.runningProcessCount, activeTasks.length)) || 0;
+      const available=Number(slots.available!=null ? slots.available : Math.max(0, max-running)) || 0;
+      return {
+        running,
+        waiting:this.queuedJobCount + queuedTasks,
+        waitingApproval:this.pendingConsentCount + waitingConsentTasks,
+        available,
+        max,
+        slotText:available+'/'+max
+      };
+    },
+    taskRecoverySummary(){
+      const failedStatuses=['FAILED','FAIL','ERROR','TIMEOUT','OOM','失败','超时'];
+      const failedJobs=(this.jobs || []).filter(j=>failedStatuses.some(s=>String(j.status||j.state||'').includes(s))).length;
+      const failedProcesses=(this.processes || []).filter(p=>failedStatuses.some(s=>String(p.status||'').includes(s))).length;
+      const reportRetries=(this.reports || []).filter(r=>failedStatuses.some(s=>String(r.status||'').includes(s)) || r.last_error).length;
+      const stopRequests=(this.processes || []).filter(p=>p.terminate_requested).length;
+      const total=failedJobs+failedProcesses+reportRetries+stopRequests;
+      const parts=[
+        failedJobs+' 个失败 Job',
+        failedProcesses+' 个失败进程',
+        reportRetries+' 个报告可重试',
+        stopRequests+' 个停止请求'
+      ];
+      return {
+        class:total ? 'amber' : 'green',
+        text:total ? '发现待处理项：'+parts.join('，')+'。' : '当前无待恢复 Job、失败进程或可重试报告。',
+        failedJobs,
+        failedProcesses,
+        reportRetries,
+        stopRequests
+      };
+    },
     timeoutProcessCount(){
       return (this.processes || []).filter(p=>String(p.status||'').includes('TIMEOUT')).length;
     },

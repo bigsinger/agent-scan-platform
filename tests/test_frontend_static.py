@@ -341,6 +341,22 @@ def test_task_retry_ui_is_api_backed():
     assert "'/api/v1/tasks/'+encodeURIComponent(task.id)+'/retry'" in app_js
 
 
+def test_task_queue_status_is_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "服务上次正常关闭。0 个 Job 需要恢复，1 个报告渲染任务可重试。" not in html
+    assert '<span class="muted small">运行</span><div class="kpi">2</div>' not in html
+    assert '<span class="muted small">等待</span><div class="kpi">3</div>' not in html
+    assert '<span class="muted small">可用槽</span><div class="kpi">0/2</div>' not in html
+    assert "{{taskQueueSummary.running}}" in html
+    assert "{{taskQueueSummary.waiting}}" in html
+    assert "{{taskQueueSummary.waitingApproval}}" in html
+    assert "{{taskQueueSummary.slotText}}" in html
+    assert "taskQueueSummary(){" in app_js
+    assert "taskRecoverySummary(){" in app_js
+    assert "当前无待恢复 Job、失败进程或可重试报告" in app_js
+
+
 def test_task_detail_findings_and_evidence_tabs_are_data_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
