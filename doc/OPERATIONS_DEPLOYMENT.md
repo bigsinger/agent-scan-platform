@@ -635,6 +635,8 @@ Invoke-WebRequest `
 
 攻击路径与策略草案运维操作只生成本系统 `attack_path`、`policy_draft`、`defense_recommendation` 和 JSON artifact，不会自动发布到运行时平台，也不会修改已安装 Agent：
 
+前端 P24 会直接使用当前 `attack_path.nodes`、`finding_ids`、`evidence_ids`、`mitigations` 和 `policy_draft.attack_path_id` 渲染链路图、节点表与策略草案列表。运维验收时可先通过 API 创建一条路径，再刷新 `/assessment/attack-paths`，确认页面节点、Finding、Evidence 和草案数量与接口返回一致；没有路径时应显示空态，而不是固定演示链路。
+
 ```powershell
 $path = Invoke-RestMethod `
   -Method Post `

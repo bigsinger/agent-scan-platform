@@ -574,6 +574,56 @@ data(){
     selectedTaskCleanupCalloutClass(){
       return ['callout', (this.selectedTaskCleanupArtifacts.length || this.selectedTaskErrorEvents.length) ? 'amber' : 'green'];
     },
+    attackPathNodeRows(){
+      const path=this.selectedAttackPath || {};
+      const rawNodes=Array.isArray(path.nodes) ? path.nodes : [];
+      const edges=Array.isArray(path.edges) ? path.edges : [];
+      const findingIds=Array.isArray(path.finding_ids) ? path.finding_ids.map(String) : [];
+      const evidenceIds=Array.isArray(path.evidence_ids) ? path.evidence_ids.map(String) : [];
+      const findings=this.findings || [];
+      return rawNodes.map((node, index) => {
+        const nodeObj=(node && typeof node==='object') ? node : {name:String(node || '')};
+        const edge=edges[index] || edges[index-1] || {};
+        const candidateFindingIds=[
+          nodeObj.finding_id,
+          nodeObj.findingId,
+          findingIds[index],
+          edge.from,
+          edge.to
+        ].map(v=>String(v || '')).filter(Boolean);
+        let finding= candidateFindingIds.length ? findings.find(f=>candidateFindingIds.includes(String(f.id || ''))) : null;
+        if(!finding && nodeObj.name) {
+          finding=findings.find(f=>String(f.component || f.target || f.title || '').includes(String(nodeObj.name)));
+        }
+        const findingId=String(nodeObj.finding_id || nodeObj.findingId || (finding && finding.id) || findingIds[index] || '');
+        const evidenceList=Array.isArray(nodeObj.evidence_ids) ? nodeObj.evidence_ids : [];
+        const findingEvidence=Array.isArray(finding && finding.evidence_ids) ? finding.evidence_ids : [];
+        const evidenceId=String(nodeObj.evidence_id || evidenceList[0] || evidenceIds[index] || findingEvidence[0] || '');
+        const label=nodeObj.label || nodeObj.name || nodeObj.component || (finding && (finding.component || finding.title)) || findingId || ('节点 '+(index+1));
+        const detail=nodeObj.detail || nodeObj.summary || (finding && (finding.rule || finding.rule_id || finding.source)) || '';
+        const type=nodeObj.type || (index===0 ? 'Entry' : (index===rawNodes.length-1 ? 'Impact' : 'Control'));
+        const risk=nodeObj.risk || nodeObj.severity || (finding && finding.severity) || path.risk || '待评估';
+        return {
+          key:String(nodeObj.id || findingId || label)+'-'+index,
+          index:index+1,
+          indexLabel:'N'+String(index+1).padStart(2,'0'),
+          label,
+          detail,
+          type,
+          findingId,
+          evidenceId,
+          risk,
+          riskClass:this.statusClass(risk)
+        };
+      });
+    },
+    selectedAttackPathPolicyDrafts(){
+      const path=this.selectedAttackPath || {};
+      const pathId=String(path.id || '');
+      if(!pathId) return this.policyDrafts || [];
+      const draftIds=new Set((path.policy_draft_ids || []).map(String));
+      return (this.policyDrafts || []).filter(draft => String(draft.attack_path_id || '')===pathId || draftIds.has(String(draft.id || '')));
+    },
     selectedRuleDefinition(){
       const rule=this.selectedRule || {};
       if(!rule.id) return '尚未选择规则。请先从规则列表选择一条本地规则。';

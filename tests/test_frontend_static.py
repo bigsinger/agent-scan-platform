@@ -202,6 +202,21 @@ def test_mcp_toxic_flow_ui_uses_persisted_flows():
     assert "已持久化为本地 Toxic Flow 记录" in html
 
 
+def test_attack_path_visualization_uses_runtime_nodes():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "attackPathNodeRows(){" in app_js
+    assert "selectedAttackPathPolicyDrafts(){" in app_js
+    assert "v-for=\"node in attackPathNodeRows\"" in html
+    assert "v-if=\"attackPathNodeRows.length\"" in html
+    assert "{{node.label}}" in html
+    assert "{{node.findingId||'未关联 Finding'}}" in html
+    assert "v-for=\"p in selectedAttackPathPolicyDrafts\"" in html
+    assert "{{selectedAttackPathPolicyDrafts.length}} drafts" in html
+    assert "外部文档<br><span" not in html
+    assert "Agent Planner<br><span" not in html
+
+
 def test_consent_bulk_decline_ui_is_api_backed():
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "async denyAllConsents" in app_js

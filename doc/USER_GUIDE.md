@@ -591,9 +591,11 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 页面能力：
 
 - “生成路径”会基于当前 SQLite 中的 Finding 和 Evidence 建立攻击路径草案。
+- 页面上的链路图、节点表和风险标签来自当前 `attack_path.nodes`、`finding_ids`、`evidence_ids` 和关联 Finding；没有扫描结果时展示空态，不再显示固定演示路径。
 - “确认路径”只记录人工确认状态和审计事件，不执行任何外部策略发布。
 - “生成策略草案”会创建 `policy_draft` 记录、脱敏 JSON artifact 和 `defense_recommendation`，用于交付评审或后续主平台审批。
 - 策略草案默认 `DRAFT`，`mutates_installed_agents=false`，不会自动修改 Codex、Hermes、Claude Code 或 MCP 配置。
+- 策略草案列表按当前攻击路径过滤；切换路径时只展示该路径关联的草案，避免不同任务的整改建议混在一起。
 
 常见策略草案包括：
 
