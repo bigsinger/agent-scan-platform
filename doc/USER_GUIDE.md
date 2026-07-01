@@ -660,6 +660,20 @@ $response.Content
 
 返回 `501 NOT_IMPLEMENTED` 表示该写接口还没有真实实现，系统没有执行任何动作。审计事件会保存脱敏后的请求摘要；不会再因为路径后缀是 `self-test`、`test`、`sync`、`publish`、`run-now` 等就返回固定成功结果。
 
+### 诊断场景
+
+```powershell
+$diag = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/diagnostics/scenario `
+  -Body (@{ scenario = "empty" } | ConvertTo-Json) `
+  -ContentType "application/json"
+$diag.scenario.status
+$diag.scenario.counts
+```
+
+诊断场景只读取本系统 SQLite、静态资源和规则目录，生成 `diagnostic-scenario` JSON artifact 并写入 `diagnostic_event`。`scenario="empty"` 只判断当前库是否为空；如果已有 Finding/Task/Evidence 会返回 `WARN`，不会再清空页面状态或删除数据。
+
 ### 快速扫描
 
 公开快速扫描模式只接受 `machine`、`path`、`mcp`。开发/回归样本仍可扫描，但必须像普通目录一样使用 `mode="path"` 并显式传入 `target_path`；`mode="fixture"` 会返回 422，避免企业验收误把测试样本当成产品能力。

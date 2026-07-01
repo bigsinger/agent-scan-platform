@@ -1071,6 +1071,30 @@ def test_capability_management_actions_are_persisted():
     assert client.get("/api/v1/completeness/export").json()["format"] == "json"
 
 
+def test_diagnostic_scenario_is_readonly_and_persisted(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "diagnostics.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    store.upsert_record("finding", {"id": "fnd_diag_keep", "title": "must remain"}, status="NEEDS_REVIEW")
+
+    response = client.post("/api/v1/diagnostics/scenario", json={"scenario": "empty"})
+
+    assert response.status_code == 200
+    scenario = response.json()["scenario"]
+    assert scenario["name"] == "empty"
+    assert scenario["status"] == "WARN"
+    assert scenario["mutates_installed_agents"] is False
+    assert scenario["counts"]["findings"] == 1
+    assert scenario["artifact"]["kind"] == "diagnostic-scenario"
+    assert store.get_record("finding", "fnd_diag_keep") is not None
+    assert store.get_record("diagnostic_event", scenario["id"]) is not None
+
+    artifact = client.get(scenario["download"])
+    assert artifact.status_code == 200
+    assert "agent-security-diagnostic-scenario@4.1" in artifact.text
+    assert "仅生成本地快照证据" in artifact.text
+
+
 def test_discovery_hit_asset_actions_are_persisted():
     discovery = client.post(
         "/api/v1/discovery-runs",

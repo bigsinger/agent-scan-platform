@@ -678,7 +678,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["self_test"] = agent_scan_self_test(store, state, body)
         result["compat"] = result["self_test"].get("compat")
     elif path == "/diagnostics/scenario":
-        result["scenario"] = apply_diagnostic_scenario(state, body)
+        result["scenario"] = run_diagnostic_scenario(store, state, body)
     elif method == "PATCH" and path.startswith("/findings/"):
         finding_id = path.split("/")[-1]
         result["finding"] = update_item(state.get("findings", []), finding_id, body)
@@ -6346,12 +6346,130 @@ def update_issue_mapping(store: Any, state: dict, code: str, body: dict) -> dict
     return updated
 
 
-def apply_diagnostic_scenario(state: dict, body: dict) -> dict:
-    scenario = str(body.get("scenario") or "normal")
-    state["diagnosticScenario"] = {"name": scenario, "applied_at": utc_now()}
+def run_diagnostic_scenario(store: Any, state: dict, body: dict) -> dict:
+    scenario = str(body.get("scenario") or "normal").strip() or "normal"
+    checked_at = utc_now()
+    run_id = new_id("diag")
+    counts = diagnostic_runtime_counts(store, state)
+    checks: list[dict] = []
+
+    db_status = store.database_status()
+    checks.append(
+        health_check(
+            "sqlite_status",
+            "PASS" if db_status.get("state") == "健康" else "FAIL",
+            "SQLite 状态",
+            f"{db_status.get('mode', 'UNKNOWN')} · {db_status.get('state', 'UNKNOWN')}",
+            {"file_bytes": db_status.get("file_bytes"), "tables": len(db_status.get("tables", []))},
+        )
+    )
+
+    static_assets = verify_static_assets()
+    checks.append(
+        health_check(
+            "static_assets",
+            "PASS" if all(item["exists"] and item["size"] > 0 for item in static_assets) else "FAIL",
+            "静态资源",
+            f"{sum(1 for item in static_assets if item['exists'])}/{len(static_assets)} 个文件可用",
+            {"assets": static_assets},
+        )
+    )
+
+    rules = rule_catalog()
+    checks.append(
+        health_check(
+            "rule_catalog",
+            "PASS" if rules else "FAIL",
+            "规则目录",
+            f"{len(rules)} 条本地规则可用",
+            {"rules": len(rules)},
+        )
+    )
+
+    runtime_total = sum(counts.values())
     if scenario == "empty":
-        state["findings"] = []
-    return state["diagnosticScenario"]
+        checks.append(
+            health_check(
+                "empty_state_observation",
+                "PASS" if runtime_total == 0 else "WARN",
+                "空态观察",
+                f"当前 SQLite 运行记录总数 {runtime_total}；诊断只观察，不清理数据",
+                {"counts": counts},
+            )
+        )
+    else:
+        checks.append(
+            health_check(
+                "runtime_observation",
+                "PASS",
+                "运行态观察",
+                f"当前 SQLite 运行记录总数 {runtime_total}",
+                {"counts": counts},
+            )
+        )
+
+    checks.append(
+        health_check(
+            "agent_safety_boundary",
+            "PASS",
+            "Agent 安全边界",
+            "诊断场景只读取本系统 SQLite、静态资源和规则目录，不启动或修改已安装 Agent",
+            {
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "agent_runtime_started": False,
+                "stdio_mcp_started": False,
+                "network_probe": "disabled",
+            },
+        )
+    )
+
+    status = aggregate_health_status(checks)
+    payload = {
+        "schema": "agent-security-diagnostic-scenario@4.1",
+        "id": run_id,
+        "name": scenario,
+        "status": status,
+        "checked_at": checked_at,
+        "checks": checks,
+        "counts": counts,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "side_effects": "artifact-and-audit-only",
+        "boundary": "诊断场景不再改写前端运行态或清空 Finding；仅生成本地快照证据。",
+    }
+    artifact = store.write_artifact(
+        "diagnostic-scenario",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"diagnostic_id": run_id, "scenario": scenario, "safe_mode": "local-readonly"},
+    )
+    payload["artifact"] = artifact
+    payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    store.upsert_record("diagnostic_event", payload, status=status)
+    store.audit_event("post.diagnostics.scenario", "diagnostic_event", run_id, {"scenario": scenario, "status": status, "artifact_id": artifact["id"]})
+    return payload
+
+
+def diagnostic_runtime_counts(store: Any, state: dict) -> dict:
+    tables = {
+        "agents": "agent_instance",
+        "discovery_hits": "discovery_hit",
+        "mcp_servers": "mcp_server",
+        "skills": "skill",
+        "tasks": "task",
+        "assessments": "assessment",
+        "findings": "finding",
+        "evidence": "evidence",
+        "reports": "report",
+        "integrations": "integration",
+    }
+    counts: dict[str, int] = {}
+    for key, table in tables.items():
+        records = store.list_records(table, limit=10_000)
+        counts[key] = len(records)
+    counts["state_only_jobs"] = len(state.get("jobs", []))
+    return counts
 
 
 def merge_state_record(state: dict, key: str, record: dict) -> None:

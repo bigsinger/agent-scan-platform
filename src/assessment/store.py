@@ -241,6 +241,7 @@ GENERIC_TABLES = [
     "integration",
     "integration_config",
     "integration_event",
+    "diagnostic_event",
     "database_backup",
     "backup_record",
     "third_party_component",

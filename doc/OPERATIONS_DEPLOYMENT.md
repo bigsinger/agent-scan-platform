@@ -104,6 +104,16 @@ $response.Content
 
 企业验收时，未知或暂未实现的写接口应返回 `501`，响应中包含 `NOT_IMPLEMENTED` 和 `mutates_installed_agents=false`。系统会把请求摘要脱敏后写入 `audit_event`，不会执行扫描、发布、启动、停止、同步或修改已安装 Agent 的动作。
 
+诊断场景只生成当前状态快照，不改写运行数据：
+
+```powershell
+$diag = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/diagnostics/scenario -Body (@{ scenario = "empty" } | ConvertTo-Json) -ContentType "application/json"
+$diag.scenario.status
+$diag.scenario.counts
+```
+
+`scenario=empty` 会检查 SQLite 中 Agent、Task、Finding、Evidence、Report 等记录数量；非空时返回 `WARN` 并写入 `diagnostic_event` 与 `diagnostic-scenario` artifact，不会清空 Finding 或前端状态。
+
 只读 Guard 检查：
 
 ```powershell
