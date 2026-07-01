@@ -1071,6 +1071,39 @@ def test_capability_management_actions_are_persisted():
     assert client.get("/api/v1/completeness/export").json()["format"] == "json"
 
 
+def test_licenses_export_builds_real_local_notice_artifact(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "licenses.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.get("/api/v1/licenses/export")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema"] == "agent-security-third-party-notices@4.1"
+    assert payload["format"] == "notice-json"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["download"].startswith("/api/v1/artifacts/")
+    assert payload["artifact"]["kind"] == "third-party-notices"
+    names = {item["name"].lower() for item in payload["items"]}
+    assert "vue" in names
+    assert "fastapi" in names
+    assert "uvicorn" in names
+    assert "snyk/agent-scan compatible bridge" in names
+    assert all(item["mutates_installed_agents"] is False for item in payload["items"])
+    assert store.list_records("third_party_component")
+
+    downloaded = client.get(payload["download"])
+    assert downloaded.status_code == 200
+    assert "agent-security-third-party-notices@4.1" in downloaded.text
+    assert '"mutates_installed_agents": false' in downloaded.text
+
+    notice = client.get("/api/v1/third-party/third_party_vue/notice")
+    assert notice.status_code == 200
+    assert notice.json()["mutates_installed_agents"] is False
+    assert notice.json()["component"]["license"] == "MIT"
+
+
 def test_diagnostic_scenario_is_readonly_and_persisted(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "diagnostics.db")
     store.initialize()

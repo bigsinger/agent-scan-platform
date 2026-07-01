@@ -802,6 +802,18 @@ python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8765
 - `defense_recommendation`：配置变化、stdio MCP 审批等防御建议。
 - `artifact`：`passive-guard-check` JSON 证据快照，可用于企业 POC 留痕。
 
+第三方与许可证导出相关数据落在：
+
+- `third_party_component`：由 `pyproject.toml`、`THIRD_PARTY_NOTICES.md`、本地 vendor manifest 和 agent-scan 兼容桥接哈希生成的组件清单。
+- `artifact`：`third-party-notices` JSON 证据快照，包含 source file 哈希、NOTICE 摘要、许可证元数据和 `mutates_installed_agents=false` 边界声明。
+
+验收命令：
+
+```powershell
+$licenses = Invoke-RestMethod http://127.0.0.1:8000/api/v1/licenses/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($licenses.download)" -OutFile third-party-notices.json
+```
+
 ## 14. 与外部项目的参考关系
 
 实现参考了两个公开项目的产品边界和交付经验：

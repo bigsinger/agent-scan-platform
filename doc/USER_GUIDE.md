@@ -1005,6 +1005,16 @@ Invoke-RestMethod `
 
 实现完整性矩阵页面来自 `/api/v1/completeness` 的实时摘要和行数据：页面/详情数量来自 V4.1 契约行，API 数量来自当前注入的 API 契约，SQLite 表数来自 `/api/v1/sqlite/status`，规则数来自本地 `rule_catalog()`。每行的 `Audit` 会检查 `doc/agent_security_assessment_v4_1_full` 中对应 prototype/spec 文件是否存在，`Contract` 会检查页面声明的 API 是否登记在契约中；没有真实自动化断言的 `E2E` 会显示 `NOT_ASSERTED`，不会再用固定勾选或“0 缺口”冒充验收结论。
 
+第三方与许可证清单：
+
+```powershell
+$licenses = Invoke-RestMethod http://127.0.0.1:8000/api/v1/licenses/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($licenses.download)" -OutFile third-party-notices.json
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/third-party/third_party_vue/notice
+```
+
+许可证导出会读取当前仓库的 `pyproject.toml`、`THIRD_PARTY_NOTICES.md`、`src/assessment/static/vendor/vendor-manifest.json` 和 agent-scan 本地兼容桥接哈希，写入 `third_party_component`，并生成 `third-party-notices` JSON artifact。该操作只读取本仓库文件并写入本系统 SQLite/artifact，不扫描或修改已安装 Codex/Hermes。
+
 扫描器自测：
 
 ```powershell

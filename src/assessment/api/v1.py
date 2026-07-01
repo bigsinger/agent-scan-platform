@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import importlib.metadata as importlib_metadata
 import io
 import json
 import os
 import re
 import sqlite3
+import tomllib
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from pathlib import Path
@@ -257,11 +259,14 @@ async def report_download(id: str) -> Any:
 
 @router.get("/third-party/{id}/notice")
 async def third_party_notice(id: str) -> dict:
-    state = get_store().get_state()
-    item = find_item(state.get("licenses", []), id)
+    store = get_store()
+    state = store.get_state()
+    item = store.get_record("third_party_component", id) or find_item(license_inventory(store, state), id)
     return {
         "component": item or {"name": id},
-        "notice": "本地 NOTICE 已登记。Vue 使用 MIT License；snyk/agent-scan 使用 Apache-2.0。",
+        "notice": item.get("notice", "") if item else "本地 NOTICE 未找到对应组件；请先执行 /api/v1/licenses/export 生成当前清单。",
+        "source": "THIRD_PARTY_NOTICES.md",
+        "mutates_installed_agents": False,
     }
 
 
@@ -273,13 +278,202 @@ async def completeness_export() -> dict:
 
 @router.get("/licenses/export")
 async def licenses_export() -> dict:
-    state = get_store().get_state()
-    return {
+    store = get_store()
+    state = store.get_state()
+    items = license_inventory(store, state)
+    notices_path = REPO_ROOT / "THIRD_PARTY_NOTICES.md"
+    notice_text = notices_path.read_text(encoding="utf-8") if notices_path.exists() else ""
+    payload = {
+        "schema": "agent-security-third-party-notices@4.1",
         "format": "notice-json",
-        "items": combine_items(get_store().list_records("third_party_component"), state.get("licenses", [])),
+        "items": items,
         "notices": "THIRD_PARTY_NOTICES.md",
         "exported_at": utc_now(),
+        "source_files": license_source_files(),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
     }
+    if notice_text:
+        payload["notice_sha256"] = file_digest(notices_path)
+        payload["notice_excerpt"] = notice_text[:2000]
+    artifact = store.write_artifact(
+        "third-party-notices",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"safe_mode": "local-readonly", "component_count": len(items)},
+    )
+    store.audit_event("get.licenses.export", "artifact", artifact["id"], {"items": len(items), "safe_mode": "local-readonly"})
+    payload["artifact"] = artifact
+    payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    return payload
+
+
+def license_inventory(store: Any, state: dict) -> list[dict]:
+    generated: list[dict] = []
+    notices_path = REPO_ROOT / "THIRD_PARTY_NOTICES.md"
+    notice_sha = file_digest(notices_path) if notices_path.exists() else ""
+
+    vendor_manifest = load_vendor_manifest()
+    for filename, item in vendor_manifest.items():
+        component = {
+            "id": stable_component_id(str(item.get("name") or filename)),
+            "name": str(item.get("name") or filename),
+            "version": str(item.get("version") or "vendored"),
+            "license": str(item.get("license") or "UNKNOWN"),
+            "purpose": str(item.get("usage") or "本地静态资源"),
+            "modified": "未修改" if "prototype" in str(item.get("source") or "").lower() else "本地 vendored",
+            "hash": str(item.get("sha256") or ""),
+            "source": str(item.get("source") or filename),
+            "source_file": f"src/assessment/static/vendor/{filename}",
+            "notice": f"{item.get('name') or filename} 使用 {item.get('license') or 'UNKNOWN'}，详见 THIRD_PARTY_NOTICES.md。",
+            "notice_sha256": notice_sha,
+            "status": "合规" if item.get("license") else "需复核",
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+        generated.append(component)
+
+    for dependency in pyproject_dependencies():
+        generated.append(component_from_python_dependency(dependency, notice_sha))
+
+    bridge_hash = agent_scan_bridge_hash()
+    generated.append(
+        {
+            "id": "third_party_snyk_agent_scan_bridge",
+            "name": "snyk/agent-scan compatible bridge",
+            "version": "0.5.12-compatible",
+            "license": "Apache-2.0",
+            "purpose": "Agent/MCP/Skill 发现与本地规则映射参考边界",
+            "modified": "本仓库实现本地兼容桥接；不复制上游源码，不启用云 API",
+            "hash": bridge_hash.get("sha256", ""),
+            "source": "https://github.com/snyk/agent-scan",
+            "source_file": "src/assessment/api/v1.py; src/assessment/scanning/*",
+            "notice": "仅作为 Apache-2.0 项目兼容参考和 Issue Code 映射；当前交付以本地规则实现为准。",
+            "notice_sha256": notice_sha,
+            "status": "合规",
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+    )
+
+    merged = combine_items(generated, combine_items(store.list_records("third_party_component"), state.get("licenses", [])))
+    for component in generated:
+        store.upsert_record("third_party_component", component, status=str(component.get("status") or "ACTIVE"))
+    return merged
+
+
+def load_vendor_manifest() -> dict:
+    manifest = REPO_ROOT / "src" / "assessment" / "static" / "vendor" / "vendor-manifest.json"
+    if not manifest.exists():
+        return {}
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def pyproject_dependencies() -> list[str]:
+    pyproject = REPO_ROOT / "pyproject.toml"
+    if not pyproject.exists():
+        return []
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    dependencies = data.get("project", {}).get("dependencies", [])
+    return [str(item) for item in dependencies if item]
+
+
+def component_from_python_dependency(requirement: str, notice_sha: str) -> dict:
+    package_name = dependency_name(requirement)
+    metadata = package_metadata(package_name)
+    version = metadata.get("version") or version_from_requirement(requirement)
+    license_name = metadata.get("license") or "UNKNOWN"
+    status = "合规" if license_name != "UNKNOWN" else "需复核"
+    return {
+        "id": stable_component_id(package_name),
+        "name": package_name,
+        "version": version or "未安装",
+        "license": license_name,
+        "purpose": "Python runtime dependency",
+        "modified": "未修改；由本地 Python 环境或下游锁文件解析",
+        "hash": stable_hash(requirement + "|" + version + "|" + license_name, 32),
+        "source": metadata.get("home_page") or "pyproject.toml",
+        "source_file": "pyproject.toml",
+        "notice": f"{package_name} 来自 pyproject.toml，许可证元数据：{license_name}。",
+        "notice_sha256": notice_sha,
+        "status": status,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+
+
+def dependency_name(requirement: str) -> str:
+    raw = requirement.split(";", 1)[0].strip()
+    match = re.match(r"([A-Za-z0-9_.-]+)", raw)
+    return (match.group(1) if match else raw).lower()
+
+
+def version_from_requirement(requirement: str) -> str:
+    match = re.search(r"(>=|==|~=|<=|>|<)\s*([A-Za-z0-9_.!*+-]+)", requirement)
+    return match.group(2) if match else ""
+
+
+def package_metadata(package_name: str) -> dict:
+    try:
+        metadata = importlib_metadata.metadata(package_name)
+        version = importlib_metadata.version(package_name)
+    except importlib_metadata.PackageNotFoundError:
+        return {}
+    license_name = metadata.get("License-Expression") or metadata.get("License") or license_from_classifiers(metadata.get_all("Classifier") or [])
+    return {
+        "version": version,
+        "license": normalize_license_value(license_name),
+        "home_page": metadata.get("Home-page") or metadata.get("Project-URL") or "",
+    }
+
+
+def license_from_classifiers(classifiers: list[str]) -> str:
+    for classifier in classifiers:
+        if classifier.startswith("License ::"):
+            return classifier.split("::")[-1].strip()
+    return ""
+
+
+def normalize_license_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    if lower in {"unknown", "dynamic"}:
+        return "UNKNOWN"
+    return text
+
+
+def stable_component_id(name: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "component"
+    return f"third_party_{normalized}"
+
+
+def license_source_files() -> list[dict]:
+    files = [
+        REPO_ROOT / "pyproject.toml",
+        REPO_ROOT / "THIRD_PARTY_NOTICES.md",
+        REPO_ROOT / "src" / "assessment" / "static" / "vendor" / "vendor-manifest.json",
+    ]
+    sources = []
+    for path in files:
+        exists = path.exists()
+        sources.append(
+            {
+                "path": str(path.relative_to(REPO_ROOT)).replace("\\", "/"),
+                "exists": exists,
+                "sha256": file_digest(path) if exists else "",
+                "size": path.stat().st_size if exists else 0,
+            }
+        )
+    return sources
 
 
 @router.get("/evidence/export")
