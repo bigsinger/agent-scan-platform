@@ -138,18 +138,27 @@ def test_agent_scan_compat_ui_is_api_backed():
     assert "专用 Discoverer" not in html
     assert "Cursor/VSCode/Windsurf/Kiro" not in html
     assert "<td>✓</td>" not in html
+    assert "<td>E001</td><td>MCP-PI-001</td><td>Tool Description Injection</td>" not in html
+    assert "<td>E002</td><td>MCP-TS-001</td><td>Cross-server Reference</td>" not in html
+    assert "W015~W020" not in html
+    assert "映射 E001/E004/W019/DM-05" not in html
     assert 'data-testid="agent-scan-self-test"' in html
     assert "@click=\"refreshAgentScanCompat()\"" in html
     assert "@click=\"runAgentScanSelfTest\"" in html
     assert "agentScanSelfTestResult" in html
+    assert "agentScanLocalRuleRows()" in app_js
+    assert "agentScanIssueCodesText()" in app_js
+    assert "agentScanIssues=issues.items || []" in app_js
     assert "v-for=\"row in agentScanDiscoveryRows\"" in html
     assert "v-for=\"col in agentScanDiscoveryColumns\"" in html
+    assert "v-for=\"row in agentScanLocalRuleRows\"" in html
     assert "async refreshAgentScanCompat" in app_js
     assert "async runAgentScanSelfTest" in app_js
     assert "agentScanDiscoveryRows()" in app_js
     assert "agentScanDiscoveryColumns()" in app_js
     assert "discovery_coverage" in app_js
     assert "/api/v1/agent-scan/self-test" in app_js
+    assert "/api/v1/agent-scan/issues?page_size=200" in app_js
 
 
 def test_license_update_check_ui_is_runtime_backed():

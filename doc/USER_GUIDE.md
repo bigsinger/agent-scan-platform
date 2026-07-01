@@ -361,6 +361,8 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/issues
 
 agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.discovery_coverage`。该数据由当前运行态适配器目录派生，读取 `agent_instance`、`discovery_hit`、`mcp_server`、`skill` 和最近适配器自测记录；没有证据时显示 `NOT_FOUND` 或 `NOT_RUN`，不会再展示固定勾选、固定“专用 Discoverer”或固定 Cursor/VSCode/Windsurf/Kiro 覆盖行。
 
+“本地分析替代”和“补丁与漂移”的 Issue 映射来自 `/api/v1/agent-scan/issues`，字段包括 `code`、`local_rule`、`analyzer`、`severity`、`status` 和 `mutates_installed_agents=false`。页面不得再使用固定 `E001/E002/W015~W020` 原型表作为兼容证据。
+
 ## 5. MCP 启动审批
 
 位置：

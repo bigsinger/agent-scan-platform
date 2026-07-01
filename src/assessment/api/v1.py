@@ -1959,11 +1959,27 @@ def default_issue_mappings() -> list[dict]:
 
 def issue_mappings_for_store(store: Any, state: dict) -> list[dict]:
     state_and_defaults = combine_items(state.get("issueMappings", []), default_issue_mappings())
-    return combine_items(store.list_records("issue_mapping"), state_and_defaults)
+    return [decorate_issue_mapping(item) for item in combine_items(store.list_records("issue_mapping"), state_and_defaults)]
 
 
 def issue_mappings(state: dict) -> list[dict]:
     return issue_mappings_for_store(get_store(), state)
+
+
+def decorate_issue_mapping(mapping: dict) -> dict:
+    item = dict(mapping)
+    rule_id = str(item.get("rule") or item.get("local_rule") or "")
+    local_rule = find_item(rule_catalog(), rule_id) if rule_id else None
+    item.setdefault("code", item.get("id"))
+    item.setdefault("rule", rule_id)
+    item.setdefault("local_rule", rule_id)
+    item.setdefault("analyzer", (local_rule or {}).get("name") or (local_rule or {}).get("title") or (local_rule or {}).get("analyzer") or rule_id or "未绑定")
+    item.setdefault("dimension", (local_rule or {}).get("dimension") or (local_rule or {}).get("category") or "本地规则")
+    item.setdefault("severity", (local_rule or {}).get("severity") or "待复核")
+    item.setdefault("status", "ACTIVE")
+    item.setdefault("source", "agent-scan")
+    item["mutates_installed_agents"] = False
+    return item
 
 
 def agent_scan_bridge_hash() -> dict:

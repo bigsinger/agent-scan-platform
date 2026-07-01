@@ -123,6 +123,7 @@ data(){
     initial.adapterSelfTestResult = null;
     initial.agentScanCompat = initial.agentScanCompat || {version:'0.5.12-compatible', source_state:'LOCAL_BRIDGE_ONLY', compatibility:{status:'NOT_RUN', passed:0, warnings:0, failed:0, total:0}};
     initial.agentScanSelfTestResult = null;
+    initial.agentScanIssues = initial.agentScanIssues || [];
     initial.completenessSummary = initial.completenessSummary || {};
     initial.selectedProfile = initial.selectedProfile || (initial.profiles && initial.profiles[0]) || {};
     initial.profileValidation = null;
@@ -780,6 +781,18 @@ data(){
         });
         return normalized;
       });
+    },
+    agentScanLocalRuleRows(){
+      return (this.agentScanIssues || []).map(item => ({
+        code:item.code || item.id,
+        local_rule:item.local_rule || item.rule || '-',
+        analyzer:item.analyzer || item.name || item.dimension || '-',
+        severity:item.severity || '-',
+        status:item.status || 'ACTIVE'
+      }));
+    },
+    agentScanIssueCodesText(){
+      return this.agentScanLocalRuleRows.map(row => row.code).filter(Boolean).join(' / ') || '未读取';
     },
     completenessStats(){
       const rows=this.completeness || [];
@@ -1521,8 +1534,12 @@ data(){
       const silent=options && options.silent;
       if(!silent){ this.opsBusy=true; this.apiError=''; }
       try {
-        const res=await this.apiGet('/api/v1/agent-scan/compat');
+        const [res, issues]=await Promise.all([
+          this.apiGet('/api/v1/agent-scan/compat'),
+          this.apiGet('/api/v1/agent-scan/issues?page_size=200')
+        ]);
         this.agentScanCompat=res || {};
+        this.agentScanIssues=issues.items || [];
         if(!silent) this.toastMsg('本地桥接验证：'+(this.agentScanCompat.source_state || 'READY'));
       } catch (err) {
         if(!silent) this.apiError=this.describeError(err);
@@ -1536,6 +1553,8 @@ data(){
         const res=await this.apiPost('/api/v1/agent-scan/self-test', {});
         this.agentScanSelfTestResult=res.self_test || {};
         if(res.compat) this.agentScanCompat=res.compat;
+        const issues=await this.apiGet('/api/v1/agent-scan/issues?page_size=200');
+        this.agentScanIssues=issues.items || [];
         this.toastMsg('agent-scan 兼容自测：'+(this.agentScanSelfTestResult.status || 'DONE'));
       } catch (err) {
         this.apiError=this.describeError(err);

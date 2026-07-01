@@ -178,10 +178,12 @@ agent-scan 兼容中心自测：
 ```powershell
 $status = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/status
 $compat = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/compat
+$issues = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/issues
 $patches = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/patches
 $selfTest = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agent-scan/self-test
 
 $status.status
+$issues.items | Select-Object code,local_rule,analyzer,status,mutates_installed_agents
 $patches.items | Select-Object id,status,mutates_installed_agents
 $selfTest.self_test.status
 $selfTest.self_test.issue_codes.supported
@@ -191,6 +193,8 @@ $selfTest.self_test.download
 `status` 与 `patches` 只读取本地桥接文件哈希、规则目录、Issue 映射和最近自测记录；自测未运行时状态为 `NEEDS_SELF_TEST` / `NOT_RUN`。默认自测读取本地兼容桥接源码、当前机器 Agent/MCP/Skill 发现证据、SQLite/artifact 写入和云连接边界；不会把仓库样本路径当作企业验收目标。CI 需要固定样本时，可显式调用 `POST /api/v1/agent-scan/self-test` 并传入 `{"sample_path":"tests\\fixtures\\sample_agent_project"}`，此时 `issue_codes.matched` 才表示 E001、E004、W019、DM-05 等关键兼容码的样本命中。它不会访问 Snyk 云 API，不需要 Token，不启动已安装 Agent 或 stdio MCP Server，不修改 Codex/Hermes/Claude Code/OpenClaw 配置。
 
 `compat.discovery_coverage` 由当前 `GET /api/v1/adapters` 的运行态适配器目录派生，复用 SQLite 中的发现、Agent、MCP、Skill 与最近适配器自测证据。没有证据时必须显示 `NOT_FOUND` 或 `NOT_RUN`；不得用固定勾选、固定“专用 Discoverer”或固定 IDE 家族覆盖行作为企业验收依据。
+
+P10 “本地分析替代”和“补丁与漂移”的兼容码表必须来自 `$issues.items`，不得使用固定 `E001/E002/W015~W020` 原型表；每条映射都应带 `mutates_installed_agents=false`。
 
 测评模板校验：
 

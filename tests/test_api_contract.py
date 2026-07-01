@@ -483,6 +483,14 @@ def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_pa
     assert all({"discoverer", "extension", "global_config", "project_config", "mcp", "skills"} <= set(row["cells"]) for row in coverage)
     assert "Cursor/VSCode/Windsurf/Kiro" not in json.dumps(coverage, ensure_ascii=False)
     assert compat_before["discovery_coverage_summary"]["agents"] == len(coverage)
+    issues_before = client.get("/api/v1/agent-scan/issues")
+    assert issues_before.status_code == 200
+    issue_items = issues_before.json()["items"]
+    assert {"E001", "E004", "W019", "DM-05"}.issubset({item["code"] for item in issue_items})
+    e001 = next(item for item in issue_items if item["code"] == "E001")
+    assert e001["local_rule"] == "MCP-PI-001"
+    assert e001["analyzer"]
+    assert e001["mutates_installed_agents"] is False
 
     response = client.post("/api/v1/agent-scan/self-test", json={})
     assert response.status_code == 200
