@@ -443,6 +443,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Bo
 
 回归样本扫描：
 
+回归样本不再作为 `fixture` 模式暴露。运维或 CI 要扫描样本时，必须通过显式 `path` 目标触发，与真实目录扫描走同一条本地只读链路。
+
 ```powershell
 $body = @{
   mode = "path"

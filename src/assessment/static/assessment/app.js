@@ -1164,7 +1164,8 @@ data(){
       try {
         const res = await this.apiPost('/api/v1/quick-scans', this.quickPayload());
         this.mergeScanResponse(res);
-        const t = res.assessment || Object.assign({}, this.tasks[0], {id:'asm_quick_'+Date.now(), name:'快速扫描 · '+this.quickMode, target:'本机/显式目标', progress:3, status:'运行中', stage:'PRECHECK', critical:0, high:0});
+        const t = res.assessment;
+        if(!t || !t.id) throw new Error('快速扫描未返回真实任务记录');
         this.mergeRecords('tasks', [t]); this.selectedTask=t; this.go('task-detail'); this.toastMsg('快速扫描已完成本地只读分析');
       } catch (err) { this.apiError = this.describeError(err); }
       finally { this.quickBusy=false; }

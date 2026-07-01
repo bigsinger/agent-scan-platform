@@ -660,6 +660,8 @@ $response.Content
 
 ### 快速扫描
 
+公开快速扫描模式只接受 `machine`、`path`、`mcp`。开发/回归样本仍可扫描，但必须像普通目录一样使用 `mode="path"` 并显式传入 `target_path`；`mode="fixture"` 会返回 422，避免企业验收误把测试样本当成产品能力。
+
 ```powershell
 $body = @{
   mode = "machine"

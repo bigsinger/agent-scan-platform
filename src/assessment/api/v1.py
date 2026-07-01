@@ -25,6 +25,7 @@ from ..store import DATA_DIR, REPO_ROOT, file_sha256, get_store, new_id, utc_now
 
 
 router = APIRouter(prefix="/api/v1", tags=["assessment"])
+PUBLIC_QUICK_SCAN_MODES = {"machine", "path", "mcp"}
 
 
 LIST_KEYS = {
@@ -392,11 +393,31 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     result: dict[str, Any] = {"ok": True, "route": path, "method": method, "received": body}
 
     if path == "/quick-scans/precheck":
-        result["precheck"] = LocalScanEngine(store).precheck_quick_scan(body)
+        validate_public_quick_scan_mode(body)
+        try:
+            result["precheck"] = LocalScanEngine(store).precheck_quick_scan(body)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "quick scan validation failed",
+                    "validation_errors": [{"field": "mode", "message": str(exc)}],
+                },
+            ) from exc
         result["audit_event"] = store.audit_event(path_action(method, path), "quick_scan", "precheck", {"body": body})
         return result
     if path == "/quick-scans":
-        scan = LocalScanEngine(store).run_quick_scan(body)
+        validate_public_quick_scan_mode(body)
+        try:
+            scan = LocalScanEngine(store).run_quick_scan(body)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "quick scan validation failed",
+                    "validation_errors": [{"field": "mode", "message": str(exc)}],
+                },
+            ) from exc
         result.update(scan_payload(scan))
         result["audit_event"] = store.audit_event(path_action(method, path), "assessment", scan.assessment["id"], {"body": body})
         return result
@@ -655,6 +676,23 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     store.save_state(state)
     result["audit_event"] = store.audit_event(path_action(method, path), "api_route", path, {"body": body})
     return result
+
+
+def validate_public_quick_scan_mode(body: dict) -> None:
+    mode = str((body or {}).get("mode") or "path").strip().lower()
+    if mode not in PUBLIC_QUICK_SCAN_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "quick scan validation failed",
+                "validation_errors": [
+                    {
+                        "field": "mode",
+                        "message": "快速扫描只支持 machine、path、mcp；开发回归样本请使用 mode=path 并显式传入 target_path。",
+                    }
+                ],
+            },
+        )
 
 
 def unsupported_write_operation(store: Any, method: str, path: str, body: dict) -> None:

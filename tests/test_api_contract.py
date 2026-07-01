@@ -444,13 +444,30 @@ def test_codex_discovery_accepts_windowsapps_resource_shim(monkeypatch, tmp_path
 
 
 def test_write_api_updates_state_and_audit():
-    response = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50})
+    response = client.post(
+        "/api/v1/quick-scans",
+        json={"mode": "path", "target_path": "tests/fixtures/sample_agent_project", "max_files": 50},
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
     assert payload["assessment"]["status"] in {"已完成", "部分完成"}
     assert payload["report"]["status"] == "READY"
     assert payload["audit_event"]["action"] == "post.quick-scans"
+
+
+def test_quick_scan_rejects_fixture_mode_as_product_api():
+    response = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50})
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["message"] == "quick scan validation failed"
+    assert error["validation_errors"][0]["field"] == "mode"
+    assert "mode=path" in error["validation_errors"][0]["message"]
+
+    precheck = client.post("/api/v1/quick-scans/precheck", json={"mode": "fixture", "max_files": 50})
+    assert precheck.status_code == 422
+    assert precheck.json()["error"]["validation_errors"][0]["field"] == "mode"
 
 
 def test_database_maintenance_endpoints():
@@ -713,7 +730,10 @@ def test_execution_logs_and_terminate_are_local_only_and_audited(monkeypatch, tm
 
 
 def test_report_evidence_and_risk_closure_actions():
-    scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50}).json()
+    scan = client.post(
+        "/api/v1/quick-scans",
+        json={"mode": "path", "target_path": "tests/fixtures/sample_agent_project", "max_files": 50},
+    ).json()
     report = client.post("/api/v1/reports", json={"assessment_id": scan["assessment"]["id"], "type": "Standard"}).json()["report"]
     assert report["status"] == "READY"
     preview = client.get(f"/api/v1/reports/{report['id']}")
@@ -793,7 +813,10 @@ def test_report_evidence_and_risk_closure_actions():
 
 
 def test_attack_path_policy_drafts_are_review_only_artifacts():
-    scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50}).json()
+    scan = client.post(
+        "/api/v1/quick-scans",
+        json={"mode": "path", "target_path": "tests/fixtures/sample_agent_project", "max_files": 50},
+    ).json()
     finding_ids = [finding["id"] for finding in scan["findings"][:3]]
     built = client.post("/api/v1/attack-paths/build", json={"finding_ids": finding_ids, "name": "Contract Attack Path"})
     assert built.status_code == 200
@@ -999,7 +1022,10 @@ def test_task_lifecycle_actions_are_persisted():
     assert draft.json()["draft"]["status"] == "DRAFT"
     assert draft.json()["draft"]["stage"] == "DRAFT"
 
-    scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 30}).json()
+    scan = client.post(
+        "/api/v1/quick-scans",
+        json={"mode": "path", "target_path": "tests/fixtures/sample_agent_project", "max_files": 30},
+    ).json()
     task_id = scan["assessment"]["id"]
     events = client.get(f"/api/v1/tasks/{task_id}/events")
     assert events.status_code == 200

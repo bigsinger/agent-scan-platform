@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Any
 
 
+ALLOWED_SCAN_MODES = {"machine", "path", "mcp", "assessment"}
+
+
 @dataclass(slots=True)
 class ScanLimits:
     max_files: int = 2500
@@ -24,7 +27,9 @@ class ScanRequest:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any], default_path: Path) -> "ScanRequest":
-        mode = str(payload.get("mode") or "path")
+        mode = str(payload.get("mode") or "path").strip().lower()
+        if mode not in ALLOWED_SCAN_MODES:
+            raise ValueError(f"unsupported quick scan mode: {mode}")
         raw_target = (
             payload.get("target_path")
             or payload.get("path")
@@ -36,8 +41,6 @@ class ScanRequest:
             target = Path(str(raw_target)).expanduser()
         elif mode == "machine":
             target = None
-        elif mode == "fixture":
-            target = default_path / "tests" / "fixtures" / "sample_agent_project"
         else:
             target = default_path
         max_files = int(payload.get("max_files") or 2500)
