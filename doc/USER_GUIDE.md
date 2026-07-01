@@ -1025,6 +1025,15 @@ Invoke-RestMethod `
 
 实现完整性矩阵页面来自 `/api/v1/completeness` 的实时摘要和行数据：页面/详情数量来自 V4.1 契约行，API 数量来自当前注入的 API 契约，SQLite 表数来自 `/api/v1/sqlite/status`，规则数来自本地 `rule_catalog()`。每行的 `Audit` 会检查 `doc/agent_security_assessment_v4_1_full` 中对应 prototype/spec 文件是否存在，`Contract` 会检查页面声明的 API 是否登记在契约中；没有真实自动化断言的 `E2E` 会显示 `NOT_ASSERTED`，不会再用固定勾选或“0 缺口”冒充验收结论。
 
+完整性导出：
+
+```powershell
+$completeness = Invoke-RestMethod http://127.0.0.1:8000/api/v1/completeness/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($completeness.download)" -OutFile completeness-export.json
+```
+
+导出会生成 `completeness-export` JSON artifact，内容包含完整性行、汇总、所有 prototype/spec 来源文件，以及 V4.1 全局规范、API 契约、验收清单和当前后端/前端实现文件的 `sha256`、大小与存在性。该操作只读取本仓库文件和本系统 SQLite 状态，并写入本系统 SQLite/artifact/audit，不启动、不扫描、不修改已安装 Codex/Hermes 或其他 Agent。
+
 第三方与许可证清单：
 
 ```powershell

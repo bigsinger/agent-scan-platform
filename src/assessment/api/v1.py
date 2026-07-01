@@ -272,8 +272,48 @@ async def third_party_notice(id: str) -> dict:
 
 @router.get("/completeness/export")
 async def completeness_export() -> dict:
+    store = get_store()
     rows = completeness_runtime_rows()
-    return {"format": "json", "summary": completeness_summary(rows), "items": rows, "exported_at": utc_now()}
+    summary = completeness_summary(rows)
+    source_files = completeness_source_files(rows)
+    payload = {
+        "schema": "agent-security-completeness-export@4.1",
+        "format": "json",
+        "summary": summary,
+        "items": rows,
+        "source_files": source_files,
+        "source_file_summary": completeness_source_file_summary(source_files),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "boundary": "完整性导出只读取本仓库文档、原型、契约和本系统 SQLite 状态，并写入本系统 artifact/audit；不会启动或修改已安装 Agent。",
+        "exported_at": utc_now(),
+    }
+    artifact = store.write_artifact(
+        "completeness-export",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "safe_mode": "local-readonly",
+            "pages": summary["pages"],
+            "gaps": summary["gaps"],
+            "source_files": payload["source_file_summary"]["total"],
+        },
+    )
+    store.audit_event(
+        "get.completeness.export",
+        "artifact",
+        artifact["id"],
+        {
+            "pages": summary["pages"],
+            "gaps": summary["gaps"],
+            "source_files": payload["source_file_summary"]["total"],
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        },
+    )
+    payload["artifact"] = artifact
+    payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    return payload
 
 
 @router.get("/licenses/export")
@@ -1405,6 +1445,69 @@ def completeness_summary(rows: list[dict] | None = None) -> dict:
         "gaps": len(gaps),
         "doc_root": str(completeness_doc_root().relative_to(REPO_ROOT)).replace("\\", "/"),
         "updated_at": utc_now(),
+    }
+
+
+def completeness_source_file_record(label: str, path: Path) -> dict:
+    exists = path.exists()
+    return {
+        "label": label,
+        "path": str(path.relative_to(REPO_ROOT)).replace("\\", "/") if path.is_relative_to(REPO_ROOT) else str(path),
+        "exists": exists,
+        "sha256": file_digest(path) if exists and path.is_file() else "",
+        "size": path.stat().st_size if exists and path.is_file() else 0,
+    }
+
+
+def completeness_source_files(rows: list[dict] | None = None) -> list[dict]:
+    current_rows = rows if rows is not None else completeness_runtime_rows()
+    doc_root = completeness_doc_root()
+    sources: dict[str, tuple[str, Path]] = {}
+
+    def add(label: str, path: Path) -> None:
+        key = str(path)
+        if key not in sources:
+            sources[key] = (label, path)
+
+    for row in current_rows:
+        prototype = str(row.get("prototype") or "").strip()
+        spec = str(row.get("spec") or "").strip()
+        if prototype:
+            add("prototype", doc_root / prototype)
+        if spec:
+            add("page-spec", doc_root / spec)
+
+    for path in [
+        doc_root / "README.md",
+        doc_root / "VALIDATION.md",
+        doc_root / "specs" / "PAGE_INDEX.md",
+        doc_root / "specs" / "agent_security_assessment_v4_1_full_spec.md",
+        doc_root / "specs" / "global" / "00_GLOBAL_SPEC.md",
+        doc_root / "specs" / "global" / "01_API_CONTRACT.md",
+        doc_root / "specs" / "global" / "02_DATA_MODEL_SQLITE.md",
+        doc_root / "specs" / "global" / "03_ACCEPTANCE_CHECKLIST.md",
+        doc_root / "prototype" / "index.html",
+        doc_root / "prototype" / "assets" / "css" / "app.css",
+        doc_root / "prototype" / "assets" / "js" / "app.js",
+        REPO_ROOT / "src" / "assessment" / "contracts.py",
+        REPO_ROOT / "src" / "assessment" / "api" / "v1.py",
+        REPO_ROOT / "src" / "assessment" / "static" / "assessment" / "index.html",
+        REPO_ROOT / "src" / "assessment" / "static" / "assessment" / "app.js",
+    ]:
+        add("implementation-source", path)
+
+    records = [completeness_source_file_record(label, path) for label, path in sources.values()]
+    return sorted(records, key=lambda item: (item["label"], item["path"]))
+
+
+def completeness_source_file_summary(source_files: list[dict]) -> dict:
+    existing = [source for source in source_files if source.get("exists")]
+    missing = [source for source in source_files if not source.get("exists")]
+    return {
+        "total": len(source_files),
+        "existing": len(existing),
+        "missing": len(missing),
+        "missing_paths": [str(source.get("path")) for source in missing],
     }
 
 

@@ -1121,6 +1121,48 @@ def test_capability_management_actions_are_persisted():
     assert client.get("/api/v1/completeness/export").json()["format"] == "json"
 
 
+def test_completeness_export_builds_real_source_artifact(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "completeness.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.get("/api/v1/completeness/export")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema"] == "agent-security-completeness-export@4.1"
+    assert payload["format"] == "json"
+    assert payload["safe_mode"] == "local-readonly"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["download"].startswith("/api/v1/artifacts/")
+    assert payload["artifact"]["kind"] == "completeness-export"
+    assert payload["summary"]["pages"] >= 40
+    assert payload["source_file_summary"]["total"] >= payload["summary"]["pages"] * 2
+    assert payload["source_file_summary"]["existing"] > 0
+
+    sources = {source["path"]: source for source in payload["source_files"]}
+    assert sources["doc/agent_security_assessment_v4_1_full/prototype/pages/P34_completeness.html"]["exists"] is True
+    assert sources["doc/agent_security_assessment_v4_1_full/specs/pages/P34_completeness.md"]["sha256"]
+    assert sources["src/assessment/api/v1.py"]["size"] > 0
+    assert all("\\" not in source["path"] for source in payload["source_files"])
+    assert store.get_record("artifact", payload["artifact"]["id"]) is not None
+
+    downloaded = client.get(payload["download"])
+    assert downloaded.status_code == 200
+    exported = json.loads(downloaded.text)
+    assert exported["schema"] == "agent-security-completeness-export@4.1"
+    assert exported["source_file_summary"] == payload["source_file_summary"]
+    assert exported["mutates_installed_agents"] is False
+
+    with store.connect() as conn:
+        event = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (payload["artifact"]["id"],),
+        ).fetchone()
+    assert event["action"] == "get.completeness.export"
+    assert json.loads(event["payload_json"])["mutates_installed_agents"] is False
+
+
 def test_licenses_export_builds_real_local_notice_artifact(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "licenses.db")
     store.initialize()
