@@ -511,6 +511,8 @@ $body = @{
   mode = "machine"
   adapter = "自动识别"
   max_files = 500
+  user_scope = "current-user"
+  execution_mode = "readonly"
   scan_skills = $true
   run_local_analyzers = $true
   use_existing_sca = $false
@@ -524,6 +526,29 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile quick
 
 快速扫描历史只读取本系统 SQLite 中的 assessment/report/finding/evidence/scan_event 记录，并生成 `quick-scan-history` artifact；它用于复盘和验收留档，不会重新扫描客户目录、不启动 MCP、不修改 Codex/Hermes。
 前端快速扫描页的“最近快速扫描”表也调用该接口，不再从原型 seed 或当前会话任务数组拼接历史。
+
+用户范围与执行模式验收：
+
+```powershell
+$dryRun = @{
+  mode = "path"
+  target_path = "tests\fixtures\sample_agent_project"
+  max_files = 50
+  user_scope = "readable-users"
+  execution_mode = "dry-run-redteam"
+} | ConvertTo-Json
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $dryRun -ContentType "application/json"
+$scan.user_scope_requested                 # readable-users
+$scan.effective_user_scope                 # current-user
+$scan.scan_options.stdio_mcp_started       # False
+$scan.scan_options.agent_runtime_started   # False
+$scan.scan_options.dry_run_redteam_executed # True
+$scan.redteam_run.safe_mode                # dry-run
+$scan.redteam_run.external_model_calls     # 0
+$scan.redteam_run.external_tool_calls      # 0
+```
+
+`readable-users` 当前仅记录请求范围，实际发现仍限制为当前用户；`dry-run-redteam` 会复用本地 deterministic 红队模块生成 `redteam_run`、消息、证据和 artifact，但不会调用外部模型、不会启动 MCP/Tool、不会修改已安装 Agent。
 
 扫描选项验收：
 

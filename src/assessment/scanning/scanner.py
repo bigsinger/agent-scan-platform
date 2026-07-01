@@ -8,7 +8,7 @@ from typing import Any
 from ..reports import ReportRenderer
 from ..store import AssessmentStore, REPO_ROOT, new_id, utc_now
 from .discovery import DiscoveryEngine
-from .models import DiscoveryResult, RuleMatch, ScanRequest, ScanResult, flag
+from .models import DiscoveryResult, RuleMatch, ScanRequest, ScanResult, effective_user_scope, flag, normalize_user_scope
 from .redaction import file_digest, redact_text, safe_display_path, stable_hash
 from .rules import analyze_text, rule_catalog
 
@@ -70,7 +70,7 @@ class LocalScanEngine:
         request = ScanRequest.from_payload(payload, default_path=REPO_ROOT)
         mode = request.mode
         if mode == "machine" and request.target_path is None:
-            discovery = self.discovery.discover(None, scope=str(payload.get("scope") or "current-user"))
+            discovery = self.discovery.discover(None, scope=request.scan_options["effective_user_scope"])
             self._apply_request_options(discovery, request)
             return {
                 "status": "PASS" if discovery.hits else "EMPTY",
@@ -88,6 +88,16 @@ class LocalScanEngine:
                 "remote_analysis_requested": request.remote_analysis_requested,
                 "cloud_analysis_status": request.scan_options["cloud_analysis_status"],
                 "mutates_installed_agents": False,
+                "user_scope": request.user_scope,
+                "user_scope_requested": request.user_scope,
+                "effective_user_scope": request.scan_options["effective_user_scope"],
+                "execution_mode": request.execution_mode,
+                "effective_execution_mode": request.scan_options["effective_execution_mode"],
+                "mcp_policy": request.scan_options["mcp_policy"],
+                "stdio_mcp_started": False,
+                "agent_runtime_started": False,
+                "dry_run_redteam_requested": request.scan_options["dry_run_redteam_requested"],
+                "dry_run_redteam_executed": False,
                 "errors": discovery.errors,
             }
         target = request.target_path or REPO_ROOT
@@ -108,6 +118,16 @@ class LocalScanEngine:
             "remote_analysis_requested": request.remote_analysis_requested,
             "cloud_analysis_status": request.scan_options["cloud_analysis_status"],
             "mutates_installed_agents": False,
+            "user_scope": request.user_scope,
+            "user_scope_requested": request.user_scope,
+            "effective_user_scope": request.scan_options["effective_user_scope"],
+            "execution_mode": request.execution_mode,
+            "effective_execution_mode": request.scan_options["effective_execution_mode"],
+            "mcp_policy": request.scan_options["mcp_policy"],
+            "stdio_mcp_started": False,
+            "agent_runtime_started": False,
+            "dry_run_redteam_requested": request.scan_options["dry_run_redteam_requested"],
+            "dry_run_redteam_executed": False,
             "errors": [] if exists and readable else [{"target": str(target), "error": "路径不存在或无权限"}],
         }
 
@@ -129,6 +149,16 @@ class LocalScanEngine:
                 "remote_analysis_requested": request.remote_analysis_requested,
                 "cloud_analysis_status": request.scan_options["cloud_analysis_status"],
                 "mutates_installed_agents": False,
+                "user_scope": request.user_scope,
+                "user_scope_requested": request.user_scope,
+                "effective_user_scope": request.scan_options["effective_user_scope"],
+                "execution_mode": request.execution_mode,
+                "effective_execution_mode": request.scan_options["effective_execution_mode"],
+                "mcp_policy": request.scan_options["mcp_policy"],
+                "stdio_mcp_started": False,
+                "agent_runtime_started": False,
+                "dry_run_redteam_requested": request.scan_options["dry_run_redteam_requested"],
+                "dry_run_redteam_executed": False,
             }
         )
 
@@ -162,11 +192,34 @@ class LocalScanEngine:
             "external_sca_executed": False,
             "scan_options": scan_options,
             "mutates_installed_agents": False,
-            "mcp_policy": "per-server-consent",
+            "user_scope": request.user_scope,
+            "user_scope_requested": request.user_scope,
+            "effective_user_scope": scan_options["effective_user_scope"],
+            "execution_mode": request.execution_mode,
+            "effective_execution_mode": scan_options["effective_execution_mode"],
+            "mcp_policy": scan_options["mcp_policy"],
+            "stdio_mcp_started": False,
+            "agent_runtime_started": False,
+            "dry_run_redteam_requested": scan_options["dry_run_redteam_requested"],
+            "dry_run_redteam_executed": False,
         }
         self.store.upsert_record("assessment", assessment, status="RUNNING")
         events: list[dict[str, Any]] = []
         events.append(self._event(assessment["id"], "assessment.started", "测评已启动，进入本地只读扫描", {"target": display_target, "scan_options": scan_options}))
+        events.append(
+            self._event(
+                assessment["id"],
+                "scan.boundary.resolved",
+                "扫描边界已解析：不会启动 stdio MCP，不会修改已安装 Agent",
+                {
+                    "user_scope_requested": scan_options["user_scope_requested"],
+                    "effective_user_scope": scan_options["effective_user_scope"],
+                    "execution_mode": scan_options["execution_mode"],
+                    "effective_execution_mode": scan_options["effective_execution_mode"],
+                    "mcp_policy": scan_options["mcp_policy"],
+                },
+            )
+        )
 
         if target is not None and not target.exists():
             assessment.update({"status": "失败", "stage": "FAILED", "progress": 100, "finished_at": utc_now()})
@@ -177,7 +230,7 @@ class LocalScanEngine:
             self._sync_state(assessment, empty_discovery, [], [], report, events)
             return ScanResult(assessment, empty_discovery, [], [], report, 0, 0, events)
 
-        discovery = self.discovery.discover(None if machine_mode else [target], scope="current-user" if machine_mode else "explicit-path")
+        discovery = self.discovery.discover(None if machine_mode else [target], scope=scan_options["effective_user_scope"] if machine_mode else "explicit-path")
         self._apply_request_options(discovery, request)
         self._persist_discovery(discovery)
         events.append(
@@ -323,7 +376,19 @@ class LocalScanEngine:
         previous_hits = self.store.list_records("discovery_hit", limit=10000)
         previous_by_path_hash = {str(hit.get("path_hash")): hit for hit in previous_hits if hit.get("path_hash")}
         options = discovery_options(payload)
-        result = self.discovery.discover(paths or None, scope=str(payload.get("scope") or "current-user"), probe_installed=probe_installed)
+        requested_scope = normalize_user_scope(payload.get("scope") or payload.get("user_scope") or payload.get("userScope"))
+        actual_scope = effective_user_scope(requested_scope)
+        result = self.discovery.discover(paths or None, scope=actual_scope, probe_installed=probe_installed)
+        result.run.update(
+            {
+                "user_scope_requested": requested_scope,
+                "effective_user_scope": actual_scope,
+                "scope": actual_scope,
+                "scope_note": "所有可读用户会记录为请求范围；当前本地发现实际限制为当前用户。"
+                if requested_scope != actual_scope
+                else "",
+            }
+        )
         self._apply_discovery_options(result, options, previous_by_path_hash)
         self._persist_discovery(result)
         state = self.store.get_state()

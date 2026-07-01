@@ -193,15 +193,29 @@ def test_quick_scan_ui_requires_api_assessment_record():
     assert 'v-model="form.runLocalAnalyzers"' in html
     assert 'v-model="form.useExistingSca"' in html
     assert 'v-model="form.remoteAnalysis"' in html
+    assert 'v-model="form.quickUserScope"' in html
+    assert 'v-model="form.quickExecutionMode"' in html
+    assert 'v-model="form.discoveryUserScope"' in html
+    assert 'value="readable-users"' in html
+    assert 'value="dry-run-redteam"' in html
     assert 'v-model="form.assessmentRemoteAnalysis"' in html
+    assert 'quickUserScope:\'current-user\'' in app_js
+    assert 'quickExecutionMode:\'readonly\'' in app_js
+    assert 'discoveryUserScope:\'current-user\'' in app_js
     assert '<input type="checkbox" checked> 扫描 Skills' not in html
     assert '<input type="checkbox" checked> 运行本地分析器' not in html
+    assert '<select><option>只读检查（推荐）</option><option>检查 + MCP 逐项审批</option><option>完整 Dry-run 红队</option></select>' not in html
     assert "scanOptionPayload(scope)" in app_js
     assert "assessmentPayload(extra)" in app_js
     assert "this.form=Object.assign({}, defaultFormState, this.form || {})" in app_js
     assert "remote_analysis_requested:remoteRequested" in app_js
     assert "remote_analysis:false" in app_js
     assert "run_local_analyzers:!!this.form.runLocalAnalyzers" in app_js
+    assert "user_scope:this.form.quickUserScope || 'current-user'" in app_js
+    assert "execution_mode:executionMode" in app_js
+    assert "dry_run_redteam_requested:executionMode==='dry-run-redteam'" in app_js
+    assert "scope:this.form.discoveryUserScope || 'current-user'" in app_js
+    assert "if(res.redteam_run){ this.mergeRecords('redteamRuns', [res.redteam_run]); this.selectedRedteamRun=res.redteam_run; }" in app_js
     assert "asm_quick_" not in app_js
     assert "快速扫描未返回真实任务记录" in app_js
     assert "v-for=\"t in quickHistory\"" in html

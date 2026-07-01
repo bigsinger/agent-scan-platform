@@ -37,6 +37,9 @@
     useExistingSca:false,
     remoteAnalysis:false,
     assessmentRemoteAnalysis:false,
+    quickUserScope:'current-user',
+    quickExecutionMode:'readonly',
+    discoveryUserScope:'current-user',
     discoveryAgentConfigs:true,
     discoverySkills:true,
     discoveryMcp:true,
@@ -46,7 +49,7 @@
     runtimeListKeys.forEach(key => { state[key] = []; });
     runtimeObjectKeys.forEach(key => { state[key] = {}; });
     state.form = Object.assign({}, defaultFormState);
-    state.quickEstimate = Object.assign({configs:0, mcp_servers:0, skills:0, scan_files:0, agents:0, status:'未检查'}, state.quickEstimate || {});
+    state.quickEstimate = Object.assign({configs:0, mcp_servers:0, skills:0, scan_files:0, agents:0, status:'未检查', user_scope:'current-user', effective_user_scope:'current-user', execution_mode:'readonly'}, state.quickEstimate || {});
     state.quickHistory = [];
     state.quickHistorySummary = {};
     state.uploadResult = null;
@@ -68,7 +71,7 @@ data(){
     const initial = JSON.parse(JSON.stringify(seed));
     resetRuntimeCollections(initial);
     initial.form = Object.assign({}, defaultFormState, initial.form || {});
-    initial.quickEstimate = Object.assign({configs:0, mcp_servers:0, skills:0, scan_files:0, agents:0, status:'未检查'}, initial.quickEstimate || {});
+    initial.quickEstimate = Object.assign({configs:0, mcp_servers:0, skills:0, scan_files:0, agents:0, status:'未检查', user_scope:'current-user', effective_user_scope:'current-user', execution_mode:'readonly'}, initial.quickEstimate || {});
     initial.quickHistory = [];
     initial.quickHistorySummary = {};
     initial.quickBusy = false;
@@ -1253,6 +1256,14 @@ data(){
       if(value>=1024) return (value/1024).toFixed(1)+' KB';
       return value+' B';
     },
+    userScopeLabel(value){
+      const map={'current-user':'当前用户','readable-users':'所有可读用户'};
+      return map[value] || value || '当前用户';
+    },
+    executionModeLabel(value){
+      const map={'readonly':'只读检查','mcp-consent':'MCP 逐项审批','dry-run-redteam':'Dry-run 红队','local-readonly':'本地只读','local-dry-run':'本地 Dry-run'};
+      return map[value] || value || '只读检查';
+    },
     statusClass(s){
       const raw=String(s||'');
       const lower=raw.toLowerCase();
@@ -1447,7 +1458,14 @@ data(){
       finally { this.redteamBusy=false; }
     },
     quickPayload(){
-      const payload={mode:this.quickMode, adapter:this.form.adapter || '自动识别'};
+      const executionMode=this.form.quickExecutionMode || 'readonly';
+      const payload={
+        mode:this.quickMode,
+        adapter:this.form.adapter || '自动识别',
+        user_scope:this.form.quickUserScope || 'current-user',
+        execution_mode:executionMode,
+        dry_run_redteam_requested:executionMode==='dry-run-redteam'
+      };
       const target=(this.form.targetPath || '').trim();
       if(target) payload.target_path=target;
       Object.assign(payload, this.scanOptionPayload('quick'));
@@ -1712,10 +1730,11 @@ data(){
       try {
         const res = await this.apiPost('/api/v1/quick-scans', this.quickPayload());
         this.mergeScanResponse(res);
+        if(res.redteam_run){ this.mergeRecords('redteamRuns', [res.redteam_run]); this.selectedRedteamRun=res.redteam_run; }
         const t = res.assessment;
         if(!t || !t.id) throw new Error('快速扫描未返回真实任务记录');
         await this.refreshQuickHistory({silent:true});
-        this.mergeRecords('tasks', [t]); this.selectedTask=t; this.go('task-detail'); this.toastMsg('快速扫描已完成本地只读分析');
+        this.mergeRecords('tasks', [t]); this.selectedTask=t; this.go('task-detail'); this.toastMsg(res.redteam_run?'快速扫描与本地 dry-run 红队已完成':'快速扫描已完成本地只读分析');
       } catch (err) { this.apiError = this.describeError(err); }
       finally { this.quickBusy=false; }
     },
@@ -1723,13 +1742,13 @@ data(){
       if(this.discoveryRunning){ this.discoveryRunning=false; this.toastMsg('发现已停止并保留当前命中'); return; }
       this.discoveryRunning=true; this.apiError='';
       this.discoveryRunEvidence='';
-      this.discoveryLog=['discovery.started scope=current-user'];
+      this.discoveryLog=['discovery.started requested_scope='+(this.form.discoveryUserScope || 'current-user')+' effective_scope=current-user'];
       this.toastMsg('本机发现已启动；不会启动 stdio MCP');
       try {
         const extra=(this.form.discoveryPaths || '').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
         const target=(this.form.targetPath || '').trim();
         const payload={
-          scope:'current-user',
+          scope:this.form.discoveryUserScope || 'current-user',
           include_agent_configs:!!this.form.discoveryAgentConfigs,
           include_skills:!!this.form.discoverySkills,
           include_mcp:!!this.form.discoveryMcp,

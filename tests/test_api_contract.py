@@ -630,6 +630,73 @@ def test_quick_scan_options_are_persisted_without_cloud_execution(monkeypatch, t
     assert audit_body["mutates_installed_agents"] is False
 
 
+def test_quick_scan_scope_execution_mode_and_dry_run_redteam(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "quick-scan-execution-mode.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    body = {
+        "mode": "path",
+        "target_path": "tests/fixtures/sample_agent_project",
+        "max_files": 50,
+        "user_scope": "readable-users",
+        "execution_mode": "dry-run-redteam",
+    }
+
+    precheck = client.post("/api/v1/quick-scans/precheck", json=body)
+    assert precheck.status_code == 200
+    precheck_body = precheck.json()
+    assert precheck_body["user_scope_requested"] == "readable-users"
+    assert precheck_body["effective_user_scope"] == "current-user"
+    assert precheck_body["execution_mode"] == "dry-run-redteam"
+    assert precheck_body["dry_run_redteam_requested"] is True
+    assert precheck_body["dry_run_redteam_executed"] is False
+    assert precheck_body["stdio_mcp_started"] is False
+
+    response = client.post("/api/v1/quick-scans", json=body)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_scope_requested"] == "readable-users"
+    assert payload["effective_user_scope"] == "current-user"
+    assert payload["execution_mode"] == "dry-run-redteam"
+    assert payload["scan_options"]["dry_run_redteam_requested"] is True
+    assert payload["scan_options"]["dry_run_redteam_executed"] is True
+    assert payload["scan_options"]["stdio_mcp_started"] is False
+    assert payload["scan_options"]["agent_runtime_started"] is False
+    assert payload["redteam_run"]["safe_mode"] == "dry-run"
+    assert payload["redteam_run"]["external_model_calls"] == 0
+    assert payload["redteam_run"]["external_tool_calls"] == 0
+    assert payload["redteam_run"]["mutates_installed_agents"] is False
+    assert payload["assessment"]["redteam_run_id"] == payload["redteam_run"]["id"]
+    assert payload["redteam_run_id"] == payload["redteam_run"]["id"]
+    assert "redteam.dry_run.completed" in {event["type"] for event in payload["events"]}
+
+    recent = client.get("/api/v1/quick-scans/recent?page_size=10").json()
+    row = next(item for item in recent["items"] if item["id"] == payload["assessment"]["id"])
+    assert row["user_scope_requested"] == "readable-users"
+    assert row["effective_user_scope"] == "current-user"
+    assert row["execution_mode"] == "dry-run-redteam"
+    assert row["dry_run_redteam_executed"] is True
+    assert row["redteam_run_id"] == payload["redteam_run"]["id"]
+
+    report = client.get(f"/api/v1/reports/{payload['report']['id']}/download")
+    assert report.status_code == 200
+    assert "Dry-run 红队已执行" in report.text
+    assert "readable-users" in report.text
+    assert "current-user" in report.text
+
+    with store.connect() as conn:
+        audit = conn.execute(
+            "SELECT payload_json FROM audit_event WHERE object_id=? AND action='post.quick-scans' ORDER BY seq DESC LIMIT 1",
+            (payload["assessment"]["id"],),
+        ).fetchone()
+    audit_body = json.loads(audit["payload_json"])["body"]
+    assert audit_body["user_scope_requested"] == "readable-users"
+    assert audit_body["effective_user_scope"] == "current-user"
+    assert audit_body["execution_mode"] == "dry-run-redteam"
+    assert audit_body["dry_run_redteam_requested"] is True
+    assert audit_body["mutates_installed_agents"] is False
+
+
 def test_assessment_draft_and_plan_force_local_scan_boundary(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "assessment-options.db")
     store.initialize()

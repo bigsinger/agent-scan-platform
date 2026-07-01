@@ -6,6 +6,8 @@ from typing import Any
 
 
 ALLOWED_SCAN_MODES = {"machine", "path", "mcp", "assessment"}
+ALLOWED_USER_SCOPES = {"current-user", "readable-users"}
+ALLOWED_EXECUTION_MODES = {"readonly", "mcp-consent", "dry-run-redteam"}
 
 
 @dataclass(slots=True)
@@ -26,6 +28,9 @@ class ScanRequest:
     run_local_analyzers: bool = True
     use_existing_sca: bool = False
     remote_analysis_requested: bool = False
+    user_scope: str = "current-user"
+    execution_mode: str = "readonly"
+    dry_run_redteam_requested: bool = False
     limits: ScanLimits = field(default_factory=ScanLimits)
 
     @classmethod
@@ -59,12 +64,16 @@ class ScanRequest:
             run_local_analyzers=flag(payload, ("run_local_analyzers", "local_analyzers", "runLocalAnalyzers"), True),
             use_existing_sca=flag(payload, ("use_existing_sca", "invoke_existing_sca", "useExistingSca"), False),
             remote_analysis_requested=flag(payload, ("remote_analysis_requested", "remoteAnalysisRequested", "remote_analysis", "remoteAnalysis", "cloud_analysis"), False),
+            user_scope=normalize_user_scope(payload.get("user_scope") or payload.get("userScope") or payload.get("scope")),
+            execution_mode=normalize_execution_mode(payload.get("execution_mode") or payload.get("executionMode")),
+            dry_run_redteam_requested=flag(payload, ("dry_run_redteam_requested", "dryRunRedteamRequested"), False),
             limits=ScanLimits(max_files=max_files, max_file_bytes=max_file_bytes, max_depth=max_depth),
         )
 
     @property
     def scan_options(self) -> dict[str, Any]:
         cloud_status = "OPTIONAL_DISABLED" if self.remote_analysis_requested else "DISABLED"
+        dry_run_requested = self.dry_run_redteam_requested or self.execution_mode == "dry-run-redteam"
         return {
             "scan_skills": self.include_skills,
             "include_skills": self.include_skills,
@@ -77,7 +86,61 @@ class ScanRequest:
             "remote_analysis": False,
             "cloud_analysis_status": cloud_status,
             "mutates_installed_agents": False,
+            "user_scope": self.user_scope,
+            "user_scope_requested": self.user_scope,
+            "effective_user_scope": effective_user_scope(self.user_scope),
+            "execution_mode": self.execution_mode,
+            "effective_execution_mode": "local-dry-run" if dry_run_requested else "local-readonly",
+            "mcp_policy": "per-server-consent" if self.execution_mode in {"mcp-consent", "dry-run-redteam"} else "never-start-stdio",
+            "stdio_mcp_started": False,
+            "agent_runtime_started": False,
+            "dry_run_redteam_requested": dry_run_requested,
+            "dry_run_redteam_executed": False,
         }
+
+
+def normalize_user_scope(value: Any) -> str:
+    raw = str(value or "current-user").strip().lower().replace("_", "-")
+    aliases = {
+        "current": "current-user",
+        "currentuser": "current-user",
+        "current-user": "current-user",
+        "me": "current-user",
+        "当前用户": "current-user",
+        "readable": "readable-users",
+        "readable-users": "readable-users",
+        "all-readable": "readable-users",
+        "all-readable-users": "readable-users",
+        "all-users": "readable-users",
+        "所有可读用户": "readable-users",
+    }
+    normalized = aliases.get(raw, raw)
+    return normalized if normalized in ALLOWED_USER_SCOPES else "current-user"
+
+
+def effective_user_scope(requested: str) -> str:
+    # The current local discovery implementation only enumerates the active user's known Agent paths.
+    return "current-user"
+
+
+def normalize_execution_mode(value: Any) -> str:
+    raw = str(value or "readonly").strip().lower().replace("_", "-")
+    aliases = {
+        "read-only": "readonly",
+        "readonly": "readonly",
+        "local-readonly": "readonly",
+        "只读检查": "readonly",
+        "mcp": "mcp-consent",
+        "mcp-consent": "mcp-consent",
+        "consent": "mcp-consent",
+        "检查-+-mcp-逐项审批": "mcp-consent",
+        "dry-run": "dry-run-redteam",
+        "redteam": "dry-run-redteam",
+        "dry-run-redteam": "dry-run-redteam",
+        "完整-dry-run-红队": "dry-run-redteam",
+    }
+    normalized = aliases.get(raw, raw)
+    return normalized if normalized in ALLOWED_EXECUTION_MODES else "readonly"
 
 
 def flag(payload: dict[str, Any], keys: tuple[str, ...], default: bool) -> bool:

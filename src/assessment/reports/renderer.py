@@ -87,6 +87,8 @@ def render_html(snapshot: dict[str, Any]) -> str:
     findings = snapshot["findings"]
     evidence = snapshot["evidence"]
     summary = snapshot["summary"]
+    scan_options = assessment.get("scan_options") or {}
+    boundary_rows = render_boundary_rows(assessment, scan_options)
     rows = "\n".join(render_finding_row(f) for f in findings) or (
         "<tr><td colspan=\"7\">未发现自动化规则命中项；请继续执行人工检查表和红队用例。</td></tr>"
     )
@@ -124,6 +126,10 @@ def render_html(snapshot: dict[str, Any]) -> str:
   </div>
   <h2>执行边界</h2>
   <p>本报告由本地只读扫描生成。扫描过程不会启动 stdio MCP Server，不上传文件内容；证据片段已做敏感信息脱敏。</p>
+  <table>
+    <thead><tr><th>边界项</th><th>取值</th></tr></thead>
+    <tbody>{boundary_rows}</tbody>
+  </table>
   <h2>发现项</h2>
   <table>
     <thead><tr><th>ID</th><th>严重度</th><th>规则</th><th>标题</th><th>组件/路径</th><th>置信度</th><th>整改建议</th></tr></thead>
@@ -137,6 +143,26 @@ def render_html(snapshot: dict[str, Any]) -> str:
   <div class="footer">Agent 安全测评能力模块 V4.1 · SQLite 本地存储 · HTML/JSON 离线报告</div>
 </body>
 </html>"""
+
+
+def render_boundary_rows(assessment: dict[str, Any], scan_options: dict[str, Any]) -> str:
+    fields = [
+        ("请求用户范围", assessment.get("user_scope_requested") or scan_options.get("user_scope_requested") or "current-user"),
+        ("实际用户范围", assessment.get("effective_user_scope") or scan_options.get("effective_user_scope") or "current-user"),
+        ("执行模式", assessment.get("execution_mode") or scan_options.get("execution_mode") or "readonly"),
+        ("实际执行", assessment.get("effective_execution_mode") or scan_options.get("effective_execution_mode") or "local-readonly"),
+        ("MCP 策略", assessment.get("mcp_policy") or scan_options.get("mcp_policy") or "never-start-stdio"),
+        ("stdio MCP 已启动", scan_options.get("stdio_mcp_started", assessment.get("stdio_mcp_started", False))),
+        ("Agent 运行时已启动", scan_options.get("agent_runtime_started", assessment.get("agent_runtime_started", False))),
+        ("远程分析", scan_options.get("remote_analysis", assessment.get("remote_analysis", False))),
+        ("外部 SCA 已执行", scan_options.get("external_sca_executed", assessment.get("external_sca_executed", False))),
+        ("Dry-run 红队已执行", scan_options.get("dry_run_redteam_executed", assessment.get("dry_run_redteam_executed", False))),
+        ("修改已安装 Agent", scan_options.get("mutates_installed_agents", assessment.get("mutates_installed_agents", False))),
+    ]
+    return "\n".join(
+        f"<tr><td>{escape(str(label))}</td><td><code>{escape(json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value))}</code></td></tr>"
+        for label, value in fields
+    )
 
 
 def render_finding_row(finding: dict[str, Any]) -> str:

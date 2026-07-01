@@ -93,6 +93,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 | 扫描模式 | 本机发现、指定目录/文件、单个 MCP Server |
 | Agent 类型提示 | 可选择 Claude Code、Codex、OpenClaw、Hermes 或自动识别 |
 | 路径 / URL | 留空时扫描当前服务目录；建议填写明确目录或配置文件 |
+| 用户范围 | 对应 `user_scope`。当前支持 `current-user` 真实扫描；选择 `readable-users` 会记录请求意图，并在结果中回写 `effective_user_scope=current-user` |
+| 执行模式 | 对应 `execution_mode`。`readonly` 仅执行只读发现/静态分析；`mcp-consent` 记录逐 Server 审批策略但不会自动启动 stdio；`dry-run-redteam` 会在快速扫描后执行本地 deterministic dry-run 红队 |
 | 扫描 Skills | 对应 `scan_skills/include_skills`，关闭后发现结果、扫描文件和报告中不纳入 Skill 文件 |
 | 运行本地分析器 | 对应 `run_local_analyzers`，开启后使用内置规则生成 Finding；关闭时只保留发现、报告和审计事件 |
 | 调用已有 Skill/SCA | 对应 `use_existing_sca`，当前本地企业模式只记录请求意图，不会自动执行外部扫描器 |
@@ -109,6 +111,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 - Evidence 证据。
 - HTML/JSON 报告。
 
+选择“完整 Dry-run 红队”时，同一次请求还会生成 `redteam_run`、`redteam_message`、红队 evidence 和 JSON artifact。该运行使用本地 deterministic 规则，不调用外部模型，不启动 MCP/Tool，不读取敏感路径，也不修改已安装 Codex/Hermes/Claude Code/Cursor。
+
 扫描历史：
 
 ```powershell
@@ -124,9 +128,12 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile quick
 本地边界字段会随 Assessment 和历史记录返回：
 
 - `scan_options.scan_skills`、`scan_options.run_local_analyzers`、`scan_options.use_existing_sca`：本次扫描实际采用的选项。
+- `user_scope_requested`、`effective_user_scope`：用户请求范围与实际生效范围。当前本地交付将所有可读用户请求降级为当前用户。
+- `execution_mode`、`effective_execution_mode`、`mcp_policy`：执行模式、实际本地执行边界和 stdio MCP 策略。
+- `dry_run_redteam_requested`、`dry_run_redteam_executed`、`redteam_run_id`：快速扫描是否触发本地 dry-run 红队及其运行记录。
 - `remote_analysis_requested`：用户或 API 是否请求了可选云分析。
 - `remote_analysis=false`、`cloud_analysis_status=OPTIONAL_DISABLED|DISABLED`：本地交付实际未调用远程 Snyk 分析。
-- `external_sca_executed=false`、`mutates_installed_agents=false`：不会启动或修改 Codex、Hermes、Claude Code、Cursor 等已安装 Agent。
+- `stdio_mcp_started=false`、`agent_runtime_started=false`、`external_sca_executed=false`、`mutates_installed_agents=false`：不会自动启动 stdio MCP，不启动或修改 Codex、Hermes、Claude Code、Cursor 等已安装 Agent。
 
 ## 3.1 测评模板
 
@@ -196,6 +203,7 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 - 只解析配置文件。
 - 命令、参数、环境变量会脱敏。
 - 权限不足路径显示“权限跳过”，不算扫描失败。
+- “所有可读用户”当前仅作为请求范围记录；后端会回写 `user_scope_requested=readable-users`、`effective_user_scope=current-user`，实际发现仍限制为当前用户常见 Agent 路径和用户显式填写的只读附加路径。
 
 发现后重点查看：
 
@@ -747,6 +755,8 @@ $body = @{
   mode = "machine"
   adapter = "自动识别"
   max_files = 500
+  user_scope = "current-user"
+  execution_mode = "readonly"
   scan_skills = $true
   run_local_analyzers = $true
   use_existing_sca = $false
@@ -758,6 +768,23 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/api/v1/quick-scans `
   -Body $body `
   -ContentType "application/json"
+```
+
+验证 dry-run 红队模式：
+
+```powershell
+$dryRun = @{
+  mode = "path"
+  target_path = "tests\fixtures\sample_agent_project"
+  max_files = 50
+  user_scope = "readable-users"
+  execution_mode = "dry-run-redteam"
+} | ConvertTo-Json
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $dryRun -ContentType "application/json"
+$scan.effective_user_scope              # current-user
+$scan.scan_options.dry_run_redteam_executed # True
+$scan.redteam_run.external_model_calls  # 0
+$scan.redteam_run.external_tool_calls   # 0
 ```
 
 上传脱敏配置快照也会执行本地规则扫描，不只是保存文件：
