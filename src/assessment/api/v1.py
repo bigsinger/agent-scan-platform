@@ -1318,7 +1318,9 @@ def agent_scan_bridge_hash() -> dict:
 
 def agent_scan_self_test(store: Any, state: dict, body: dict | None = None) -> dict:
     checked_at = utc_now()
-    sample_root = Path(str((body or {}).get("sample_path") or (REPO_ROOT / "tests" / "fixtures" / "sample_agent_project"))).expanduser()
+    body = body or {}
+    sample_root = Path(str(body["sample_path"])).expanduser() if body.get("sample_path") else None
+    sample_display = safe_display_path(sample_root, REPO_ROOT) if sample_root else ""
     rules = rule_catalog()
     mappings = issue_mappings_for_store(store, state)
     mapping_by_code = {str(item.get("code") or item.get("id")): item for item in mappings if item.get("status") != "DISABLED"}
@@ -1330,18 +1332,26 @@ def agent_scan_self_test(store: Any, state: dict, body: dict | None = None) -> d
     ]
     discovery = None
     discovery_error = ""
-    if sample_root.exists():
-        try:
-            discovery = LocalScanEngine(store).run_discovery({"path": str(sample_root), "scope": "agent-scan-compat-self-test", "probe_installed": False})
-            merge_discovery_result_into_state(state, discovery)
-        except Exception as exc:  # pragma: no cover - defensive runtime guard.
-            discovery_error = redact_text(str(exc), max_len=500)
-    matches = analyze_agent_scan_sample(sample_root) if sample_root.exists() else []
+    discovery_payload = (
+        {"path": str(sample_root), "scope": "agent-scan-compat-regression-sample", "probe_installed": False}
+        if sample_root
+        else {"scope": "agent-scan-compat-self-test", "probe_installed": True}
+    )
+    try:
+        discovery = LocalScanEngine(store).run_discovery(discovery_payload)
+        merge_discovery_result_into_state(state, discovery)
+    except Exception as exc:  # pragma: no cover - defensive runtime guard.
+        discovery_error = redact_text(str(exc), max_len=500)
+    matches = analyze_agent_scan_sample(sample_root) if sample_root and sample_root.exists() else []
     matched_rules = sorted({match.rule_id for match in matches})
     matched_codes = sorted({agent_scan_compatible_code(match.rule_id) for match in matches})
     required_codes = set(required.keys())
     missing_codes = sorted(required_codes - set(matched_codes))
     bridge_hash = agent_scan_bridge_hash()
+    sample_requested = sample_root is not None
+    sample_exists = bool(sample_root and sample_root.exists())
+    sample_error = "" if not sample_requested or sample_exists else f"回归样本路径不存在：{sample_display}"
+    default_rule_ready = len(rules) >= 8 and not missing_mappings
     checks = [
         agent_scan_check(
             "local_bridge_hash",
@@ -1365,24 +1375,39 @@ def agent_scan_self_test(store: Any, state: dict, body: dict | None = None) -> d
             {"required": required, "missing": missing_mappings},
         ),
         agent_scan_check(
-            "fixture_discovery",
+            "local_readonly_discovery",
             "FAIL" if discovery_error else ("PASS" if discovery and discovery.hits else "WARN"),
-            "回归样本发现",
-            discovery_error or f"样本发现命中 {len(discovery.hits) if discovery else 0} 个，MCP {len(discovery.mcp_servers) if discovery else 0} 个，Skill {len(discovery.skills) if discovery else 0} 个。",
+            "本机只读发现",
+            discovery_error or f"本机发现命中 {len(discovery.hits) if discovery else 0} 个，MCP {len(discovery.mcp_servers) if discovery else 0} 个，Skill {len(discovery.skills) if discovery else 0} 个。",
             {
-                "sample_root": safe_display_path(sample_root, REPO_ROOT),
+                "scope": discovery_payload.get("scope"),
                 "run_id": discovery.run.get("id") if discovery else "",
                 "hits": len(discovery.hits) if discovery else 0,
                 "mcp": len(discovery.mcp_servers) if discovery else 0,
                 "skills": len(discovery.skills) if discovery else 0,
+                "probe_installed": bool(discovery_payload.get("probe_installed")),
             },
         ),
         agent_scan_check(
             "deterministic_rule_engine",
-            "PASS" if not missing_codes and len(matches) >= 4 else "FAIL",
+            ("FAIL" if sample_error or (sample_requested and (missing_codes or len(matches) < 4)) else "PASS" if default_rule_ready else "FAIL"),
             "规则引擎兼容",
-            f"样本命中 {len(matches)} 条规则，兼容码 {', '.join(matched_codes) or '无'}。",
-            {"matched_rules": matched_rules, "matched_codes": matched_codes, "missing_codes": missing_codes},
+            (
+                sample_error
+                or (
+                    f"显式回归样本命中 {len(matches)} 条规则，兼容码 {', '.join(matched_codes) or '无'}。"
+                    if sample_requested
+                    else "默认自测验证本地 deterministic 规则目录与 Issue Code 映射可加载；如需样本命中覆盖，请显式传 sample_path。"
+                )
+            ),
+            {
+                "sample_requested": sample_requested,
+                "sample_root": sample_display,
+                "matched_rules": matched_rules,
+                "matched_codes": matched_codes,
+                "missing_codes": missing_codes if sample_requested else [],
+                "rule_count": len(rules),
+            },
         ),
         agent_scan_check(
             "cloud_boundary",
@@ -1412,7 +1437,9 @@ def agent_scan_self_test(store: Any, state: dict, body: dict | None = None) -> d
         "mutates_installed_agents": False,
         "agent_runtime_started": False,
         "stdio_mcp_started": False,
-        "sample_root": safe_display_path(sample_root, REPO_ROOT),
+        "target_source": "explicit-regression-sample" if sample_requested else "local-machine",
+        "sample_root": sample_display,
+        "sample_requested": sample_requested,
         "bridge": {
             "sha256": bridge_hash.get("sha256"),
             "files": bridge_hash.get("files", []),
@@ -1426,7 +1453,13 @@ def agent_scan_self_test(store: Any, state: dict, body: dict | None = None) -> d
             "errors": len(discovery.errors) if discovery else (1 if discovery_error else 0),
         },
         "rules": {"count": len(rules), "matched": matched_rules},
-        "issue_codes": {"supported": sorted(mapping_by_code.keys()), "matched": matched_codes, "missing": missing_codes},
+        "issue_codes": {
+            "supported": sorted(mapping_by_code.keys()),
+            "matched": matched_codes,
+            "missing": missing_codes if sample_requested else [],
+            "required": sorted(required_codes),
+            "sample_required": sample_requested,
+        },
         "checks": checks,
         "matches": [
             {

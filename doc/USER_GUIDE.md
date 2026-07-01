@@ -322,7 +322,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/openclaw/se
 
 - 验证本地 `agent-scan` 兼容桥接层的源码哈希。
 - 检查 E001、E004、W019、DM-05 等关键 Issue Code 到本地规则的映射。
-- 使用仓库内回归样本执行只读发现和 deterministic 规则命中测试。
+- 默认执行本机只读发现，读取当前机器的 Agent/MCP/Skill 证据；如需回归样本规则命中覆盖，显式传入 `sample_path`。
 - 生成 `agent-scan-compat-self-test` JSON artifact，记录发现结果、命中规则、兼容码和安全边界。
 
 安全边界：
@@ -344,7 +344,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agent-scan/self-test
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/issues
 ```
 
-`agent-scan/status` 和 `agent-scan/patches` 只读取本地桥接文件哈希、规则数量、Issue 映射和最近自测记录；自测未运行时不会返回“通过”。`patches` 中的每一项都带 `mutates_installed_agents=false`。
+`agent-scan/status` 和 `agent-scan/patches` 只读取本地桥接文件哈希、规则数量、Issue 映射和最近自测记录；自测未运行时不会返回“通过”。`patches` 中的每一项都带 `mutates_installed_agents=false`。默认 `agent-scan/self-test` 不扫描仓库样本路径，也不会启动 stdio MCP；CI 如需固定样本验证，可调用 `POST /api/v1/agent-scan/self-test` 并传入 `{"sample_path":"tests\\fixtures\\sample_agent_project"}`。
 
 agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.discovery_coverage`。该数据由当前运行态适配器目录派生，读取 `agent_instance`、`discovery_hit`、`mcp_server`、`skill` 和最近适配器自测记录；没有证据时显示 `NOT_FOUND` 或 `NOT_RUN`，不会再展示固定勾选、固定“专用 Discoverer”或固定 Cursor/VSCode/Windsurf/Kiro 覆盖行。
 

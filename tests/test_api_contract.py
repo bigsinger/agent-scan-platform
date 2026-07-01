@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -387,6 +388,34 @@ def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_pa
     store.initialize()
     monkeypatch.setattr(api_v1, "get_store", lambda: store)
 
+    class FakeLocalScanEngine:
+        def __init__(self, store):
+            self.store = store
+
+        def run_discovery(self, payload):
+            assert "path" not in payload
+            assert payload["scope"] == "agent-scan-compat-self-test"
+            assert payload["probe_installed"] is True
+            result = DiscoveryResult(
+                run={
+                    "id": "disc_agent_scan_local",
+                    "status": "COMPLETED",
+                    "scope": payload["scope"],
+                    "hit_count": 3,
+                    "agent_count": 1,
+                    "mcp_count": 1,
+                    "skill_count": 1,
+                    "error_count": 0,
+                }
+            )
+            result.hits.append({"id": "hit_codex_local", "type": "Agent", "agent": "Codex", "path": "<program-files>/Codex.exe", "path_hash": "codex", "status": "已安装"})
+            result.mcp_servers.append({"id": "mcp_codex_local", "name": "codex-local-mcp", "agent": "Codex", "status": "未握手"})
+            result.skills.append({"id": "skill_codex_local", "name": "codex-skill", "agent": "Codex", "status": "已发现"})
+            result.agents.append({"id": "agt_codex_local", "name": "Codex · Local", "adapter": "Codex", "status": "ACTIVE"})
+            return result
+
+    monkeypatch.setattr(api_v1, "LocalScanEngine", FakeLocalScanEngine)
+
     status_before = client.get("/api/v1/agent-scan/status")
     assert status_before.status_code == 200
     assert status_before.json()["status"] == "NEEDS_SELF_TEST"
@@ -415,9 +444,17 @@ def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_pa
     assert payload["mutates_installed_agents"] is False
     assert payload["agent_runtime_started"] is False
     assert payload["stdio_mcp_started"] is False
-    assert {"E001", "E004", "W019", "DM-05"}.issubset(set(payload["issue_codes"]["matched"]))
+    assert payload["target_source"] == "local-machine"
+    assert payload["sample_requested"] is False
+    assert payload["sample_root"] == ""
+    assert {"E001", "E004", "W019", "DM-05"}.issubset(set(payload["issue_codes"]["supported"]))
+    assert payload["issue_codes"]["matched"] == []
+    assert payload["issue_codes"]["missing"] == []
     assert payload["discovery"]["mcp"] >= 1
     assert payload["discovery"]["skills"] >= 1
+    assert "fixture_discovery" not in {check["id"] for check in payload["checks"]}
+    assert any(check["id"] == "local_readonly_discovery" for check in payload["checks"])
+    assert "tests/fixtures" not in json.dumps(payload, ensure_ascii=False)
     assert payload["artifact"]["kind"] == "agent-scan-compat-self-test"
 
     stored = store.get_record("agent_scan_compat", "agent_scan_compat_local")
@@ -430,6 +467,26 @@ def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_pa
     status_after = client.get("/api/v1/agent-scan/status")
     assert status_after.json()["status"] == "READY"
     assert status_after.json()["self_test"] == "PASS"
+
+
+def test_agent_scan_self_test_sample_path_is_explicit_regression_mode(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "agent-scan-sample-self-test.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    sample_path = Path("tests/fixtures/sample_agent_project")
+
+    response = client.post("/api/v1/agent-scan/self-test", json={"sample_path": str(sample_path)})
+
+    assert response.status_code == 200
+    payload = response.json()["self_test"]
+    assert payload["status"] == "PASS"
+    assert payload["target_source"] == "explicit-regression-sample"
+    assert payload["sample_requested"] is True
+    assert payload["sample_root"].endswith("tests/fixtures/sample_agent_project")
+    assert {"E001", "E004", "W019", "DM-05"}.issubset(set(payload["issue_codes"]["matched"]))
+    assert payload["discovery"]["mcp"] >= 1
+    assert payload["discovery"]["skills"] >= 1
+    assert payload["mutates_installed_agents"] is False
 
 
 def test_codex_discovery_accepts_windowsapps_resource_shim(monkeypatch, tmp_path):
