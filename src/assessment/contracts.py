@@ -179,6 +179,7 @@ GET /api/v1/settings/export
 POST /api/v1/settings/import
 GET /api/v1/sqlite/status
 POST /api/v1/sqlite/backup
+POST /api/v1/backups/{id}/restore-drill
 POST /api/v1/sqlite/vacuum
 GET /api/v1/licenses
 GET /api/v1/licenses/export
@@ -247,7 +248,7 @@ PAGE_API_MAP = {
     "P29": ["GET /api/v1/schedules", "POST /api/v1/schedules", "POST /api/v1/schedules/{id}/run-now"],
     "P30": ["GET /api/v1/integrations", "POST /api/v1/integrations/{id}/test", "POST /api/v1/integrations/{id}/sync"],
     "P31": ["GET /api/v1/settings", "PUT /api/v1/settings", "POST /api/v1/settings/test", "GET /api/v1/settings/export", "POST /api/v1/settings/import"],
-    "P32": ["GET /api/v1/sqlite/status", "POST /api/v1/sqlite/backup", "POST /api/v1/sqlite/vacuum"],
+    "P32": ["GET /api/v1/sqlite/status", "POST /api/v1/sqlite/backup", "POST /api/v1/backups/{id}/restore-drill", "POST /api/v1/sqlite/vacuum"],
     "P33": ["GET /api/v1/licenses", "GET /api/v1/licenses/export"],
     "P34": ["GET /api/v1/completeness", "GET /api/v1/completeness/export"],
     "D01": ["GET /api/v1/adapters/openclaw", "POST /api/v1/adapters/openclaw/self-test"],

@@ -437,6 +437,39 @@ def test_database_maintenance_endpoints():
     assert backups.json()["total"] >= 1
 
 
+def test_sqlite_backup_restore_drill_is_readonly_and_audited(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "restore-drill.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    backup = store.backup_database()
+
+    response = client.post(f"/api/v1/backups/{backup['id']}/restore-drill", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    drill = payload["drill"]
+    assert drill["status"] == "PASS"
+    assert drill["integrity"] == "ok"
+    assert drill["sha256_matches"] is True
+    assert drill["current_database_mutated"] is False
+    assert drill["mutates_installed_agents"] is False
+    assert drill["external_process_started"] is False
+    assert drill["download"].startswith("/api/v1/artifacts/")
+    assert store.get_record("artifact", drill["artifact"]["id"]) is not None
+
+    updated = store.get_record("backup_record", backup["id"])
+    assert updated["last_drill_status"] == "PASS"
+    assert updated["last_drill_artifact_id"] == drill["artifact"]["id"]
+
+    with store.connect() as conn:
+        audit_row = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (backup["id"],),
+        ).fetchone()
+    assert audit_row["action"] == "database.restore_drill"
+    assert "current_database_mutated" in audit_row["payload_json"]
+
+
 def test_sandbox_policy_is_real_review_only_and_audited():
     policy_response = client.get("/api/v1/sandbox-policy")
     assert policy_response.status_code == 200

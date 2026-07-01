@@ -151,6 +151,18 @@ def test_finding_false_positive_ui_is_api_backed():
     assert "误报候选已写入 SQLite" in app_js
 
 
+def test_sqlite_backup_restore_drill_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "恢复演练需在维护窗口手动选择备份" not in html
+    assert "@click=\"runBackupRestoreDrill(b)\"" in html
+    assert "@click=\"runLatestBackupRestoreDrill\"" in html
+    assert "backupDrillResult" in html
+    assert "async runBackupRestoreDrill" in app_js
+    assert "'/api/v1/backups/'+encodeURIComponent(backup.id)+'/restore-drill'" in app_js
+    assert "current_database_mutated" not in html
+
+
 def test_task_retry_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

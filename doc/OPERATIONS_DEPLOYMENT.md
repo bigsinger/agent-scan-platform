@@ -325,7 +325,7 @@ data/
 手工备份：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/backup
+$backup = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/backup
 ```
 
 备份使用 SQLite Online Backup API，不直接复制运行中的数据库文件。备份文件写入：
@@ -361,6 +361,16 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/checkpoint
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/backups
 ```
 
+只读恢复演练：
+
+```powershell
+$drill = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/backups/$($backup.backup.id)/restore-drill"
+$drill.drill.status
+$drill.drill.download
+```
+
+恢复演练只允许读取本系统 `data/backups/` 下的备份文件。后端会重新计算 SHA-256，用 SQLite 只读 URI 执行 `PRAGMA integrity_check`，统计备份内表清单，写入 `sqlite-restore-drill` JSON artifact、`backup_record.last_drill_*` 字段和 `database.restore_drill` 审计事件。它不会覆盖 `data/db/app.db`，不会启动 Uvicorn 以外的外部进程，也不会修改 Codex、Hermes、Claude Code、Cursor 或 MCP 配置。
+
 数据库压缩：
 
 ```powershell
@@ -373,7 +383,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/vacuum
 
 1. `GET /api/v1/health` 返回 `status=ok`。
 2. `data/db/app.db`、`data/artifacts/`、`data/reports/` 可写。
-3. 最近一次备份存在且可读。
+3. 最近一次备份存在，并且 `/api/v1/backups/{id}/restore-drill` 返回 `drill.status=PASS`。
 4. `GET /api/v1/sqlite/status` 表数量和文件大小正常增长。
 5. 前端 `/assessment` 无空白页，浏览器 Console 无 Error。
 

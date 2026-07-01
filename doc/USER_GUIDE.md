@@ -930,10 +930,14 @@ Invoke-WebRequest `
 
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/integrity-check
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/backup
+$backup = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/backup
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/checkpoint
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/backups
+$drill = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/backups/$($backup.backup.id)/restore-drill"
+$drill.drill.status
 ```
+
+恢复演练会以 SQLite 只读 URI 打开 `data/backups/` 下的备份文件，校验备份文件 SHA-256、`PRAGMA integrity_check` 和表清单，并生成 `sqlite-restore-drill` JSON artifact。该操作不会把备份恢复覆盖到当前数据库，不启动或修改 Codex、Hermes、Claude Code、Cursor 或 stdio MCP Server；只写入本系统 SQLite 的演练状态、审计事件和 artifact。
 
 ### 能力管理
 

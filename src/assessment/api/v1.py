@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from pathlib import Path
@@ -20,7 +21,7 @@ from ..scanning import DiscoveryEngine, LocalScanEngine, PassiveGuard
 from ..scanning.redaction import file_digest, redact_text, safe_display_path, stable_hash
 from ..scanning.rules import analyze_text
 from ..scanning.rules import rule_catalog
-from ..store import DATA_DIR, REPO_ROOT, get_store, new_id, utc_now
+from ..store import DATA_DIR, REPO_ROOT, file_sha256, get_store, new_id, utc_now
 
 
 router = APIRouter(prefix="/api/v1", tags=["assessment"])
@@ -419,6 +420,9 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path.startswith("/discovery-hits/") and path.endswith("/ignore"):
         hit_id = path.split("/")[-2]
         result.update(ignore_discovery_hit(store, state, hit_id, body))
+    elif path.startswith("/backups/") and path.endswith("/restore-drill"):
+        backup_id = path.split("/")[-2]
+        result.update(run_backup_restore_drill(store, state, backup_id, body))
     elif path == "/skill-scans":
         result.update(run_skill_scan(store, state, body))
         return result
@@ -668,6 +672,153 @@ def unsupported_write_operation(store: Any, method: str, path: str, body: dict) 
             "mutates_installed_agents": False,
         },
     )
+
+
+def run_backup_restore_drill(store: Any, state: dict, backup_id: str, body: dict | None = None) -> dict:
+    source_table, backup = lookup_backup_record(store, state, backup_id)
+    backup_path = resolve_backup_file(backup)
+    checked_at = utc_now()
+    expected_sha256 = str(backup.get("sha256") or "")
+    actual_sha256 = ""
+    integrity_result = "not_checked"
+    tables: list[str] = []
+    error = ""
+
+    exists = backup_path.exists() and backup_path.is_file()
+    if exists:
+        try:
+            actual_sha256 = file_sha256(backup_path)
+            with sqlite3.connect(backup_path.as_uri() + "?mode=ro&immutable=1", uri=True) as conn:
+                integrity_result = str(conn.execute("PRAGMA integrity_check").fetchone()[0])
+                rows = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                ).fetchall()
+                tables = [str(row[0]) for row in rows]
+        except sqlite3.Error as exc:
+            error = redact_text(str(exc), max_len=300)
+            integrity_result = "error"
+    else:
+        error = "backup file does not exist"
+
+    sha256_matches = bool(actual_sha256) and (not expected_sha256 or actual_sha256 == expected_sha256)
+    status = "PASS" if exists and integrity_result == "ok" and sha256_matches else "FAIL"
+    drill_id = new_id("bdr")
+    drill = {
+        "id": drill_id,
+        "backup_id": backup_id,
+        "status": status,
+        "relative_path": str(backup.get("relative_path") or backup.get("path") or ""),
+        "exists": exists,
+        "integrity": integrity_result,
+        "expected_sha256": expected_sha256,
+        "sha256": actual_sha256,
+        "sha256_matches": sha256_matches,
+        "table_count": len(tables),
+        "tables": tables[:50],
+        "safe_mode": "sqlite-backup-readonly-restore-drill",
+        "current_database_mutated": False,
+        "mutates_installed_agents": False,
+        "external_process_started": False,
+        "checked_at": checked_at,
+    }
+    if error:
+        drill["error"] = error
+
+    artifact_payload = {
+        "schema": "agent-security-sqlite-restore-drill@4.1",
+        "drill": drill,
+        "backup": {
+            "id": backup_id,
+            "source_table": source_table,
+            "relative_path": drill["relative_path"],
+            "schema_version": backup.get("schema_version"),
+            "size": backup.get("size"),
+        },
+        "boundary": "恢复演练只以 SQLite 只读 URI 打开 data/backups 下的备份并写入本系统 artifact/audit；不覆盖当前数据库，不启动或修改已安装 Agent。",
+    }
+    artifact = store.write_artifact(
+        "sqlite-restore-drill",
+        json.dumps(artifact_payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"backup_id": backup_id, "status": status, "safe_mode": "local-readonly"},
+    )
+    drill["artifact"] = artifact
+    drill["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+
+    updated = dict(backup)
+    updated.update(
+        {
+            "last_drill_id": drill_id,
+            "last_drill_status": status,
+            "last_drill_at": checked_at,
+            "last_drill_artifact_id": artifact["id"],
+            "last_drill_download": drill["download"],
+            "last_drill_integrity": integrity_result,
+            "last_drill_sha256_matches": sha256_matches,
+            "updated_at": checked_at,
+        }
+    )
+    record_table = source_table if source_table in {"backup_record", "database_backup"} else "backup_record"
+    updated_backup = store.upsert_record(record_table, updated, status=str(updated.get("status") or status or "VERIFIED"))
+    merge_state_record(state, "backupRecords", updated_backup)
+    audit_event = store.audit_event(
+        "database.restore_drill",
+        "backup_record",
+        backup_id,
+        {
+            "status": status,
+            "integrity": integrity_result,
+            "sha256_matches": sha256_matches,
+            "artifact_id": artifact["id"],
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "current_database_mutated": False,
+        },
+    )
+    return {
+        "drill": drill,
+        "backup": updated_backup,
+        "drill_audit_event": audit_event,
+        "mutates_installed_agents": False,
+        "current_database_mutated": False,
+    }
+
+
+def lookup_backup_record(store: Any, state: dict, backup_id: str) -> tuple[str, dict]:
+    for table in ("backup_record", "database_backup"):
+        record = store.get_record(table, backup_id)
+        if record:
+            return table, record
+    record = find_item(state.get("backupRecords", []), backup_id)
+    if record:
+        return "state", record
+    raise HTTPException(status_code=404, detail={"message": "backup record not found", "backup_id": backup_id})
+
+
+def resolve_backup_file(backup: dict) -> Path:
+    raw_path = str(backup.get("relative_path") or backup.get("path") or backup.get("file") or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail={"message": "backup record has no file path"})
+
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        normalized = raw_path.replace("\\", "/").lstrip("/")
+        if normalized.startswith("data/"):
+            resolved = (REPO_ROOT / normalized).resolve()
+        else:
+            resolved = (DATA_DIR / normalized).resolve()
+
+    backups_dir = (DATA_DIR / "backups").resolve()
+    try:
+        resolved.relative_to(backups_dir)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "backup path must stay under data/backups", "relative_path": raw_path},
+        ) from exc
+    return resolved
 
 
 def get_item_route(path: str, state: dict) -> dict | None:

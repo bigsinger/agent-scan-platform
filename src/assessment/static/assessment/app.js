@@ -84,6 +84,7 @@ data(){
     initial.sandboxTestResult = initial.sandboxTestResult || {status:'未运行', tests:[]};
     initial.quickModes = (initial.quickModes || []).filter(mode => mode.id !== 'fixture');
     initial.backupRecords = initial.backupRecords || [];
+    initial.backupDrillResult = null;
     initial.attackPaths = initial.attackPaths || [];
     initial.policyDrafts = initial.policyDrafts || [];
     initial.scheduleDraft = Object.assign({name:'本机变化扫描', type:'变化扫描', target:'已登记配置快照', target_path:'', trigger:'0 2 * * *', misfire:'跳过', status:'ACTIVE', profile:'quick-experience', max_backlog:1, max_files:100}, initial.scheduleDraft || {});
@@ -744,8 +745,8 @@ data(){
       if(raw.includes('P1') || raw.includes('高危')) return 'high';
       if(raw.includes('P2') || raw.includes('中危') || raw.includes('需关注')) return 'medium';
       if(['ok','safe_mode','idle','disabled'].includes(lower)) return 'low';
-      if(s==='已完成') return 'low';
-      if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS'||s==='OBSERVED') return 'low';
+      if(s==='已完成'||s==='已记录'||s==='已验证') return 'low';
+      if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS'||s==='OBSERVED'||s==='VERIFIED') return 'low';
       if(s==='已发布'||s==='PUBLISHED') return 'low';
       if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED'||s==='READONLY_GENERIC') return 'blue';
@@ -1584,6 +1585,23 @@ data(){
         this.toastMsg('在线备份已创建：'+(res.backup&&res.backup.relative_path || '完成'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
+    },
+    async runBackupRestoreDrill(backup){
+      if(!backup || !backup.id){ this.toastMsg('请选择一条备份记录'); return; }
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/backups/'+encodeURIComponent(backup.id)+'/restore-drill', {});
+        this.backupDrillResult=res.drill || null;
+        if(res.backup){ this.mergeRecords('backupRecords', [res.backup]); }
+        this.sqliteTab='恢复演练';
+        this.toastMsg('恢复演练完成：'+((res.drill&&res.drill.status)||'UNKNOWN'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async runLatestBackupRestoreDrill(){
+      const backup=(this.backupRecords||[])[0];
+      if(!backup){ this.toastMsg('请先创建一次 SQLite 备份'); return; }
+      await this.runBackupRestoreDrill(backup);
     },
     async runSqliteIntegrity(){
       this.opsBusy=true; this.apiError='';
