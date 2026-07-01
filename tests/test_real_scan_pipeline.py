@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,7 +10,7 @@ from assessment.scanning import discovery as discovery_module
 from assessment.scanning.discovery import DiscoveryEngine
 from assessment.scanning.guard import PassiveGuard
 from assessment.scanning.models import DiscoveryResult
-from assessment.store import AssessmentStore
+from assessment.store import DATA_DIR, AssessmentStore
 
 
 client = TestClient(app)
@@ -276,6 +277,16 @@ def test_passive_guard_baselines_and_detects_hash_changes(tmp_path):
     first_result = guard.check()
     assert first_result["event"]["new_baselines"] == 1
     assert first_result["event"]["changed"] == 0
+    assert first_result["event"]["safe_mode"] == "local-readonly"
+    assert first_result["event"]["mutates_installed_agents"] is False
+    assert first_result["event"]["starts_stdio_mcp"] is False
+    assert first_result["download"].startswith("/api/v1/artifacts/")
+    first_artifact = store.get_record("artifact", first_result["event"]["artifact_id"])
+    assert first_artifact is not None
+    assert first_artifact["kind"] == "passive-guard-check"
+    first_payload = json.loads((DATA_DIR / first_artifact["relative_path"]).read_text(encoding="utf-8"))
+    assert first_payload["schema"] == "agent-security-passive-guard-check@4.1"
+    assert first_payload["boundary"]["mutates_installed_agents"] is False
 
     second = DiscoveryResult(
         run={"id": "disc_2", "status": "COMPLETED"},
@@ -288,4 +299,6 @@ def test_passive_guard_baselines_and_detects_hash_changes(tmp_path):
 
     assert second_result["event"]["changed"] == 1
     assert second_result["changes"][0]["severity"] == "高危 P1"
+    assert second_result["changes"][0]["mutates_installed_agents"] is False
+    assert second_result["guard"]["last_download"].startswith("/api/v1/artifacts/")
     assert store.list_records("defense_recommendation")

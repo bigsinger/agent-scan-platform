@@ -48,7 +48,7 @@
   </div>
 
   <div class="card">
-    <div class="card-head"><div><h2>只读防御监测</h2><div class="desc">对已发现 Agent 配置、MCP 和 Skill 做哈希基线与变化检测；只写本系统 SQLite，不修改 Codex、Hermes 或任何已安装 Agent。</div></div><button class="btn primary" :disabled="quickBusy" @click="runGuardCheck">运行 Guard 检查</button></div>
+    <div class="card-head"><div><h2>只读防御监测</h2><div class="desc">对已发现 Agent 配置、MCP 和 Skill 做哈希基线与变化检测；只写本系统 SQLite，不修改 Codex、Hermes 或任何已安装 Agent。</div></div><div class="actions"><button class="btn" v-if="guardLastDownload || guardStatus.last_download" @click="downloadGuardEvidence">下载证据</button><button class="btn primary" :disabled="quickBusy" @click="runGuardCheck">运行 Guard 检查</button></div></div>
     <div class="grid g4">
       <div class="metric"><div class="metric-label">Guard 状态</div><div class="metric-value" style="font-size:18px">{{guardStatus.state}}</div></div>
       <div class="metric"><div class="metric-label">监测文件</div><div class="metric-value">{{guardStatus.watched_files||0}}</div></div>

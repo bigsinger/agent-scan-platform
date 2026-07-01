@@ -117,9 +117,12 @@ $diag.scenario.counts
 只读 Guard 检查：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/guard/check
+$guard = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/guard/check
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($guard.download)" -OutFile passive-guard-check.json
 ```
+
+`guard/check` 会写入 `guard_event`、`defense_recommendation` 和 `passive-guard-check` artifact。artifact 中必须能看到 `safe_mode=local-readonly`、`mutates_installed_agents=false`、`starts_stdio_mcp=false`，用于证明检查没有改写 Codex/Hermes/MCP 配置，也没有启动 stdio MCP。
 
 沙箱策略自测：
 
@@ -795,8 +798,9 @@ python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8765
 当前 schema 使用通用 JSON 行表，升级风险较低，但仍必须备份。Guard 防御监测相关数据落在：
 
 - `config_snapshot`：Agent 配置、MCP、Skill 的路径哈希与 SHA-256 基线。
-- `guard_event`：每次只读 Guard 检查的统计结果。
+- `guard_event`：每次只读 Guard 检查的统计结果、artifact ID 与下载路径。
 - `defense_recommendation`：配置变化、stdio MCP 审批等防御建议。
+- `artifact`：`passive-guard-check` JSON 证据快照，可用于企业 POC 留痕。
 
 ## 14. 与外部项目的参考关系
 

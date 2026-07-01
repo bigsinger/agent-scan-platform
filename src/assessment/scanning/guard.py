@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ..store import AssessmentStore, new_id, utc_now
@@ -36,6 +37,8 @@ class PassiveGuard:
             "high_risk_recommendations": len(high),
             "last_check_at": last_event.get("created_at") if last_event else "",
             "last_check_id": last_event.get("id") if last_event else "",
+            "last_download": last_event.get("download") if last_event else "",
+            "last_artifact_id": last_event.get("artifact_id") if last_event else "",
             "policy": {
                 "mutates_installed_agents": False,
                 "starts_stdio_mcp": False,
@@ -94,11 +97,46 @@ class PassiveGuard:
             "changed": len(changes),
             "missing": len(deleted),
             "recommendations": len(recommendations),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "starts_stdio_mcp": False,
+            "evidence_schema": "agent-security-passive-guard-check@4.1",
         }
+        artifact_payload = {
+            "schema": event["evidence_schema"],
+            "event": event,
+            "changes": changes,
+            "missing": deleted[:100],
+            "recommendations": recommendations,
+            "discovery": {
+                "agents": discovery.agents,
+                "mcp_servers": discovery.mcp_servers,
+                "skills": discovery.skills[:200],
+                "errors": discovery.errors,
+            },
+            "boundary": {
+                "safe_mode": event["safe_mode"],
+                "mutates_installed_agents": False,
+                "starts_stdio_mcp": False,
+                "network_probe": "disabled",
+                "side_effects": "local sqlite artifact and audit only",
+            },
+        }
+        artifact = self.store.write_artifact(
+            "passive-guard-check",
+            json.dumps(artifact_payload, ensure_ascii=False, indent=2),
+            suffix="json",
+            metadata={"guard_event_id": event["id"], "safe_mode": event["safe_mode"]},
+        )
+        event["artifact_id"] = artifact["id"]
+        event["artifact_path"] = artifact.get("relative_path", "")
+        event["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
         self.store.upsert_record("guard_event", event, status="COMPLETED")
         self.store.audit_event("guard.check", "guard_event", event["id"], event)
         return {
             "event": event,
+            "artifact": artifact,
+            "download": event["download"],
             "changes": changes,
             "missing": deleted[:20],
             "recommendations": recommendations,
@@ -125,6 +163,9 @@ class PassiveGuard:
             "status": "OPEN",
             "created_at": utc_now(),
             "recommendation": "请复核配置差异；若涉及 stdio MCP、外部命令或 Secret 变更，先保持默认拒绝并重新测评。",
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "source": "passive-guard",
         }
         self.store.upsert_record("defense_recommendation", change, status="OPEN")
         return change
@@ -148,6 +189,10 @@ class PassiveGuard:
                 "created_at": utc_now(),
                 "recommendation": "保持默认拒绝；仅在确认命令、参数、工作目录和环境变量后允许一次或本任务允许。",
                 "servers": [server.get("name") for server in pending_stdio[:20]],
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "starts_stdio_mcp": False,
+                "source": "passive-guard",
             }
             self.store.upsert_record("defense_recommendation", rec, status="OPEN")
             recommendations.append(rec)
@@ -162,6 +207,9 @@ class PassiveGuard:
                 "status": "OPEN",
                 "created_at": utc_now(),
                 "recommendation": "确认是否为卸载、迁移、权限变化或路径不可读；不要自动清理历史证据。",
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "source": "passive-guard",
             }
             self.store.upsert_record("defense_recommendation", rec, status="OPEN")
             recommendations.append(rec)

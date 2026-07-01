@@ -212,11 +212,12 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 接口：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/guard/check
+$guard = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/guard/check
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($guard.download)" -OutFile passive-guard-check.json
 ```
 
-首次运行会建立基线；后续运行如果检测到配置哈希变化，会在总览页展示待处理建议，并在数据库中写入 `defense_recommendation`。
+首次运行会建立基线；后续运行如果检测到配置哈希变化，会在总览页展示待处理建议，并在数据库中写入 `defense_recommendation`。每次检查都会生成 `passive-guard-check` JSON 证据制品，包含变化、缺失、建议、发现摘要和 `mutates_installed_agents=false` 边界声明；总览页“下载证据”按钮会打开最近一次检查的 artifact。
 
 ## 4.2 执行安全 / 沙箱策略
 

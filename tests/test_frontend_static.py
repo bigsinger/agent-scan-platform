@@ -184,6 +184,16 @@ def test_dashboard_health_self_test_ui_is_api_backed():
     assert "/api/v1/health/self-test" in app_js
 
 
+def test_dashboard_guard_check_exports_evidence():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "@click=\"runGuardCheck\"" in html
+    assert "@click=\"downloadGuardEvidence\"" in html
+    assert "guardLastDownload" in app_js
+    assert "downloadGuardEvidence()" in app_js
+    assert "/api/v1/guard/check" in app_js
+
+
 def test_profile_template_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

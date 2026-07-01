@@ -66,6 +66,7 @@ data(){
     initial.selectedConsent = initial.selectedConsent || (initial.consents || [])[0] || {};
     initial.sqliteStatus = initial.sqliteStatus || {file_bytes:0, mode:'WAL', state:'未知', pragma:{}};
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
+    initial.guardLastDownload = initial.guardLastDownload || initial.guardStatus.last_download || '';
     initial.supervisorStatus = initial.supervisorStatus || {state:'IDLE', status:'ok', queue:0, process_count:0, slots:{running:0,max:2,available:2}, safe_mode:false};
     initial.selectedProcess = initial.selectedProcess || {};
     initial.selectedJob = initial.selectedJob || {};
@@ -1437,12 +1438,17 @@ data(){
       try {
         const res=await this.apiPost('/api/v1/guard/check', {});
         this.guardStatus=res.guard || this.guardStatus;
+        this.guardLastDownload=res.download || (res.event && res.event.download) || this.guardStatus.last_download || '';
         this.mergeRecords('agentAssets', (res.discovery && res.discovery.agents) || []);
         this.mergeRecords('mcpServers', (res.discovery && res.discovery.mcp_servers) || []);
         this.mergeRecords('skills', (res.discovery && res.discovery.skills) || []);
         this.toastMsg('只读 Guard 检查完成：变化 '+((res.event&&res.event.changed)||0)+'，建议 '+((res.event&&res.event.recommendations)||0));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.quickBusy=false; }
+    },
+    downloadGuardEvidence(){
+      const url=this.guardLastDownload || (this.guardStatus && this.guardStatus.last_download);
+      if(url) window.open(url, '_blank', 'noopener');
     },
     async createRuntimeReport(task){
       this.opsBusy=true; this.apiError='';
