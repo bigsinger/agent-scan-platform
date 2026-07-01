@@ -288,6 +288,18 @@ def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_pa
     store.initialize()
     monkeypatch.setattr(api_v1, "get_store", lambda: store)
 
+    status_before = client.get("/api/v1/agent-scan/status")
+    assert status_before.status_code == 200
+    assert status_before.json()["status"] == "NEEDS_SELF_TEST"
+    assert status_before.json()["self_test"] == "NOT_RUN"
+    assert status_before.json()["mutates_installed_agents"] is False
+    patches_before = client.get("/api/v1/agent-scan/patches")
+    assert patches_before.status_code == 200
+    patch_body = patches_before.json()
+    assert patch_body["total"] >= 5
+    assert "0001-local-pipeline" not in json.dumps(patch_body, ensure_ascii=False)
+    assert all(item["mutates_installed_agents"] is False for item in patch_body["items"])
+
     response = client.post("/api/v1/agent-scan/self-test", json={})
     assert response.status_code == 200
     payload = response.json()["self_test"]
@@ -309,6 +321,9 @@ def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_pa
     compat = client.get("/api/v1/agent-scan/compat")
     assert compat.status_code == 200
     assert compat.json()["last_self_test_status"] == "PASS"
+    status_after = client.get("/api/v1/agent-scan/status")
+    assert status_after.json()["status"] == "READY"
+    assert status_after.json()["self_test"] == "PASS"
 
 
 def test_codex_discovery_accepts_windowsapps_resource_shim(monkeypatch, tmp_path):

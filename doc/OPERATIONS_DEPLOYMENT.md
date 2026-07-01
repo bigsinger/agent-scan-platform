@@ -79,11 +79,15 @@ http://127.0.0.1:8000/assessment
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 $selfTest = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
+$supervisor = Invoke-RestMethod http://127.0.0.1:8000/api/v1/execution-supervisor
 $selfTest.self_test.status
 $selfTest.self_test.download
+$supervisor.supervisor.state
 ```
 
 `/api/v1/health/self-test` 会执行企业 POC 前建议的本地控制面自检：SQLite 状态、SQLite 完整性、本地静态资源、规则目录、执行中心和 artifact 写入能力。该接口只写本系统 SQLite 与 `data/artifacts/system-health-self-test`，不会启动或修改 Codex、Hermes、Claude Code、Cursor、MCP Server 或任何已安装 Agent。
+
+测评总览“运行健康”表应按上述自检、`execution-supervisor`、SQLite 状态和 agent-scan 兼容状态渲染；未运行自检或兼容自测时应显示 `NOT_RUN` / `NEEDS_SELF_TEST`，不得默认显示健康。
 
 API 实现边界检查：
 
@@ -149,15 +153,19 @@ $hermes.self_test.download
 agent-scan 兼容中心自测：
 
 ```powershell
+$status = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/status
 $compat = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/compat
+$patches = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/patches
 $selfTest = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agent-scan/self-test
 
+$status.status
+$patches.items | Select-Object id,status,mutates_installed_agents
 $selfTest.self_test.status
 $selfTest.self_test.issue_codes.matched
 $selfTest.self_test.download
 ```
 
-该自测只读取本地兼容桥接源码和仓库内回归样本，验证 E001、E004、W019、DM-05 等关键兼容码、deterministic 规则引擎、发现结果、SQLite/artifact 写入和云连接边界。它不会访问 Snyk 云 API，不需要 Token，不启动已安装 Agent 或 stdio MCP Server，不修改 Codex/Hermes/Claude Code/OpenClaw 配置。
+`status` 与 `patches` 只读取本地桥接文件哈希、规则目录、Issue 映射和最近自测记录；自测未运行时状态为 `NEEDS_SELF_TEST` / `NOT_RUN`。自测只读取本地兼容桥接源码和仓库内回归样本，验证 E001、E004、W019、DM-05 等关键兼容码、deterministic 规则引擎、发现结果、SQLite/artifact 写入和云连接边界。它不会访问 Snyk 云 API，不需要 Token，不启动已安装 Agent 或 stdio MCP Server，不修改 Codex/Hermes/Claude Code/OpenClaw 配置。
 
 测评模板校验：
 

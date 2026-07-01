@@ -62,8 +62,16 @@ def test_dashboard_health_self_test_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "健康检查通过" not in html
-    assert "@click=\"runHealthSelfTest\"" in html
+    assert "1 process" not in html
+    assert "2/2 slots" not in html
+    assert "schema 4" not in html
+    assert "<span class=\"badge low\">健康</span>" not in html
+    assert "agent-scan 0.5.12</button>" not in html
+    assert "v-for=\"row in dashboardHealthRows\"" in html
+    assert "runDashboardHealthAction(row)" in html
     assert "healthSelfTestResult" in html
+    assert "dashboardHealthRows()" in app_js
+    assert "runDashboardHealthAction(row)" in app_js
     assert "async runHealthSelfTest" in app_js
     assert "/api/v1/health/self-test" in app_js
 

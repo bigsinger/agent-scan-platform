@@ -54,6 +54,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 
 返回 `PASS` 表示本地控制面、SQLite、静态资源、规则目录和 artifact 写入链路可用；返回 `WARN` 或 `FAIL` 时优先查看 `checks` 明细和下载的 artifact。
 
+测评总览的“运行健康”表不会默认宣称全部健康：FastAPI 行显示最近一次 `/api/v1/health/self-test` 结果，TaskSupervisor 行来自 `/api/v1/execution-supervisor`，SQLite 行来自当前 `database_status()`，agent-scan 行来自 `/api/v1/agent-scan/compat` 的最近自测状态。未运行自测时会显示 `NOT_RUN` 或 `NEEDS_SELF_TEST`。
+
 ## 2. 可以扫描什么
 
 支持目标：
@@ -326,10 +328,14 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/adapters/openclaw/se
 常用 API：
 
 ```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/status
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/compat
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/patches
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agent-scan/self-test
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/issues
 ```
+
+`agent-scan/status` 和 `agent-scan/patches` 只读取本地桥接文件哈希、规则数量、Issue 映射和最近自测记录；自测未运行时不会返回“通过”。`patches` 中的每一项都带 `mutates_installed_agents=false`。
 
 ## 5. MCP 启动审批
 

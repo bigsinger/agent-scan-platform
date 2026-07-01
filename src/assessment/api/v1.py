@@ -319,13 +319,13 @@ async def generic_get(resource: str, request: Request) -> dict:
     if path == "/openapi.json":
         return request.app.openapi()
     if path == "/agent-scan/status":
-        return {"status": "已固定", "cloud": "关闭", "patches": 4, "self_test": "通过"}
+        return agent_scan_status()
     if path == "/agent-scan/compat":
         return agent_scan_compat()
     if path == "/agent-scan/issues":
         return page(issue_mappings(state), request)
     if path == "/agent-scan/patches":
-        return {"items": [{"id": "0001-local-pipeline", "status": "通过"}, {"id": "0002-adapters", "status": "通过"}], "total": 2}
+        return page(agent_scan_patch_rows(), request)
     if path == "/execution-supervisor":
         return {"supervisor": executor_health(state), "jobs": state.get("jobs", []), "processes": state.get("processes", [])}
     if path == "/executor/health":
@@ -860,6 +860,98 @@ def agent_scan_compat() -> dict:
         },
         "checks": compat.get("checks", []),
     }
+
+
+def agent_scan_status() -> dict:
+    compat = agent_scan_compat()
+    bridge_ready = bool(compat.get("local_bridge_sha256"))
+    rules_ready = int(compat.get("rule_count") or 0) > 0
+    mappings_ready = int(compat.get("mapping_count") or 0) > 0
+    self_test_status = str(compat.get("last_self_test_status") or "NOT_RUN")
+    if not (bridge_ready and rules_ready and mappings_ready):
+        status = "DEGRADED"
+    elif self_test_status == "PASS":
+        status = "READY"
+    elif self_test_status == "NOT_RUN":
+        status = "NEEDS_SELF_TEST"
+    else:
+        status = self_test_status
+    return {
+        "id": "agent_scan_compat_local",
+        "status": status,
+        "mode": compat.get("mode"),
+        "version": compat.get("version"),
+        "cloud": "disabled" if not compat.get("cloud_required") else "requires-configuration",
+        "cloud_required": bool(compat.get("cloud_required")),
+        "source_state": compat.get("source_state"),
+        "local_bridge_sha256": compat.get("local_bridge_sha256"),
+        "rule_count": compat.get("rule_count", 0),
+        "mapping_count": compat.get("mapping_count", 0),
+        "self_test": self_test_status,
+        "last_self_test_at": compat.get("last_self_test_at", ""),
+        "patches": len(agent_scan_patch_rows()),
+        "mutates_installed_agents": False,
+        "checked_at": utc_now(),
+    }
+
+
+def agent_scan_patch_rows() -> list[dict]:
+    compat = agent_scan_compat()
+    bridge_files = compat.get("local_bridge_files") or []
+    rows = [
+        {
+            "id": "local_bridge_hash",
+            "name": "本地兼容层文件哈希",
+            "status": "READY" if compat.get("local_bridge_sha256") else "MISSING",
+            "evidence": compat.get("local_bridge_sha256") or "",
+            "detail": f"{len(bridge_files)} files",
+            "mutates_installed_agents": False,
+        },
+        {
+            "id": "rule_catalog",
+            "name": "本地 deterministic 规则目录",
+            "status": "READY" if int(compat.get("rule_count") or 0) > 0 else "MISSING",
+            "evidence": str(compat.get("rule_count") or 0),
+            "detail": "local rule_catalog()",
+            "mutates_installed_agents": False,
+        },
+        {
+            "id": "issue_mapping",
+            "name": "agent-scan Issue Code 映射",
+            "status": "READY" if int(compat.get("mapping_count") or 0) > 0 else "MISSING",
+            "evidence": str(compat.get("mapping_count") or 0),
+            "detail": ",".join(compat.get("supported_issue_codes") or []),
+            "mutates_installed_agents": False,
+        },
+        {
+            "id": "compat_self_test",
+            "name": "本地兼容自测",
+            "status": compat.get("last_self_test_status") or "NOT_RUN",
+            "evidence": compat.get("last_self_test_artifact_id") or "",
+            "detail": compat.get("last_self_test_at") or "未运行",
+            "mutates_installed_agents": False,
+        },
+        {
+            "id": "cloud_boundary",
+            "name": "云分析边界",
+            "status": "DISABLED" if not compat.get("cloud_required") else "REQUIRES_CONFIG",
+            "evidence": str(compat.get("cloud_analysis") or ""),
+            "detail": "默认本地离线，不要求 Snyk Token",
+            "mutates_installed_agents": False,
+        },
+    ]
+    for file_item in bridge_files:
+        rows.append(
+            {
+                "id": "bridge_file_" + stable_hash(str(file_item.get("path") or file_item.get("sha256") or ""), 12),
+                "name": str(file_item.get("path") or "bridge file"),
+                "status": "READY" if file_item.get("sha256") else "MISSING",
+                "evidence": str(file_item.get("sha256") or ""),
+                "detail": "bridge file digest",
+                "mutates_installed_agents": False,
+            }
+        )
+    return rows
 
 
 def default_issue_mappings() -> list[dict]:

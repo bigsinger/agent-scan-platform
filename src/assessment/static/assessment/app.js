@@ -334,6 +334,46 @@ data(){
       const r=this.reportRenderingStatus;
       return ['callout', r.html_status==='READY' && r.json_status==='READY' ? 'green' : 'amber'];
     },
+    sqliteDashboardStatus(){
+      return this.sqliteStatus && this.sqliteStatus.state === '健康' ? 'PASS' : (this.sqliteStatus && this.sqliteStatus.state || 'NOT_RUN');
+    },
+    dashboardHealthRows(){
+      const supervisor=this.supervisorStatus || {};
+      const slots=supervisor.slots || {};
+      const compat=this.agentScanCompat || {};
+      return [
+        {
+          component:'FastAPI Control',
+          detail:this.healthSelfTestResult&&this.healthSelfTestResult.id ? this.healthSelfTestResult.id : '本地 API 进程',
+          status:this.healthSelfTestResult&&this.healthSelfTestResult.status || 'NOT_RUN',
+          action:'health'
+        },
+        {
+          component:'TaskSupervisor',
+          detail:'running '+(slots.running||0)+'/'+(slots.max||0)+' · queue '+(supervisor.queue||0),
+          status:supervisor.state || supervisor.status || 'IDLE',
+          action:'execution'
+        },
+        {
+          component:'agent-scan Bridge',
+          detail:(compat.version||'local')+' · rules '+(compat.rule_count||0)+' · mappings '+(compat.mapping_count||0),
+          status:compat.last_self_test_status || compat.compatibility&&compat.compatibility.status || 'NOT_RUN',
+          action:'agent-scan'
+        },
+        {
+          component:'SQLite WAL',
+          detail:(this.sqliteStatus.mode||'UNKNOWN')+' · tables '+((this.sqliteStatus.tables||[]).length),
+          status:this.sqliteDashboardStatus,
+          action:'sqlite'
+        },
+        {
+          component:'Snyk Cloud Analysis',
+          detail:compat.cloud_required?'requires configuration':'local-only boundary',
+          status:compat.cloud_required?'REQUIRES_CONFIG':'DISABLED',
+          action:'agent-scan'
+        }
+      ];
+    },
     selectedAgentComponents(){
       return (this.agentDetail && this.agentDetail.components) || (this.components || []).filter(c=>this.recordMatchesAgent(c, this.selectedAsset));
     },
@@ -543,16 +583,18 @@ data(){
     },
     statusClass(s){
       const raw=String(s||'');
+      const lower=raw.toLowerCase();
       if(raw.includes('P0') || raw.includes('严重')) return 'critical';
       if(raw.includes('P1') || raw.includes('高危')) return 'high';
       if(raw.includes('P2') || raw.includes('中危') || raw.includes('需关注')) return 'medium';
+      if(['ok','safe_mode','idle','disabled'].includes(lower)) return 'low';
       if(s==='已完成') return 'low';
       if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS') return 'low';
       if(s==='已发布'||s==='PUBLISHED') return 'low';
       if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED') return 'blue';
       if(s==='等待审批'||s==='部分完成'||s==='WARN'||s==='NOT_RUN'||s==='未运行'||s==='NO_MATCH'||s==='DRAFT'||s==='草稿') return 'medium';
-      if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE') return 'medium';
+      if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE'||s==='REQUIRES_CONFIG'||s==='NEEDS_SELF_TEST') return 'medium';
       if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED'||s==='MISSING'||s==='NOT_FOUND') return 'critical';
       return 'gray';
     },
@@ -666,6 +708,13 @@ data(){
     },
     downloadRedteamRun(){
       if(this.selectedRedteamRun && this.selectedRedteamRun.download) window.open(this.selectedRedteamRun.download, '_blank', 'noopener');
+    },
+    runDashboardHealthAction(row){
+      const action=row && row.action;
+      if(action==='health') return this.runHealthSelfTest();
+      if(action==='execution') return this.go('execution');
+      if(action==='agent-scan') return this.go('agent-scan');
+      if(action==='sqlite') return this.go('sqlite');
     },
     async createRedteamCaseDraft(){
       this.redteamBusy=true; this.apiError='';
