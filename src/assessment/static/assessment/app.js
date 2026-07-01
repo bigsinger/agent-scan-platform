@@ -275,6 +275,77 @@ data(){
         lastTestMatches:this.ruleTestResult ? ((this.ruleTestResult.matches||[]).length) : 0
       };
     },
+    assessmentRulePackages(){
+      const adapter=String(this.form.adapter || (this.selectedAsset&&this.selectedAsset.adapter) || '自动识别');
+      const productRules=(this.ruleRows || []).filter(r=>adapter && adapter!=='自动识别' && String(r.name||r.id||r.source||'').toLowerCase().includes(adapter.toLowerCase()));
+      return [
+        {name:'本地规则目录', status:this.ruleStats.total?'ACTIVE':'EMPTY', detail:this.ruleStats.total+' 条 deterministic 规则'},
+        {name:'agent-scan 兼容映射', status:(this.agentScanCompat&&this.agentScanCompat.mapping_count)?'ACTIVE':'NOT_RUN', detail:((this.agentScanCompat&&this.agentScanCompat.mapping_count)||0)+' 条 Issue 映射'},
+        {name:adapter+' 适配器规则', status:productRules.length?'ACTIVE':'INHERITED', detail:productRules.length ? productRules.length+' 条产品匹配规则' : '使用通用本地规则'},
+        {name:'MCP / Tool', status:(this.mcpServers||[]).length?'ACTIVE':'NOT_FOUND', detail:(this.mcpServers||[]).length+' 个 MCP Server 记录'},
+        {name:'Skill / SCA', status:(this.skills||[]).length?'ACTIVE':'NOT_FOUND', detail:(this.skills||[]).length+' 个 Skill 记录'},
+        {name:'Memory / RAG', status:(this.skills||[]).some(s=>/memory|rag|checkpoint/i.test(String(s.name||s.path||s.desc||'')))?'ACTIVE':'NOT_ASSERTED', detail:'按本机发现结果启用'}
+      ];
+    },
+    dynamicCasePackages(){
+      const cases=[...(this.redCases||[]), ...(this.caseLibrary||[])];
+      const seen=new Set();
+      const rows=[];
+      cases.forEach(c => {
+        const key=String(c.type || c.name || '').trim();
+        if(!key || seen.has(key)) return;
+        seen.add(key);
+        rows.push({name:key, status:c.status || 'AVAILABLE', detail:(c.variants||0)+' variants · '+(c.evaluator||'deterministic')});
+      });
+      if(rows.length) return rows.slice(0, 6);
+      return [{name:'动态用例', status:'EMPTY', detail:'当前 SQLite 尚未加载红队用例'}];
+    },
+    selectedTaskProfile(){
+      const task=this.selectedTask || {};
+      const id=task.profile_id || task.profile || '';
+      return (this.profiles || []).find(p=>[p.id,p.name].includes(id)) || {};
+    },
+    parsedProfileRuleCount(){
+      const profile=this.selectedProfile || {};
+      const raw=profile.rules_count || profile.rules || this.ruleStats.total || 0;
+      const parsed=Number.parseInt(String(raw), 10);
+      return Number.isFinite(parsed) ? parsed : 0;
+    },
+    selectedProfilePlanYaml(){
+      const profile=this.selectedProfile || {};
+      const formats=Array.isArray(profile.report_formats) ? profile.report_formats.join(', ') : (profile.report_formats || 'HTML, JSON');
+      const cases=Number.parseInt(String(profile.cases_count || profile.cases || 0), 10) || 0;
+      return [
+        'profile: '+(profile.name || profile.id || 'local-template-draft'),
+        'rules:',
+        '  local_catalog: '+this.parsedProfileRuleCount,
+        '  product: '+(profile.adapter || profile.product || 'auto'),
+        'casepacks:',
+        '  count: '+cases,
+        'safe_mode: '+(profile.safe_mode || profile.mode || 'local-readonly'),
+        'max_parallel_jobs: '+(profile.max_parallel_jobs || profile.parallel_jobs || 2),
+        'stdio_mcp: '+(profile.mcp_policy || profile.stdio_mcp || 'per-server-consent'),
+        'remote_analysis: '+(profile.remote_analysis ? 'true' : 'false'),
+        'report_formats: '+formats
+      ].join('\n');
+    },
+    taskPlanSummaryRows(){
+      const task=this.selectedTask || {};
+      const plan=(task.plan && typeof task.plan==='object') ? task.plan : {};
+      const profile=this.selectedTaskProfile || {};
+      const parsedRules=Number.parseInt(String(task.rules_count || profile.rules_count || profile.rules || this.ruleStats.total || 0), 10);
+      const ruleCount=Number.isFinite(parsedRules) ? parsedRules : 0;
+      const remoteValue=[task.remote_analysis, plan.remote_analysis, profile.remote_analysis].find(v=>v!==undefined && v!==null && v!=='');
+      const remoteEnabled=remoteValue===true || String(remoteValue).toLowerCase()==='true' || remoteValue==='开启';
+      return [
+        {name:'Adapter', value:task.adapter || plan.adapter || '自动识别'},
+        {name:'Profile', value:task.profile || task.profile_id || profile.name || '未选择'},
+        {name:'Safe Mode', value:task.safe_mode || plan.safe_mode || profile.safe_mode || 'local-readonly'},
+        {name:'远程分析', value:remoteEnabled ? '开启' : '关闭'},
+        {name:'规则', value:ruleCount ? ruleCount+' 条本地规则' : '未加载规则'},
+        {name:'stdio MCP', value:task.mcp_policy || plan.stdio_mcp || profile.mcp_policy || 'per-server-consent'}
+      ];
+    },
     selectedRuleDefinition(){
       const rule=this.selectedRule || {};
       if(!rule.id) return '尚未选择规则。请先从规则列表选择一条本地规则。';
@@ -886,7 +957,7 @@ data(){
         const res=await this.apiPost('/api/v1/profiles', {
           name:'本机测评模板草稿 '+new Date().toLocaleString('zh-CN', {hour12:false}),
           desc:'本地只读测评模板，可复制后按客户范围调整规则、预算和报告格式。',
-          rules:(this.ruleRows && this.ruleRows.length) || 84,
+          rules:this.ruleStats.total,
           cases:0,
           mode:'local-readonly',
           safe_mode:'local-readonly',

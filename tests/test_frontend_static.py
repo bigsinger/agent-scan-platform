@@ -109,6 +109,29 @@ def test_profile_template_ui_is_api_backed():
     assert "/api/v1/profiles" in app_js
 
 
+def test_assessment_plan_ui_uses_runtime_packages():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "84 项基线" not in html
+    assert "84 + product rules" not in html
+    assert "baseline: 84" not in html
+    assert "dry_run</div><div>远程分析" not in html
+    assert "Claude Code 专项" not in html
+    assert "直接注入" not in html
+    assert "长时漂移" not in html
+    assert "assessmentRulePackages" in html
+    assert "dynamicCasePackages" in html
+    assert "taskPlanSummaryRows" in html
+    assert "selectedProfilePlanYaml" in html
+    assert "assessmentRulePackages()" in app_js
+    assert "dynamicCasePackages()" in app_js
+    assert "taskPlanSummaryRows()" in app_js
+    assert "selectedProfilePlanYaml()" in app_js
+    assert "parsedProfileRuleCount()" in app_js
+    assert "rules:this.ruleStats.total" in app_js
+    assert "|| 84" not in app_js
+
+
 def test_findings_export_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

@@ -127,12 +127,14 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 页面操作已经接入真实 API：
 
 ```powershell
+$rules = Invoke-RestMethod http://127.0.0.1:8000/api/v1/rules
+
 $profile = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/profiles `
   -Body (@{
     name = "enterprise-local-template"
-    rules = 84
+    rules = $rules.total
     cases = 0
     safe_mode = "local-readonly"
     mcp_policy = "per-server-consent"
@@ -147,6 +149,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 ```
 
 校验会写入 `compatibility_test` 和 `assessment-profile-validation` artifact，只检查本系统模板配置，不启动扫描、不启动 MCP、不修改 Codex/Hermes 或任何已安装 Agent。
+
+“创建完整测评”的检测包、动态用例和任务详情页“计划摘要”均来自当前运行态：本地规则目录、agent-scan 兼容映射、当前 Adapter、已发现 MCP/Skill、红队用例、选中任务和模板记录共同决定页面内容。页面不会再展示固定 `84` 条规则、固定产品专项或固定 `dry_run` 演示策略；没有运行发现或加载规则时会显示真实空态。
 
 ## 4. 本机发现页面
 

@@ -174,12 +174,14 @@ $selfTest.self_test.download
 测评模板校验：
 
 ```powershell
+$rules = Invoke-RestMethod http://127.0.0.1:8000/api/v1/rules
+
 $profile = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/profiles `
   -Body (@{
     name = "enterprise-local-template"
-    rules = 84
+    rules = $rules.total
     cases = 0
     safe_mode = "local-readonly"
     mcp_policy = "per-server-consent"
@@ -194,6 +196,8 @@ $validation.validation.download
 ```
 
 模板创建、复制、校验和发布只写 `assessment_profile`、`compatibility_test`、审计事件和 `data/artifacts/assessment-profile-validation`。它不会扫描目标目录，不启动 Agent/MCP，不修改已安装 Codex/Hermes/Claude Code/Cursor 配置。企业 POC 建议先用该接口固化客户测评 Profile，再执行快速扫描或周期扫描。
+
+前端“创建完整测评”的检测包和动态用例、任务详情页“计划摘要”、测评模板页“当前模板计划”必须按当前 SQLite/API 状态渲染：规则数来自 `/api/v1/rules` 或本地 `rule_catalog()` 回退，agent-scan 映射来自兼容中心，MCP/Skill 来自发现记录，红队用例来自用例库。运维验收时不得接受固定 `84`、固定产品规则或固定 `dry_run` 字段作为计划证据。
 
 MCP / Tool 只读静态检查：
 

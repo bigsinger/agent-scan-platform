@@ -207,7 +207,7 @@ production.write</textarea></div></div></div>
       <div class="grid g3">
         <div class="card" style="margin:0" v-for="d in dimensions"><label class="toggle"><input type="checkbox" checked> <b>{{d}}</b></label><div class="tiny muted" style="margin-top:7px">自动加载相关规则、证据要求与人工检查。</div></div>
       </div>
-      <div class="grid g2" style="margin-top:14px"><div><h3>检测包</h3><div class="pillbar"><span class="pill on">84 项基线</span><span class="pill on">agent-scan Local</span><span class="pill on">Claude Code 专项</span><span class="pill on">MCP Toxic Flow</span><span class="pill on">Skill/SCA</span><span class="pill">深度记忆投毒</span></div></div><div><h3>动态用例</h3><div class="pillbar"><span class="pill on">直接注入</span><span class="pill on">间接注入</span><span class="pill on">多轮越狱</span><span class="pill on">Tool 返回注入</span><span class="pill on">Repo 指令</span><span class="pill">长时漂移</span></div></div></div>
+      <div class="grid g2" style="margin-top:14px"><div><h3>检测包</h3><div class="pillbar"><span v-for="p in assessmentRulePackages" :key="p.name" :class="['pill',{on:['ACTIVE','INHERITED'].includes(p.status)}]" :title="p.detail">{{p.name}} · {{p.detail}}</span></div></div><div><h3>动态用例</h3><div class="pillbar"><span v-for="p in dynamicCasePackages" :key="p.name" :class="['pill',{on:!['EMPTY','DISABLED'].includes(p.status)}]" :title="p.detail">{{p.name}} · {{p.status}}</span></div></div></div>
     </div>
 
     <div v-if="wizard===5" class="grid g2">
@@ -351,17 +351,7 @@ production.write</textarea></div></div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn" :disabled="opsBusy" @click="validateProfile(selectedProfile)">重新校验</button><button class="btn primary" :disabled="opsBusy" @click="publishProfile(selectedProfile)">发布模板</button></div>
     </div>
   </div>
-  <div class="grid g2"><div class="card"><h2>模板版本规则</h2><div class="timeline"><div class="event"><div class="event-time">Draft</div><div class="event-text">可编辑规则、用例和预算。</div></div><div class="event"><div class="event-time">Review</div><div class="event-text">运行回归样本和安全评审。</div></div><div class="event"><div class="event-time">Published</div><div class="event-text">不可变；任务保存版本引用。</div></div><div class="event"><div class="event-time">Deprecated</div><div class="event-text">历史任务可读，新任务不可选。</div></div></div></div><div class="card"><h2>默认模板：standard-complete</h2><div class="code">rules:
-  baseline: 84
-  product: auto
-casepacks:
-  - generic-prompt
-  - generic-mcp
-safe_mode: dry_run
-max_parallel_jobs: 2
-stdio_mcp: per_server_consent
-remote_analysis: false
-report: standard</div></div></div>
+  <div class="grid g2"><div class="card"><h2>模板版本规则</h2><div class="timeline"><div class="event"><div class="event-time">Draft</div><div class="event-text">可编辑规则、用例和预算。</div></div><div class="event"><div class="event-time">Review</div><div class="event-text">运行回归样本和安全评审。</div></div><div class="event"><div class="event-time">Published</div><div class="event-text">不可变；任务保存版本引用。</div></div><div class="event"><div class="event-time">Deprecated</div><div class="event-text">历史任务可读，新任务不可选。</div></div></div></div><div class="card"><h2>当前模板计划</h2><div class="code">{{selectedProfilePlanYaml}}</div></div></div>
 </div>
 
 
@@ -425,7 +415,7 @@ integrations/agent_scan/
     <div class="grid g5"><div class="metric"><div class="metric-label">进度</div><div class="metric-value">{{selectedTask.progress||0}}%</div></div><div class="metric"><div class="metric-label">当前阶段</div><div class="metric-value" style="font-size:16px">{{selectedTask.stage||'-'}}</div></div><div class="metric"><div class="metric-label">Job</div><div class="metric-value">{{jobs.length}} / {{taskStages.length}}</div></div><div class="metric"><div class="metric-label">P0 / P1</div><div class="metric-value">{{selectedTask.critical||0}} / {{selectedTask.high||0}}</div></div><div class="metric"><div class="metric-label">耗时</div><div class="metric-value">{{selectedTask.duration||selectedTask.elapsed||'-'}}</div></div></div>
     <div class="stage-list" style="margin:15px 0"><div v-for="s in taskStages" :class="['stage',s.state]"><div class="sname">{{s.name}}</div><div class="stime">{{s.text}}</div></div></div>
     <div class="tabs"><button v-for="x in ['执行概览','Job','事件流','审批','风险','证据','预算','错误与清理']" :class="['tab',{active:taskTab===x}]" @click="taskTab=x">{{x}}</button></div>
-    <div v-if="taskTab==='执行概览'" class="grid g2"><div><h3>计划摘要</h3><div class="kv"><div>Adapter</div><div>{{selectedTask.adapter}}</div><div>Profile</div><div>{{selectedTask.profile}}</div><div>Safe Mode</div><div>dry_run</div><div>远程分析</div><div>关闭</div><div>规则</div><div>84 + product rules</div><div>stdio MCP</div><div>逐项审批</div></div></div><div><h3>最新事件</h3><div class="timeline"><div class="event" v-for="e in taskEvents.slice(0,6)"><div class="event-time">{{e.time}} · {{e.type}}</div><div class="event-text">{{e.text}}</div></div></div></div></div>
+    <div v-if="taskTab==='执行概览'" class="grid g2"><div><h3>计划摘要</h3><div class="kv"><template v-for="row in taskPlanSummaryRows" :key="row.name"><div>{{row.name}}</div><div>{{row.value}}</div></template></div></div><div><h3>最新事件</h3><div class="timeline"><div class="event" v-for="e in taskEvents.slice(0,6)"><div class="event-time">{{e.time}} · {{e.type}}</div><div class="event-text">{{e.text}}</div></div></div></div></div>
     <div v-else-if="taskTab==='Job'"><table><thead><tr><th>Job</th><th>阶段</th><th>Scanner</th><th>进程</th><th>进度</th><th>Finding</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="j in jobs"><td class="mono">{{j.id}}</td><td>{{j.stage}}</td><td>{{j.scanner}}</td><td>{{j.process}}</td><td>{{j.progress}}%</td><td>{{j.findings}}</td><td><span :class="['badge',j.state==='完成'?'low':j.state==='运行中'?'blue':j.state==='等待审批'?'medium':'gray']">{{j.state}}</span></td><td><button class="btn sm" @click="toastMsg('已打开 Job 日志')">日志</button><button class="btn sm" v-if="j.state==='失败'" :disabled="opsBusy || !canRetryTask(selectedTask)" @click="retryTask(selectedTask)">重试</button></td></tr><tr v-if="!jobs.length"><td colspan="8" class="muted">尚无执行 Job。快速扫描或周期计划运行后会生成真实执行记录。</td></tr></tbody></table></div>
     <div v-else-if="taskTab==='事件流'"><div class="grid g2"><div class="timeline"><div class="event" v-for="e in taskEvents"><div class="event-time">#{{e.seq}} · {{e.time}} · {{e.type}}</div><div class="event-text">{{e.text}}</div></div></div><div><h3>SSE 连接</h3><div class="code">GET /api/v1/assessments/{{selectedTask.id}}/events
 Last-Event-ID: 1841
@@ -581,7 +571,7 @@ safe_mode: {{selectedCase.safe_mode||'dry-run'}}</div></div><div class="card"><h
 <!-- P21 FINDINGS -->
 <div v-if="current==='findings'">
   <div class="card">
-    <div class="card-head"><div><h2>风险中心</h2><div class="desc">84 项基线、agent-scan 兼容规则、产品专项和动态红队统一成稳定 Finding。</div></div><button class="btn" :disabled="opsBusy" @click="exportFindings">导出 CSV</button></div>
+    <div class="card-head"><div><h2>风险中心</h2><div class="desc">当前本地规则目录、agent-scan 兼容规则、产品专项和动态红队统一成稳定 Finding。</div></div><button class="btn" :disabled="opsBusy" @click="exportFindings">导出 CSV</button></div>
     <div class="toolbar"><input class="search" placeholder="搜索标题 / 规则 / 组件"><select><option>全部严重度</option><option>P0 严重</option><option>P1 高危</option><option>P2 中危</option></select><select><option>全部状态</option><option>待复核</option><option>已确认</option><option>修复中</option><option>待复测</option><option>已修复</option></select><select><option>全部来源</option><option>Local Analyzer</option><option>agent-scan Bridge</option><option>Skill/SCA</option><option>Red Team</option></select></div>
     <div class="split">
       <div><div v-for="f in findings" :class="['finding-row',{active:selectedFinding.id===f.id}]" @click="selectedFinding=f"><div style="display:flex;justify-content:space-between"><span :class="['badge',f.sevClass]">{{f.severity}}</span><span class="tiny muted">{{f.status}}</span></div><div class="finding-title">{{f.title}}</div><div class="finding-meta"><span>{{f.agent}}</span><span>{{f.rule}}</span><span>{{f.source}}</span><span>{{f.confidence}}</span></div></div></div>
@@ -767,6 +757,6 @@ remote_analysis: false</div></div></div></div>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.27"></script>
+<script src="/static/assessment/app.js?v=4.1.28"></script>
 </body>
 </html>
