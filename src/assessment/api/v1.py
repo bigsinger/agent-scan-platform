@@ -468,8 +468,10 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result.update(import_settings(store, state, body))
     elif path.startswith("/mcp-consents/") and path.endswith(("/approve", "/decline")):
         consent_id = path.split("/")[-2]
-        status = "本任务允许" if path.endswith("/approve") else "已拒绝"
-        result["consent"] = update_consent(store, state, consent_id, status, body)
+        default_decision = "DENIED" if path.endswith("/decline") else "APPROVED_FOR_TASK"
+        decision = body.get("decision") or default_decision
+        result["consent"] = update_consent(store, state, consent_id, consent_status_from_decision(decision), {**body, "decision": decision})
+        result["status"] = "DECIDED"
     elif (path.startswith("/tasks/") or path.startswith("/assessments/")) and path.endswith("/cancel"):
         task_id = path.split("/")[-2]
         result["task"] = update_task_state(store, state, task_id, "已取消", "CANCELLED")
@@ -504,16 +506,9 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         return result
     elif "/consents/" in path and path.endswith("/decision"):
         consent_id = path.split("/")[-2]
-        for consent in state.get("consents", []):
-            if consent.get("id") == consent_id or consent.get("server") == consent_id:
-                consent["status"] = body.get("decision", "APPROVED_ONCE")
-                result["consent"] = consent
-                break
-        record = store.get_record("consent_request", consent_id)
-        if record:
-            decision = body.get("decision", "APPROVED_ONCE")
-            record["status"] = "已拒绝" if decision == "DENIED" else decision
-            result["consent"] = store.upsert_record("consent_request", record, status=str(record["status"]))
+        decision = body.get("decision") or body.get("status") or "APPROVED_ONCE"
+        result["consent"] = update_consent(store, state, consent_id, consent_status_from_decision(decision), {**body, "decision": decision})
+        result["status"] = "DECIDED"
     elif path == "/consents/bulk-decision":
         result.update(bulk_decide_consents(store, state, body))
     elif path.startswith("/findings/") and path.endswith("/accept"):
@@ -4388,6 +4383,18 @@ def agent_from_discovery_hit(hit: dict, body: dict) -> dict:
     }
 
 
+def consent_status_from_decision(decision: Any, default: str = "本任务允许") -> str:
+    raw = str(decision or "").strip()
+    upper = raw.upper()
+    if upper in {"DENIED", "DECLINED", "REJECTED"} or raw in {"拒绝", "已拒绝"}:
+        return "已拒绝"
+    if upper in {"APPROVED_ONCE", "ALLOW_ONCE", "ONCE"} or raw == "允许一次":
+        return "允许一次"
+    if upper in {"APPROVED", "APPROVED_FOR_TASK", "ALLOW", "ALLOW_TASK", "TASK"} or raw in {"本任务允许", "已批准"}:
+        return "本任务允许"
+    return raw or default
+
+
 def update_consent(store: Any, state: dict, consent_id: str, status: str, body: dict) -> dict:
     record = (
         store.get_record("mcp_consent", consent_id)
@@ -4395,16 +4402,34 @@ def update_consent(store: Any, state: dict, consent_id: str, status: str, body: 
         or find_item(state.get("consents", []), consent_id)
         or {"id": consent_id, "server": consent_id}
     )
-    record.update({"status": status, "decision": status, "decision_reason": body.get("reason", ""), "decided_at": utc_now()})
+    record["id"] = str(record.get("id") or consent_id)
+    record.setdefault("server", consent_id)
+    record.update(
+        {
+            "status": status,
+            "decision": status,
+            "decision_input": str(body.get("decision") or status),
+            "decision_reason": str(body.get("reason") or body.get("decision_reason") or ""),
+            "decided_at": utc_now(),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+    )
     updated = store.upsert_record("mcp_consent", record, status=status)
     store.upsert_record("consent_request", updated, status=status)
     merge_state_record(state, "consents", updated)
+    store.audit_event(
+        "post.consents.decision",
+        "mcp_consent",
+        record["id"],
+        {"decision": body.get("decision") or status, "status": status, "safe_mode": "local-readonly", "mutates_installed_agents": False},
+    )
     return updated
 
 
 def bulk_decide_consents(store: Any, state: dict, body: dict) -> dict:
     decision = str(body.get("decision") or "DENIED")
-    status = "已拒绝" if decision.upper() in {"DENIED", "DECLINED", "拒绝"} else "本任务允许"
+    status = consent_status_from_decision(decision)
     reason = str(body.get("reason") or "bulk decision")
     records = combine_items(
         combine_items(store.list_records("mcp_consent", limit=2000), store.list_records("consent_request", limit=2000)),

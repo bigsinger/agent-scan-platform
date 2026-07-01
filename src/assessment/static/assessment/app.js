@@ -2130,9 +2130,14 @@ data(){
     },
     async denyAllConsents(){
       const pending=this.consents.filter(c=>c.status==='待审批');
-      for(const consent of pending) await this.denyConsent(consent);
-      if(!pending.length) this.toastMsg('没有待审批 stdio Server');
-      else this.toastMsg('所有待审批 stdio Server 已拒绝');
+      if(!pending.length){ this.toastMsg('没有待审批 stdio Server'); return; }
+      try {
+        const res=await this.apiPost('/api/v1/consents/bulk-decision', {decision:'DENIED', reason:'local-ui bulk decline'});
+        if(res.items){ this.mergeRecords('consents', res.items); this.selectedConsent=res.items[0] || this.selectedConsent; }
+        this.toastMsg('所有待审批 stdio Server 已拒绝：'+(res.updated || pending.length));
+      } catch (err) {
+        this.apiError = this.describeError(err);
+      }
     }
   }
     });

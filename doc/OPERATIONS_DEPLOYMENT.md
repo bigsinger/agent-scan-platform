@@ -700,7 +700,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agents -Body (@{ nam
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
 ```
 
-手工登记资产会写入 `agent_instance` 并生成 `manual-agent-registration` artifact，状态为 `probe=待探测`；它不读取、不启动、不修改目标 Agent。`consents/bulk-decision` 会批量更新 `mcp_consent` 和 `consent_request` 中的待审批记录，返回实际更新数量，不能作为 MCP 启停动作验收。
+手工登记资产会写入 `agent_instance` 并生成 `manual-agent-registration` artifact，状态为 `probe=待探测`；它不读取、不启动、不修改目标 Agent。`consents/{id}/decision`、`mcp-consents/{id}/approve|decline` 与 `consents/bulk-decision` 都会更新 `mcp_consent` 和 `consent_request`，返回实际更新数量或更新后的审批记录；这些接口只写本系统审批状态和审计事件，不能作为 MCP 启停动作验收。
 
 计划任务操作只写本系统 SQLite，不会直接启动已安装 Agent。立即执行会生成本地任务记录：
 

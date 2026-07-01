@@ -159,6 +159,13 @@ def test_quick_scan_ui_requires_api_assessment_record():
     assert "快速扫描未返回真实任务记录" in app_js
 
 
+def test_consent_bulk_decline_ui_is_api_backed():
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "async denyAllConsents" in app_js
+    assert "/api/v1/consents/bulk-decision" in app_js
+    assert "for(const consent of pending) await this.denyConsent(consent)" not in app_js
+
+
 def test_dashboard_health_self_test_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

@@ -737,7 +737,15 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/consents/bulk-decisi
   -ContentType "application/json"
 ```
 
-该操作只更新本系统审批记录，不启动、不停止、不修改任何 MCP Server 或已安装 Agent。
+单项审批同样会同时更新 `mcp_consent` 与 `consent_request`，并保留 `safe_mode=local-readonly`、`mutates_installed_agents=false`：
+
+```powershell
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/consents/<consent_id>/decision" `
+  -Body (@{ decision = "APPROVED_ONCE"; reason = "仅允许本轮测评读取配置" } | ConvertTo-Json) `
+  -ContentType "application/json"
+```
+
+上述审批操作只更新本系统审批记录，不启动、不停止、不修改任何 MCP Server 或已安装 Agent。“允许一次”与“本任务允许”只作为本系统后续扫描任务的审批状态，不等同于对真实 MCP 子进程发放运行权限。
 
 ### 查询风险
 

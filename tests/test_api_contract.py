@@ -1163,6 +1163,33 @@ def test_manual_agent_and_bulk_consent_actions_are_persisted(monkeypatch, tmp_pa
     assert store.get_record("mcp_consent", "consent_contract")["status"] == "已拒绝"
     assert store.get_record("consent_request", "consent_contract")["decision_reason"] == "contract test"
 
+    store.upsert_record(
+        "mcp_consent",
+        {"id": "consent_once", "server": "review-mcp", "status": "待审批", "command": "python server.py"},
+        status="PENDING",
+    )
+    single = client.post("/api/v1/consents/consent_once/decision", json={"decision": "APPROVED_ONCE", "reason": "single contract"})
+
+    assert single.status_code == 200
+    single_body = single.json()
+    assert single_body["status"] == "DECIDED"
+    assert single_body["consent"]["status"] == "允许一次"
+    assert single_body["consent"]["safe_mode"] == "local-readonly"
+    assert single_body["consent"]["mutates_installed_agents"] is False
+    assert store.get_record("mcp_consent", "consent_once")["status"] == "允许一次"
+    assert store.get_record("consent_request", "consent_once")["decision_reason"] == "single contract"
+
+    store.upsert_record(
+        "mcp_consent",
+        {"id": "consent_ui_once", "server": "ui-mcp", "status": "待审批", "command": "node ui.js"},
+        status="PENDING",
+    )
+    ui_once = client.post("/api/v1/mcp-consents/consent_ui_once/approve", json={"decision": "允许一次", "scope": "once"})
+
+    assert ui_once.status_code == 200
+    assert ui_once.json()["consent"]["status"] == "允许一次"
+    assert store.get_record("consent_request", "consent_ui_once")["mutates_installed_agents"] is False
+
 
 def test_task_lifecycle_actions_are_persisted():
     draft = client.post(
