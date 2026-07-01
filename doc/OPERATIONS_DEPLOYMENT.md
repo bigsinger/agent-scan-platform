@@ -703,6 +703,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.asses
 
 任务详情页支持 `/assessment/tasks/{id}` 深链，打开深链后前端会按任务 ID 选中任务并刷新事件流。企业演示和问题复现时应直接记录该 URL、任务 ID 和对应 `scan_event` 序号。
 
+任务详情页“错误与清理”按当前任务聚合失败 Job、异常 `process_execution`、`terminate_requested` 停止请求、报告 `last_error` 和错误/恢复类 `scan_event`。该页签仅用于本系统恢复审计和重试判断，不发送 OS signal，不 kill 或启动已安装 Agent/MCP 进程。
+
 任务详情页的“风险”和“证据”页签只读取当前 SQLite 中按 `assessment_id`、`finding_id`、`evidence_ids` 关联的 Finding/Evidence，不回读客户 Agent 原始目录。验收时可先运行快速扫描，再在任务详情中核对风险、证据、风险详情、证据下载和报告内容是否一致。
 
 能力管理健康检查：

@@ -483,6 +483,97 @@ data(){
       }
       return lines.join('\n');
     },
+    selectedTaskProcesses(){
+      const task=this.selectedTask || {};
+      const taskId=String(task.id || '');
+      if(!taskId) return [];
+      const jobIds=new Set(this.selectedTaskJobs.map(j=>String(j.id || j.job_id || '')));
+      return (this.processes || []).filter(process=>{
+        const fields=[
+          process.assessment_id,
+          process.task_id,
+          process.assessment,
+          process.task,
+          process.target_task_id
+        ].map(v=>String(v || ''));
+        const processJobId=String(process.job_id || process.job || process.id || '');
+        return fields.includes(taskId) || jobIds.has(processJobId);
+      });
+    },
+    selectedTaskReports(){
+      const task=this.selectedTask || {};
+      const taskId=String(task.id || '');
+      if(!taskId) return [];
+      return (this.reports || []).filter(report=>{
+        const fields=[
+          report.assessment_id,
+          report.task_id,
+          report.assessment,
+          report.task
+        ].map(v=>String(v || ''));
+        return fields.includes(taskId);
+      });
+    },
+    selectedTaskErrorEvents(){
+      const tokens=['fail','error','timeout','oom','cancel','terminate','cleanup','recovery','失败','错误','超时','取消','停止','清理','恢复'];
+      return (this.taskEvents || []).filter(event=>{
+        const text=[event.type, event.text, event.message, event.status].map(v=>String(v || '').toLowerCase()).join(' ');
+        return tokens.some(token=>text.includes(token));
+      });
+    },
+    selectedTaskCleanupArtifacts(){
+      const hasProblem=value=>{
+        const text=String(value || '');
+        const upper=text.toUpperCase();
+        return ['FAILED','FAIL','ERROR','TIMEOUT','OOM','STOP_REQUESTED','CANCELLED'].some(token=>upper.includes(token))
+          || ['失败','错误','超时','已取消','停止'].some(token=>text.includes(token));
+      };
+      const jobs=this.selectedTaskJobs.filter(job=>hasProblem(job.state || job.status || job.blocker)).map(job=>({
+        type:'Job',
+        id:job.id || job.job_id || '-',
+        status:job.state || job.status || '-',
+        detail:(job.stage || '-')+' / '+(job.scanner || '-'),
+        time:job.updated_at || job.created_at || job.queued_at || '-'
+      }));
+      const processes=this.selectedTaskProcesses.filter(process=>process.terminate_requested || hasProblem(process.status || process.state)).map(process=>({
+        type:'Execution',
+        id:process.id || process.execution_id || '-',
+        status:process.status || process.state || '-',
+        detail:(process.termination_mode || process.scanner || '-')+' / '+(process.external_process_signal_sent===false?'未发送外部信号':'本系统记录'),
+        time:process.terminate_requested_at || process.updated_at || process.created_at || '-'
+      }));
+      const reports=this.selectedTaskReports.filter(report=>report.last_error || hasProblem(report.status)).map(report=>({
+        type:'Report',
+        id:report.id || '-',
+        status:report.status || (report.last_error ? 'ERROR' : '-'),
+        detail:report.last_error || report.template || report.type || '-',
+        time:report.updated_at || report.time || report.created_at || '-'
+      }));
+      return jobs.concat(processes, reports);
+    },
+    selectedTaskCleanupSummaryRows(){
+      const problemJobs=this.selectedTaskJobs.filter(job=>this.selectedTaskCleanupArtifacts.some(row=>row.type==='Job' && row.id===(job.id || job.job_id))).length;
+      const problemProcesses=this.selectedTaskCleanupArtifacts.filter(row=>row.type==='Execution').length;
+      const reportErrors=this.selectedTaskCleanupArtifacts.filter(row=>row.type==='Report').length;
+      const errorEvents=this.selectedTaskErrorEvents.length;
+      const stopRequests=this.selectedTaskProcesses.filter(process=>process.terminate_requested).length;
+      return [
+        {name:'失败 Job', status:problemJobs?'FAIL':'PASS', detail:problemJobs ? problemJobs+' 个 Job 需要复核或重试' : '当前任务没有失败 Job'},
+        {name:'停止请求', status:stopRequests?'WARN':'PASS', detail:stopRequests ? stopRequests+' 条本系统安全停止记录' : '当前任务没有停止请求'},
+        {name:'执行异常', status:problemProcesses?'FAIL':'PASS', detail:problemProcesses ? problemProcesses+' 条异常执行记录' : '当前任务没有异常执行记录'},
+        {name:'报告错误', status:reportErrors?'FAIL':'PASS', detail:reportErrors ? reportErrors+' 个报告制品需要重试' : '当前任务报告制品未记录错误'},
+        {name:'错误事件', status:errorEvents?'WARN':'PASS', detail:errorEvents ? errorEvents+' 条错误/恢复相关事件' : '事件流未记录错误或清理事项'},
+        {name:'外部 Agent 影响', status:'PASS', detail:'只读取本系统 SQLite 与 artifact，不 kill、不启动、不修改 Codex/Hermes/MCP'}
+      ];
+    },
+    selectedTaskCleanupMessage(){
+      return this.selectedTaskCleanupArtifacts.length || this.selectedTaskErrorEvents.length
+        ? '当前任务存在错误、停止或恢复相关记录；请按表格核对后重试任务或报告。'
+        : '当前任务没有待清理错误记录；本视图只展示本系统持久化状态。';
+    },
+    selectedTaskCleanupCalloutClass(){
+      return ['callout', (this.selectedTaskCleanupArtifacts.length || this.selectedTaskErrorEvents.length) ? 'amber' : 'green'];
+    },
     selectedRuleDefinition(){
       const rule=this.selectedRule || {};
       if(!rule.id) return '尚未选择规则。请先从规则列表选择一条本地规则。';

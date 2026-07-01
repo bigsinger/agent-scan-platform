@@ -391,6 +391,25 @@ def test_task_detail_jobs_events_and_approval_are_runtime_backed():
     assert "refreshTaskEvents(t, true)" in app_js
 
 
+def test_task_detail_error_cleanup_tab_is_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "关联内容已设计；实现时使用任务 ID 加载" not in html
+    assert "v-else-if=\"taskTab==='错误与清理'\"" in html
+    assert "selectedTaskCleanupSummaryRows" in html
+    assert "selectedTaskCleanupMessage" in html
+    assert "selectedTaskErrorEvents.slice(0,8)" in html
+    assert "selectedTaskCleanupArtifacts" in html
+    assert "selectedTaskProcesses.length" in html
+    assert "selectedTaskReports.length" in html
+    assert "selectedTaskProcesses()" in app_js
+    assert "selectedTaskReports()" in app_js
+    assert "selectedTaskErrorEvents()" in app_js
+    assert "selectedTaskCleanupArtifacts()" in app_js
+    assert "selectedTaskCleanupSummaryRows()" in app_js
+    assert "不 kill、不启动、不修改 Codex/Hermes/MCP" in app_js
+
+
 def test_finding_detail_uses_real_finding_and_evidence_data():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
