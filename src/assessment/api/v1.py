@@ -619,6 +619,21 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["status"] = "PUBLISHED"
     elif path == "/scanners":
         result["scanner"] = upsert_named_record(store, state, "scanner_plugin", "scanners", body, "scn", status="ACTIVE")
+    elif path == "/integrations":
+        secret_fields = integration_raw_secret_fields(body)
+        if secret_fields:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "integration validation failed",
+                    "validation_errors": [
+                        {"field": field, "message": "集成配置只允许保存 Secret Reference，不允许保存明文 Secret"}
+                        for field in secret_fields
+                    ],
+                },
+            )
+        payload = {**body, "safe_mode": "local-readonly", "mutates_installed_agents": False}
+        result["integration"] = upsert_named_record(store, state, "integration", "integrations", payload, "int", status=str(body.get("status") or "ACTIVE"))
     elif path.startswith("/scanners/") and path.endswith("/self-test"):
         scanner_id = path.split("/")[-2]
         result["self_test"] = scanner_self_test(store, scanner_id)
@@ -639,7 +654,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["test"] = integration_test(store, state, integration_id)
     elif path.startswith("/integrations/") and path.endswith("/sync"):
         integration_id = path.split("/")[-2]
-        result["sync"] = integration_sync(store, state, integration_id)
+        result["sync"] = integration_sync(store, state, integration_id, body)
     elif path == "/integrations/runtime-platform/events":
         result["event"] = runtime_platform_event(store, state, body)
     elif path == "/sandbox-policy" and method == "PUT":
@@ -6010,17 +6025,314 @@ def redacted_schedule_payload(schedule: dict) -> dict:
 
 
 def integration_test(store: Any, state: dict, integration_id: str) -> dict:
-    record = update_structured_record(store, state, "integration", "integrations", integration_id, {"status": "已连接", "last": utc_now()})
-    return {"status": "PASS", "integration_id": integration_id, "record": record}
+    record = resolve_integration_record(store, state, integration_id)
+    checked_at = utc_now()
+    checks = integration_readiness_checks(store, record, integration_id)
+    status = aggregate_integration_status(checks)
+    ui_status = {
+        "PASS": "本地就绪",
+        "WARN": "待联调",
+        "FAIL": "配置错误",
+        "NOT_CONFIGURED": "未配置",
+    }.get(status, "待联调")
+    updated = update_structured_record(
+        store,
+        state,
+        "integration",
+        "integrations",
+        integration_id,
+        {
+            **(record or {}),
+            "id": integration_id,
+            "status": ui_status,
+            "last": checked_at,
+            "last_test_status": status,
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        },
+    )
+    result = {
+        "id": new_id("itest"),
+        "status": status,
+        "integration_id": integration_id,
+        "checks": checks,
+        "record": sanitize_integration_record(updated),
+        "network_probe": "disabled-by-default",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "checked_at": checked_at,
+    }
+    store.upsert_record("test_run", {**result, "subject_type": "integration", "subject_id": integration_id}, status=status)
+    store.audit_event("post.integrations.test", "integration", integration_id, {"status": status, "checks": len(checks), "network_probe": result["network_probe"]})
+    return result
 
 
-def integration_sync(store: Any, state: dict, integration_id: str) -> dict:
-    record = update_structured_record(store, state, "integration", "integrations", integration_id, {"last_sync": utc_now(), "pending": 0})
-    return {"status": "DONE", "integration_id": integration_id, "cursor": new_id("cursor"), "record": record}
+def integration_sync(store: Any, state: dict, integration_id: str, body: dict | None = None) -> dict:
+    body = body or {}
+    readiness = integration_test(store, state, integration_id)
+    if readiness["status"] in {"NOT_CONFIGURED", "FAIL"}:
+        return {
+            "status": readiness["status"],
+            "integration_id": integration_id,
+            "reason": "integration is not ready for sync",
+            "precheck": readiness,
+            "delivered": False,
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+
+    record = resolve_integration_record(store, state, integration_id) or {"id": integration_id}
+    package = build_integration_sync_package(store, state, integration_id, record, body)
+    artifact = store.write_artifact(
+        "integration-sync-package",
+        json.dumps(package, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"integration_id": integration_id, "safe_mode": "local-readonly", "delivered": False},
+    )
+    status = "PACKAGED"
+    updated = update_structured_record(
+        store,
+        state,
+        "integration",
+        "integrations",
+        integration_id,
+        {
+            **record,
+            "last_sync": package["created_at"],
+            "last_sync_status": status,
+            "last_sync_artifact_id": artifact["id"],
+            "pending": package["counts"]["total"],
+            "status": "本地已打包" if readiness["status"] == "PASS" else "待联调",
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        },
+    )
+    result = {
+        "id": package["id"],
+        "status": status,
+        "integration_id": integration_id,
+        "cursor": package["cursor"],
+        "counts": package["counts"],
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "record": sanitize_integration_record(updated),
+        "precheck_status": readiness["status"],
+        "delivered": False,
+        "network_probe": "disabled-by-default",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+    store.upsert_record(
+        "integration_event",
+        {
+            **result,
+            "event_type": "sync_package",
+            "subject_type": "integration_sync",
+            "subject_id": integration_id,
+            "created_at": package["created_at"],
+        },
+        status=status,
+    )
+    store.audit_event("post.integrations.sync", "integration", integration_id, {"status": status, "artifact_id": artifact["id"], "counts": package["counts"]})
+    return result
+
+
+def resolve_integration_record(store: Any, state: dict, integration_id: str) -> dict | None:
+    return (
+        store.get_record("integration", integration_id)
+        or store.get_record("integration_config", integration_id)
+        or find_item(state.get("integrations", []), integration_id)
+    )
+
+
+def integration_readiness_checks(store: Any, record: dict | None, integration_id: str) -> list[dict]:
+    checks: list[dict] = []
+    endpoint = str((record or {}).get("endpoint") or (record or {}).get("url") or (record or {}).get("callback") or "").strip()
+    configured = bool(record and endpoint)
+    checks.append(
+        {
+            "id": "configured",
+            "status": "PASS" if configured else "NOT_CONFIGURED",
+            "detail": "integration record and endpoint are configured" if configured else "no endpoint has been configured",
+        }
+    )
+    endpoint_check = integration_endpoint_check(endpoint)
+    checks.append(endpoint_check)
+    secret_fields = integration_raw_secret_fields(record or {})
+    checks.append(
+        {
+            "id": "secret_reference",
+            "status": "FAIL" if secret_fields else "PASS",
+            "detail": "raw secret fields are not allowed" if secret_fields else "no raw secret fields detected",
+            "fields": secret_fields,
+        }
+    )
+    db_status = store.database_status()
+    checks.append(
+        {
+            "id": "local_control_plane",
+            "status": "PASS" if db_status.get("state") == "健康" else "FAIL",
+            "detail": f"sqlite state={db_status.get('state')}",
+        }
+    )
+    checks.append(
+        {
+            "id": "network_boundary",
+            "status": "PASS",
+            "detail": "test does not contact external endpoints unless a future explicit network probe is enabled",
+        }
+    )
+    checks.append(
+        {
+            "id": "agent_safety_boundary",
+            "status": "PASS",
+            "detail": f"integration {integration_id} test does not start or modify installed agents",
+        }
+    )
+    return checks
+
+
+def integration_endpoint_check(endpoint: str) -> dict:
+    if not endpoint:
+        return {"id": "endpoint", "status": "NOT_CONFIGURED", "detail": "endpoint is empty"}
+    if endpoint.startswith("/"):
+        return {"id": "endpoint", "status": "PASS", "detail": "local callback path is syntactically valid", "endpoint_type": "local-path"}
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return {"id": "endpoint", "status": "FAIL", "detail": "endpoint must be a local path or http(s) URL"}
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "http" and host not in {"127.0.0.1", "localhost", "::1"}:
+        return {"id": "endpoint", "status": "FAIL", "detail": "non-local integration endpoints must use HTTPS"}
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return {"id": "endpoint", "status": "PASS", "detail": "local HTTP endpoint accepted without external network probe", "endpoint_type": "local-http"}
+    return {"id": "endpoint", "status": "WARN", "detail": "external endpoint configured but network probe is disabled by default", "endpoint_type": "external-http"}
+
+
+def integration_raw_secret_fields(record: dict) -> list[str]:
+    secret_fields: list[str] = []
+    for key, value in record.items():
+        lowered = str(key).lower()
+        if not any(token in lowered for token in ("api_key", "token", "secret", "password", "passwd")):
+            continue
+        text = str(value or "").strip()
+        if text and not text.startswith(("ref://", "env://", "vault://", "secret://")):
+            secret_fields.append(str(key))
+    return secret_fields
+
+
+def aggregate_integration_status(checks: list[dict]) -> str:
+    statuses = {str(check.get("status")) for check in checks}
+    if "NOT_CONFIGURED" in statuses:
+        return "NOT_CONFIGURED"
+    if "FAIL" in statuses:
+        return "FAIL"
+    if "WARN" in statuses:
+        return "WARN"
+    return "PASS"
+
+
+def sanitize_integration_record(record: dict) -> dict:
+    safe = dict(record)
+    for key in list(safe.keys()):
+        lowered = str(key).lower()
+        if any(token in lowered for token in ("api_key", "token", "secret", "password", "passwd")):
+            safe[key] = "<REDACTED_REFERENCE>" if safe.get(key) else ""
+    return safe
+
+
+def build_integration_sync_package(store: Any, state: dict, integration_id: str, record: dict, body: dict) -> dict:
+    requested_report_id = str(body.get("report_id") or "")
+    reports = combine_items(store.list_records("report", limit=500), state.get("reports", []))
+    if requested_report_id:
+        reports = [report for report in reports if str(report.get("id")) == requested_report_id]
+    findings = combine_items(store.list_records("finding", limit=1000), state.get("findings", []))
+    policy_drafts = combine_items(store.list_records("policy_draft", limit=500), state.get("policyDrafts", []))
+    evidence = combine_items(store.list_records("evidence", limit=1000), state.get("evidenceItems", []))
+    counts = {
+        "reports": len(reports),
+        "findings": len(findings),
+        "policy_drafts": len(policy_drafts),
+        "evidence": len(evidence),
+    }
+    counts["total"] = sum(counts.values())
+    return {
+        "schema": "agent-security-integration-sync-package@4.1",
+        "id": new_id("sync"),
+        "integration_id": integration_id,
+        "endpoint": str(record.get("endpoint") or record.get("url") or record.get("callback") or ""),
+        "cursor": new_id("cursor"),
+        "created_at": utc_now(),
+        "requested_report_id": requested_report_id or None,
+        "counts": counts,
+        "reports": [integration_report_summary(report) for report in reports[:100]],
+        "findings": [integration_finding_summary(finding) for finding in findings[:500]],
+        "policy_drafts": [integration_policy_summary(policy) for policy in policy_drafts[:200]],
+        "evidence": [integration_evidence_summary(item) for item in evidence[:500]],
+        "delivery": {
+            "status": "LOCAL_PACKAGE_ONLY",
+            "delivered": False,
+            "network_probe": "disabled-by-default",
+            "reason": "external platform delivery requires explicit connector implementation and credentials",
+        },
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+
+
+def integration_report_summary(report: dict) -> dict:
+    return {
+        "id": report.get("id"),
+        "assessment_id": report.get("assessment_id") or report.get("task"),
+        "status": report.get("status"),
+        "type": report.get("type"),
+        "artifact_id": report.get("artifact_id") or report.get("json_artifact_id"),
+        "sha256": report.get("sha256"),
+    }
+
+
+def integration_finding_summary(finding: dict) -> dict:
+    return {
+        "id": finding.get("id"),
+        "title": finding.get("title"),
+        "severity": finding.get("severity"),
+        "rule": finding.get("rule") or finding.get("rule_id"),
+        "status": finding.get("status"),
+        "component": finding.get("component"),
+        "evidence_ids": finding.get("evidence_ids", []),
+    }
+
+
+def integration_policy_summary(policy: dict) -> dict:
+    return {
+        "id": policy.get("id"),
+        "name": policy.get("name"),
+        "status": policy.get("status"),
+        "attack_path_id": policy.get("attack_path_id"),
+        "control": policy.get("control"),
+        "effect": policy.get("effect"),
+    }
+
+
+def integration_evidence_summary(evidence: dict) -> dict:
+    return {
+        "id": evidence.get("id"),
+        "type": evidence.get("type"),
+        "redaction": evidence.get("redaction"),
+        "artifact_id": evidence.get("artifact_id") or evidence.get("redacted_artifact_id"),
+        "sha256": evidence.get("sha256") or evidence.get("redacted_sha256"),
+    }
 
 
 def runtime_platform_event(store: Any, state: dict, body: dict) -> dict:
-    event = {"id": new_id("sync"), "direction": body.get("direction", "push"), "status": "DONE", "created_at": utc_now()}
+    event = {
+        "id": new_id("sync"),
+        "direction": body.get("direction", "push"),
+        "status": "RECORDED",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "created_at": utc_now(),
+    }
+    event = store.upsert_record("integration_event", event, status="RECORDED")
     merge_state_record(state, "integrationEvents", event)
     return event
 

@@ -1004,6 +1004,18 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($backup
 集成与设置：
 
 ```powershell
+$integration = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/integrations `
+  -Body (@{
+    id = "runtime-platform"
+    name = "Runtime Platform"
+    endpoint = "/api/v1/integrations/runtime-platform/events"
+    direction = "bidirectional"
+    status = "ACTIVE"
+  } | ConvertTo-Json) `
+  -ContentType "application/json"
+
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync
 
@@ -1028,6 +1040,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 ```
 
 模块设置保存到本系统 SQLite 的 `module_setting` 记录，并同步到前端运行状态。后端会强制保持 `cloud_analysis=false`、`safe_mode=local-readonly` 和 `mutates_installed_agents=false`；如果导入配置尝试自动启动 stdio MCP、保存明文 Secret 或在非主平台托管下监听 `0.0.0.0`，接口会返回 422。
+
+`/integrations/{id}/test` 不再对未配置集成返回固定成功：没有 endpoint 时为 `NOT_CONFIGURED`；外部 HTTPS endpoint 默认只做配置校验并标记待联调，不发起网络探测。`sync` 会生成 `integration-sync-package` JSON artifact 并写入 `integration_event`，状态为 `PACKAGED`，`delivered=false`，用于企业平台 Connector 后续拉取或人工核对；它不会启动或修改 Codex、Hermes、MCP Server。
 
 ## 11. 客户测评建议流程
 

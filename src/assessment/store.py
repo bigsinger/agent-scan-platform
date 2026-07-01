@@ -240,6 +240,7 @@ GENERIC_TABLES = [
     "schedule",
     "integration",
     "integration_config",
+    "integration_event",
     "database_backup",
     "backup_record",
     "third_party_component",

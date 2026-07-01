@@ -1023,12 +1023,45 @@ def test_capability_management_actions_are_persisted():
     assert unsafe_schedule.status_code == 422
     assert unsafe_schedule.json()["error"]["validation_errors"]
 
-    integration_test = client.post("/api/v1/integrations/runtime-platform/test", json={})
+    integration_id = api_v1.new_id("contract_runtime_platform")
+    unconfigured_integration = client.post(f"/api/v1/integrations/{integration_id}/test", json={})
+    assert unconfigured_integration.json()["test"]["status"] == "NOT_CONFIGURED"
+    assert unconfigured_integration.json()["test"]["mutates_installed_agents"] is False
+
+    unsafe_integration = client.post(
+        "/api/v1/integrations",
+        json={"id": "unsafe-integration", "endpoint": "/api/v1/integrations/runtime-platform/events", "api_key": "sk-contracttestsecretvalue"},
+    )
+    assert unsafe_integration.status_code == 422
+    assert unsafe_integration.json()["error"]["validation_errors"]
+
+    configured_integration = client.post(
+        "/api/v1/integrations",
+        json={
+            "id": integration_id,
+            "name": "Runtime Platform",
+            "endpoint": "/api/v1/integrations/runtime-platform/events",
+            "direction": "bidirectional",
+            "status": "ACTIVE",
+        },
+    )
+    assert configured_integration.status_code == 200
+    integration_test = client.post(f"/api/v1/integrations/{integration_id}/test", json={})
     assert integration_test.json()["test"]["status"] == "PASS"
-    integration_sync = client.post("/api/v1/integrations/runtime-platform/sync", json={})
-    assert integration_sync.json()["sync"]["status"] == "DONE"
+    assert integration_test.json()["test"]["network_probe"] == "disabled-by-default"
+    integration_sync = client.post(f"/api/v1/integrations/{integration_id}/sync", json={})
+    assert integration_sync.json()["sync"]["status"] == "PACKAGED"
+    assert integration_sync.json()["sync"]["delivered"] is False
+    assert integration_sync.json()["sync"]["artifact"]["relative_path"].endswith(".json")
+    sync_package = client.get(integration_sync.json()["sync"]["download"])
+    assert sync_package.status_code == 200
+    assert "agent-security-integration-sync-package@4.1" in sync_package.text
+    assert '"delivered": false' in sync_package.text
+    assert api_v1.get_store().get_record("integration_event", integration_sync.json()["sync"]["id"]) is not None
     platform_event = client.post("/api/v1/integrations/runtime-platform/events", json={"direction": "push"})
-    assert platform_event.json()["event"]["status"] == "DONE"
+    assert platform_event.json()["event"]["status"] == "RECORDED"
+    assert platform_event.json()["event"]["mutates_installed_agents"] is False
+    assert api_v1.get_store().get_record("integration_event", platform_event.json()["event"]["id"]) is not None
 
     settings = client.put("/api/v1/settings", json={"default_profile": "standard-complete", "timezone": "Asia/Shanghai"})
     assert settings.json()["settings"]["default_profile"] == "standard-complete"

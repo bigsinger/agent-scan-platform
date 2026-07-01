@@ -649,7 +649,9 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.asses
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/scanners/scanner.local-analysis/self-test
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/rules/SECRET-KEY-001/test -Body (@{ sample = "sk-test-value" } | ConvertTo-Json) -ContentType "application/json"
+$integration = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/integrations -Body (@{ id = "runtime-platform"; name = "Runtime Platform"; endpoint = "/api/v1/integrations/runtime-platform/events"; direction = "bidirectional"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/settings/test
 $settings = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings
 $settings.settings.mcp_stdio_policy = "per-server-consent"
@@ -657,6 +659,8 @@ Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8000/api/v1/settings -Body (
 $export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings/export
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile module-settings.json
 ```
+
+集成测试必须基于已保存的 `integration.endpoint`，未配置时返回 `NOT_CONFIGURED`，不得验收为连接成功。外部 endpoint 默认不发起网络探测；同步接口只生成本地 `integration-sync-package` artifact，`delivered=false`，并写入 `integration_event`，由企业已有 Connector 或人工流程负责外部投递。
 
 规则库运维验收：
 
