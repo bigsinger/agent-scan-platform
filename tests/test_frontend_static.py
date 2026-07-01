@@ -35,11 +35,18 @@ def test_adapter_self_test_ui_is_api_backed():
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "已开始全部适配器自测" not in html
     assert "回归自测通过" not in html
+    assert "<tr><td>OpenClaw</td><td>✓" not in html
+    assert "<tr><td>Codex</td><td>✓" not in html
+    assert "a.fixtures" not in html
     assert "@click=\"selfTestAllAdapters\"" in html
     assert "@click=\"selfTestAdapter(a)\"" in html
     assert "adapterSelfTestResult" in html
+    assert "v-for=\"row in adapterCoverageRows\"" in html
+    assert "v-for=\"cell in row.cells\"" in html
     assert "async selfTestAdapter" in app_js
     assert "async selfTestAllAdapters" in app_js
+    assert "adapterCoverageRows()" in app_js
+    assert "adapterCoverageHeaders()" in app_js
     assert "/api/v1/adapters/" in app_js
 
 

@@ -22,6 +22,7 @@ SEED_PATH = PACKAGE_ROOT / "static" / "assessment" / "seed.json"
 
 
 RUNTIME_SEED_LIST_KEYS = {
+    "agents",
     "agentAssets",
     "discoveryHits",
     "discoveryErrors",

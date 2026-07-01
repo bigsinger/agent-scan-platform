@@ -278,6 +278,7 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 - 复用本机发现能力识别已安装 Agent、配置、MCP 和 Skill。
 - 生成 `adapter-self-test` JSON artifact，记录检查项、发现运行、版本、安装状态和安全边界。
 - 把最近自测结果写入本系统 SQLite 的 `adapter` 记录，并在页面展示 PASS/WARN/FAIL。
+- 适配器卡片和“能力覆盖矩阵”来自 `/api/v1/adapters` 的运行态目录：本机 Agent、discovery_hit、MCP Server、Skill 和最近自测记录共同决定 `OBSERVED`、`NOT_FOUND`、`NOT_RUN` 或 `READONLY_GENERIC`。页面不再展示固定勾选或固定回归样本数量。
 
 Codex 与 Hermes 的重点行为：
 

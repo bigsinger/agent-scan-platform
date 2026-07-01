@@ -150,6 +150,8 @@ $hermes.self_test.download
 
 适配器自测会复用本机只读发现能力。Codex 通过 PATH/WindowsApps `codex.exe` 路径和包名版本识别，兼容 `app/Codex.exe` 与 `app/resources/codex.exe`；Hermes 通过 `hermes --version` 读取版本信息。该流程不会启动 Codex/Hermes 交互运行时，不启动 stdio MCP Server，不修改已安装 Agent 配置，只写本系统 SQLite 与 `data/artifacts/adapter-self-test` JSON artifact。未安装或未命中特定 Agent 时返回 `WARN`，用于真实反映客户机器状态。
 
+`GET /api/v1/adapters` 会返回当前运行态适配器目录和 `coverage_matrix`。矩阵状态由本系统 SQLite 中的 `agent_instance`、`discovery_hit`、`mcp_server`、`skill` 与最近 `adapter` 自测记录派生；没有证据时显示 `NOT_FOUND` 或 `NOT_RUN`，未知版本只标记为 `READONLY_GENERIC` 降级扫描能力。企业验收时不要接受固定勾选、固定 fixture 数或截图作为覆盖证据。
+
 agent-scan 兼容中心自测：
 
 ```powershell

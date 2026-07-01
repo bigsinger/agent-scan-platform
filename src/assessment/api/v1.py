@@ -1945,6 +1945,111 @@ def find_adapter(state: dict, adapter_id: str) -> dict:
     }
 
 
+ADAPTER_PRESENTATION = {
+    "openclaw": {
+        "icon": "OC",
+        "color": "#f04438",
+        "soft": "#fff0ef",
+        "desc": "本地只读发现 OpenClaw 配置、Skills、Plugins、Gateway 与工具边界。",
+    },
+    "hermes": {
+        "icon": "HM",
+        "color": "#7f56d9",
+        "soft": "#f4efff",
+        "desc": "本地只读发现 Hermes Profile、Terminal Backend、Approval、Skills 与 Memory/RAG。",
+    },
+    "claude-code": {
+        "icon": "CC",
+        "color": "#d97706",
+        "soft": "#fff7e6",
+        "desc": "本地只读发现 Claude Code Settings、Permissions、Hooks、MCP、Skills 与仓库指令。",
+    },
+    "codex": {
+        "icon": "CX",
+        "color": "#079455",
+        "soft": "#ecfdf3",
+        "desc": "本地只读发现 Codex config.toml、Profiles、Sandbox、Approval、AGENTS、Skills 与 MCP。",
+    },
+}
+
+
+def adapter_catalog(store: Any) -> list[dict]:
+    stored_adapters = store.list_records("adapter")
+    agent_assets = store.list_records("agent_instance")
+    hits = store.list_records("discovery_hit")
+    mcp_servers = store.list_records("mcp_server")
+    skills = store.list_records("skill")
+    rows: list[dict] = []
+    for canonical, product in ADAPTER_PRODUCTS.items():
+        stored = next((item for item in stored_adapters if adapter_identity_matches(item, canonical)), {})
+        product_assets = adapter_product_hits(agent_assets, product)
+        product_hits = adapter_product_hits(hits, product)
+        product_mcp = adapter_product_hits(mcp_servers, product)
+        product_skills = adapter_product_hits(skills, product)
+        all_product_records = [*product_assets, *product_hits, *product_mcp, *product_skills]
+        version = first_non_empty([item.get("version") for item in all_product_records], stored.get("version", ""))
+        last_status = stored.get("last_self_test_status") or stored.get("self_test") or "NOT_RUN"
+        installed = bool(product_assets or any(str(hit.get("type") or "").lower() == "agent" for hit in product_hits))
+        install_status = stored.get("install_status") or ("已发现" if installed else "未发现")
+        matrix = adapter_coverage_matrix(canonical, product, product_hits, product_assets, product_mcp, product_skills, stored)
+        presentation = ADAPTER_PRESENTATION.get(canonical, {})
+        row = {
+            "id": canonical,
+            "canonical_id": canonical,
+            "name": product,
+            "product": product,
+            "status": stored.get("status") or ("ACTIVE" if last_status in {"PASS", "WARN"} else "NEEDS_SELF_TEST"),
+            "coverage": "READY" if last_status == "PASS" else "OBSERVED" if all_product_records else "NEEDS_SELF_TEST",
+            "icon": presentation.get("icon", product[:2].upper()),
+            "color": presentation.get("color", "#315efb"),
+            "soft": presentation.get("soft", "#eef3ff"),
+            "desc": presentation.get("desc", "本地只读 Agent 适配器。"),
+            "discoverer": "local-readonly well-known paths",
+            "evidence": f"Agent {len(product_assets)} / Hit {len(product_hits)} / MCP {len(product_mcp)} / Skill {len(product_skills)}",
+            "version": version,
+            "install_status": install_status,
+            "last_self_test_status": last_status,
+            "last_self_test_at": stored.get("last_self_test_at") or "",
+            "last_self_test_download": stored.get("last_self_test_download") or "",
+            "discovered_agents": len(product_assets),
+            "discovered_hits": len(product_hits),
+            "discovered_mcp": len(product_mcp),
+            "discovered_skills": len(product_skills),
+            "coverage_matrix": matrix,
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        }
+        rows.append(row)
+    return rows
+
+
+def adapter_coverage_matrix(
+    canonical: str,
+    product: str,
+    product_hits: list[dict],
+    product_assets: list[dict],
+    product_mcp: list[dict],
+    product_skills: list[dict],
+    stored: dict,
+) -> list[dict]:
+    material = "\n".join(json.dumps(item, ensure_ascii=False, sort_keys=True) for item in [*product_hits, *product_assets, *product_mcp, *product_skills])
+    lower_material = material.lower()
+    return [
+        adapter_coverage_cell("global_config", "Global Config", "OBSERVED" if product_hits or product_assets else "NOT_FOUND", f"{len(product_hits) + len(product_assets)} 条相关发现/资产记录"),
+        adapter_coverage_cell("project_config", "Project", "OBSERVED" if any(token in lower_material for token in ["project", "workspace", "agents.md", ".mcp", "repo"]) else "NOT_FOUND", "来自 discovery_hit/agent_instance 的项目级路径证据"),
+        adapter_coverage_cell("mcp", "MCP", "OBSERVED" if product_mcp else "NOT_FOUND", f"{len(product_mcp)} 个 MCP Server 记录"),
+        adapter_coverage_cell("skills", "Skills", "OBSERVED" if product_skills else "NOT_FOUND", f"{len(product_skills)} 个 Skill 记录"),
+        adapter_coverage_cell("memory", "Memory", "OBSERVED" if any(token in lower_material for token in ["memory", "rag", "checkpoint"]) else "NOT_ASSERTED", "仅在本机发现到 Memory/RAG/Checkpoint 相关记录时标记"),
+        adapter_coverage_cell("permissions", "Permissions", "OBSERVED" if any(token in lower_material for token in ["approval", "permission", "sandbox", "allow", "deny", "profile", "gateway"]) else "NOT_FOUND", "来自配置、审批或沙箱记录的权限证据"),
+        adapter_coverage_cell("dynamic", "Dynamic", stored.get("last_self_test_status") or stored.get("self_test") or "NOT_RUN", "最近一次本地只读适配器自测"),
+        adapter_coverage_cell("unknown_version", "未知版本", "READONLY_GENERIC", f"{product} 未识别版本会降级为通用只读配置/Skill/MCP 扫描"),
+    ]
+
+
+def adapter_coverage_cell(cell_id: str, name: str, status: str, detail: str) -> dict:
+    return {"id": cell_id, "name": name, "status": status, "detail": detail}
+
+
 def adapter_self_test(store: Any, state: dict, adapter_id: str, body: dict | None = None) -> dict:
     requested_id = str(adapter_id or "").strip()
     canonical = canonical_adapter_id(requested_id)
@@ -5647,6 +5752,7 @@ def redacted_body_summary(body: dict) -> dict:
 
 
 REAL_STATE_PATHS = {
+    "agents": "/adapters",
     "agentAssets": "/agents",
     "discoveryHits": "/discovery-hits",
     "mcpServers": "/mcp-servers",
@@ -5830,6 +5936,8 @@ def default_runtime_plan(state: dict) -> dict:
 
 
 def real_items_for_path(path: str) -> list[dict]:
+    if path == "/adapters":
+        return adapter_catalog(get_store())
     if path == "/tasks":
         return combine_items(get_store().list_records("task"), get_store().list_records("assessment"))
     if path == "/mcp-consents":

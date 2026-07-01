@@ -311,14 +311,15 @@ production.write</textarea></div></div></div>
 <!-- P08 ADAPTERS -->
 <div v-if="current==='adapters'">
   <div class="card">
-    <div class="card-head"><div><h2>Agent 适配器中心</h2><div class="desc">发现路径、配置解析、组件归一化、产品专项规则、回归样本与未知版本降级。</div></div><button class="btn" :disabled="opsBusy" @click="selfTestAllAdapters">{{opsBusy?'自测中':'全部自测'}}</button></div>
+    <div class="card-head"><div><h2>Agent 适配器中心</h2><div class="desc">发现路径、配置解析、组件归一化、最近自测、本机命中与未知版本降级。</div></div><button class="btn" :disabled="opsBusy" @click="selfTestAllAdapters">{{opsBusy?'自测中':'全部自测'}}</button></div>
     <div class="grid g4">
       <div v-for="a in agents" class="agent-card" :style="{'--accent':a.color,'--soft':a.soft}">
-        <div style="display:flex;justify-content:space-between"><div class="agent-logo">{{a.icon}}</div><span :class="['badge',a.coverage==='完整'?'low':'medium']">{{a.coverage}}</span></div>
+        <div style="display:flex;justify-content:space-between"><div class="agent-logo">{{a.icon}}</div><span :class="['badge',statusClass(a.coverage)]">{{a.coverage}}</span></div>
         <h3>{{a.name}}</h3><div class="desc">{{a.desc}}</div>
-        <div class="kv" style="grid-template-columns:95px 1fr;margin-top:10px"><div>发现器</div><div>{{a.discoverer}}</div><div>回归</div><div>{{a.fixtures}}</div><div>版本</div><div>{{a.version||'待探测'}}</div><div>最近自测</div><div><span :class="['badge',statusClass(a.last_self_test_status||a.self_test||'未运行')]">{{a.last_self_test_status||a.self_test||'未运行'}}</span><div v-if="a.last_self_test_at" class="tiny muted">{{a.last_self_test_at}}</div></div></div>
+        <div class="kv" style="grid-template-columns:95px 1fr;margin-top:10px"><div>发现器</div><div>{{a.discoverer}}</div><div>本机命中</div><div>{{a.evidence||('Agent '+(a.discovered_agents||0)+' / Hit '+(a.discovered_hits||0))}}</div><div>版本</div><div>{{a.version||'待探测'}}</div><div>最近自测</div><div><span :class="['badge',statusClass(a.last_self_test_status||a.self_test||'未运行')]">{{a.last_self_test_status||a.self_test||'未运行'}}</span><div v-if="a.last_self_test_at" class="tiny muted">{{a.last_self_test_at}}</div></div></div>
         <div class="agent-actions"><button class="btn primary sm" @click="viewAdapter(a)">覆盖详情</button><button class="btn sm" :disabled="opsBusy" @click="selfTestAdapter(a)">自测</button></div>
       </div>
+      <div v-if="!agents.length" class="callout">尚无适配器目录。请确认后端 API 正常，或运行本机发现/适配器自测生成记录。</div>
     </div>
   </div>
   <div v-if="adapterSelfTestResult" class="card">
@@ -332,11 +333,9 @@ production.write</textarea></div></div></div>
       </div>
     </div>
   </div>
-  <div class="card"><h2>能力覆盖矩阵</h2><div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Adapter</th><th>Global Config</th><th>Project</th><th>MCP</th><th>Skills</th><th>Memory</th><th>Permissions</th><th>Dynamic</th><th>未知版本</th></tr></thead><tbody>
-    <tr><td>OpenClaw</td><td>✓</td><td>✓</td><td>扩展</td><td>✓</td><td>✓</td><td>Gateway</td><td>✓</td><td>通用扫描</td></tr>
-    <tr><td>Hermes</td><td>✓</td><td>Profile</td><td>扩展</td><td>✓</td><td>✓</td><td>Approval</td><td>✓</td><td>配置/Skill</td></tr>
-    <tr><td>Claude Code</td><td>✓</td><td>✓</td><td>上游+扩展</td><td>上游+扩展</td><td>—</td><td>Allow/Ask/Deny</td><td>✓</td><td>上游通用</td></tr>
-    <tr><td>Codex</td><td>✓</td><td>✓</td><td>上游+扩展</td><td>上游+扩展</td><td>—</td><td>Sandbox/Approval</td><td>✓</td><td>上游通用</td></tr>
+  <div class="card"><h2>能力覆盖矩阵</h2><div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Adapter</th><th v-for="h in adapterCoverageHeaders">{{h.name}}</th></tr></thead><tbody>
+    <tr v-for="row in adapterCoverageRows" :key="row.id"><td>{{row.adapter}}</td><td v-for="cell in row.cells" :key="cell.id"><span :class="['badge',statusClass(cell.status)]">{{cell.status}}</span><div class="tiny muted">{{cell.detail}}</div></td></tr>
+    <tr v-if="!adapterCoverageRows.length"><td :colspan="adapterCoverageHeaders.length+1" class="muted">暂无覆盖矩阵，请刷新后端或运行适配器自测。</td></tr>
   </tbody></table></div></div>
 </div>
 
@@ -768,6 +767,6 @@ remote_analysis: false</div></div></div></div>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
 <script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.25"></script>
+<script src="/static/assessment/app.js?v=4.1.26"></script>
 </body>
 </html>

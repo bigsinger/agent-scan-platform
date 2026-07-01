@@ -13,7 +13,7 @@
   }
   const seed = window.ASSESSMENT_SEED || {};
   const runtimeListKeys = [
-    'agentAssets','discoveryHits','discoveryErrors','discoveryLog','mcpServers','consents','tools','skills',
+    'agents','agentAssets','discoveryHits','discoveryErrors','discoveryLog','mcpServers','consents','tools','skills',
     'tasks','jobs','processes','taskEvents','findings','evidenceItems','reports','components','redteamRuns',
     'attackPaths','policyDrafts','retests','backupRecords','heatmap','completeness'
   ];
@@ -310,6 +310,30 @@ data(){
         {name:'发布状态', status:['已发布','PUBLISHED','ACTIVE'].includes(rule.status)?'PASS':'PENDING', detail:rule.status || 'DRAFT'},
         {name:'安全边界', status:'PASS', detail:'规则测试只运行本地 deterministic analyzer，不启动或修改已安装 Agent'}
       ];
+    },
+    adapterCoverageHeaders(){
+      return [
+        {id:'global_config', name:'Global Config'},
+        {id:'project_config', name:'Project'},
+        {id:'mcp', name:'MCP'},
+        {id:'skills', name:'Skills'},
+        {id:'memory', name:'Memory'},
+        {id:'permissions', name:'Permissions'},
+        {id:'dynamic', name:'Dynamic'},
+        {id:'unknown_version', name:'未知版本'}
+      ];
+    },
+    adapterCoverageRows(){
+      return (this.agents || []).map(adapter => {
+        const cells=adapter.coverage_matrix || [];
+        const byId={};
+        cells.forEach(cell => { byId[cell.id]=cell; });
+        return {
+          adapter:adapter.name || adapter.product || adapter.id,
+          id:adapter.id,
+          cells:this.adapterCoverageHeaders.map(header => byId[header.id] || {id:header.id, name:header.name, status:'NOT_FOUND', detail:'当前 SQLite 尚无该覆盖项证据'})
+        };
+      });
     },
     completenessStats(){
       const rows=this.completeness || [];
@@ -613,10 +637,10 @@ data(){
       if(raw.includes('P2') || raw.includes('中危') || raw.includes('需关注')) return 'medium';
       if(['ok','safe_mode','idle','disabled'].includes(lower)) return 'low';
       if(s==='已完成') return 'low';
-      if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS') return 'low';
+      if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS'||s==='OBSERVED') return 'low';
       if(s==='已发布'||s==='PUBLISHED') return 'low';
       if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
-      if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED') return 'blue';
+      if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED'||s==='READONLY_GENERIC') return 'blue';
       if(s==='等待审批'||s==='部分完成'||s==='WARN'||s==='NOT_RUN'||s==='未运行'||s==='NO_MATCH'||s==='DRAFT'||s==='草稿') return 'medium';
       if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE'||s==='REQUIRES_CONFIG'||s==='NEEDS_SELF_TEST'||s==='NOT_ASSERTED'||s==='待验证') return 'medium';
       if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED'||s==='MISSING'||s==='NOT_FOUND'||s==='MISSING_DOC'||s==='MISSING_API') return 'critical';

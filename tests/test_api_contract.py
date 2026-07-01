@@ -221,6 +221,26 @@ def test_openapi_contains_v4_1_contract_endpoints():
         assert path in paths, path
 
 
+def test_adapter_catalog_is_runtime_backed_not_seed(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "adapter-catalog.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.get("/api/v1/adapters")
+    assert response.status_code == 200
+    payload = response.json()
+    rows = payload["items"]
+
+    assert {row["id"] for row in rows} >= {"codex", "hermes", "claude-code", "openclaw"}
+    assert "claude_code" not in {row["id"] for row in rows}
+    assert all("fixtures" not in row for row in rows)
+    assert all(row["mutates_installed_agents"] is False for row in rows)
+    assert all(row["safe_mode"] == "local-readonly" for row in rows)
+    assert all(row["coverage_matrix"] for row in rows)
+    assert {cell["status"] for row in rows for cell in row["coverage_matrix"]} >= {"NOT_RUN", "READONLY_GENERIC"}
+    assert store.get_state().get("agents") == []
+
+
 def test_adapter_self_test_uses_discovery_and_persists_evidence(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "adapter-self-test.db")
     store.initialize()
