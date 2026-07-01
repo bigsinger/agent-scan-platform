@@ -667,6 +667,9 @@ def test_assessment_draft_and_plan_force_local_scan_boundary(monkeypatch, tmp_pa
     assert plan["cloud_analysis_status"] == "OPTIONAL_DISABLED"
     assert plan["scan_options"]["remote_analysis"] is False
     assert plan["mutates_installed_agents"] is False
+    snapshot = plan_response.json()["snapshot"]
+    assert snapshot["kind"] == "assessment-plan"
+    assert store.get_record("artifact", snapshot["id"]) is not None
 
 
 def test_quick_scan_recent_history_is_real_and_exportable(monkeypatch, tmp_path):

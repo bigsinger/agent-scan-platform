@@ -148,6 +148,9 @@ data(){
     initial.settingsImportText = '';
     initial.healthSelfTestResult = null;
     initial.opsBusy = false;
+    initial.assessmentPlanBusy = false;
+    initial.assessmentPlanStatus = '';
+    initial.assessmentPlanSnapshot = null;
     return initial;
   },
   computed:{
@@ -1467,6 +1470,31 @@ data(){
         adapter:this.form.adapter,
         profile_id:'standard-complete@4.1.0'
       }, this.scanOptionPayload('assessment'), extra || {});
+    },
+    async nextWizardStep(){
+      if(this.wizard>=6) return;
+      const next=this.wizard+1;
+      this.wizard=next;
+      if(next===6) await this.refreshAssessmentPlan();
+    },
+    previousWizardStep(){
+      if(this.wizard>1) this.wizard--;
+    },
+    async refreshAssessmentPlan(){
+      this.assessmentPlanBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/assessments/plan', this.assessmentPayload({wizard:this.wizard, plan_confirmed:this.planConfirmed}));
+        const plan=res.plan || {};
+        this.planJson=JSON.stringify(plan, null, 2);
+        this.assessmentPlanSnapshot=res.snapshot || null;
+        this.assessmentPlanStatus='READY';
+        this.toastMsg('Assessment Plan 已生成：'+(plan.id || 'READY'));
+      } catch (err) {
+        this.assessmentPlanStatus='FAILED';
+        this.apiError=this.describeError(err);
+      } finally {
+        this.assessmentPlanBusy=false;
+      }
     },
     quickAgent(a){
       this.form.adapter=a.adapter || a.name || '自动识别';

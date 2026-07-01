@@ -226,12 +226,12 @@ production.write</textarea></div></div></div>
 
     <div v-if="wizard===6">
       <div class="grid g2">
-        <div><h3>Assessment Plan</h3><div class="code">{{planJson}}</div></div>
+        <div><h3>Assessment Plan</h3><div class="code">{{assessmentPlanBusy?'正在生成 Assessment Plan...':planJson}}</div><div v-if="assessmentPlanSnapshot" class="hint">计划快照已写入 artifact：{{assessmentPlanSnapshot.id}}</div></div>
         <div><h3>执行摘要</h3><table><tbody><tr><td>Stages</td><td>{{taskStages.length||4}}</td><td><span class="badge low">按模板</span></td></tr><tr><td>Rules</td><td>{{ruleRows.length||0}} 项</td><td><span class="badge low">可执行</span></td></tr><tr><td>Cases</td><td>{{caseLibrary.length||redCases.length||0}} 项</td><td><span class="badge low">Dry-run</span></td></tr><tr><td>stdio MCP</td><td>{{stdioMcpCount}}</td><td><span class="badge medium">执行中暂停审批</span></td></tr><tr><td>远程分析</td><td>{{form.assessmentRemoteAnalysis?'已请求（本地关闭）':'关闭'}}</td><td><span class="badge gray">本地结果完整</span></td></tr><tr><td>预计耗时</td><td>提交后统计</td><td>{{executionSlotMax}} 并行</td></tr></tbody></table><label class="toggle" style="margin-top:12px"><input type="checkbox" v-model="planConfirmed"> 我确认授权范围、MCP 启动策略和禁止动作</label></div>
       </div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;margin-top:18px"><button class="btn" :disabled="wizard===1" @click="wizard--">← 上一步</button><button v-if="wizard<6" class="btn primary" @click="wizard++">下一步 →</button><button v-else class="btn primary" :disabled="!planConfirmed||opsBusy" @click="submitAssessment">提交并开始测评</button></div>
+    <div style="display:flex;justify-content:space-between;margin-top:18px"><button class="btn" :disabled="wizard===1||assessmentPlanBusy" @click="previousWizardStep">← 上一步</button><button v-if="wizard<6" class="btn primary" :disabled="assessmentPlanBusy" @click="nextWizardStep">{{assessmentPlanBusy?'生成计划...':'下一步 →'}}</button><button v-else class="btn primary" :disabled="!planConfirmed||opsBusy||assessmentPlanBusy" @click="submitAssessment">提交并开始测评</button></div>
   </div>
 </div>
 

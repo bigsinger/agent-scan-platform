@@ -224,6 +224,22 @@ def test_quick_scan_snapshot_upload_merges_scan_results():
     assert "快照已保存并扫描" in app_js
 
 
+def test_assessment_wizard_generates_plan_from_api():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "async nextWizardStep" in app_js
+    assert "async refreshAssessmentPlan" in app_js
+    assert "/api/v1/assessments/plan" in app_js
+    assert "this.planJson=JSON.stringify(plan, null, 2)" in app_js
+    assert "this.assessmentPlanSnapshot=res.snapshot || null" in app_js
+    assert "@click=\"nextWizardStep\"" in html
+    assert "@click=\"previousWizardStep\"" in html
+    assert "wizard++" not in html
+    assert "wizard--" not in html
+    assert "正在生成 Assessment Plan" in html
+    assert "计划快照已写入 artifact" in html
+
+
 def test_discovery_run_ui_exposes_current_evidence_download():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

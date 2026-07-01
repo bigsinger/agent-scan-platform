@@ -226,6 +226,25 @@ $validation.validation.download
 
 前端“创建完整测评”的检测包和动态用例、任务详情页“计划摘要”、测评模板页“当前模板计划”必须按当前 SQLite/API 状态渲染：规则数来自 `/api/v1/rules` 或本地 `rule_catalog()` 回退，agent-scan 映射来自兼容中心，MCP/Skill 来自发现记录，红队用例来自用例库。运维验收时不得接受固定 `84`、固定产品规则或固定 `dry_run` 字段作为计划证据。
 
+进入“创建完整测评”第 6 步时，前端会调用 `POST /api/v1/assessments/plan` 并显示返回的实时计划 JSON。接口会同步写入 `assessment-plan` artifact，可用以下命令验收本地边界和快照持久化：
+
+```powershell
+$planBody = @{
+  target_path = "tests/fixtures/sample_agent_project"
+  adapter = "Codex"
+  scan_skills = $true
+  run_local_analyzers = $true
+  use_existing_sca = $false
+  remote_analysis_requested = $true
+} | ConvertTo-Json
+$plan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/assessments/plan -Body $planBody -ContentType "application/json"
+$plan.plan.remote_analysis             # False
+$plan.plan.remote_analysis_requested   # True
+$plan.plan.cloud_analysis_status       # OPTIONAL_DISABLED
+$plan.plan.mutates_installed_agents    # False
+$plan.snapshot.kind                    # assessment-plan
+```
+
 MCP / Tool 只读静态检查：
 
 ```powershell

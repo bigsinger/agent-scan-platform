@@ -171,6 +171,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 
 “创建完整测评”的检测包、动态用例和任务详情页“计划摘要”均来自当前运行态：本地规则目录、agent-scan 兼容映射、当前 Adapter、已发现 MCP/Skill、红队用例、选中任务和模板记录共同决定页面内容。页面不会再展示固定 `84` 条规则、固定产品专项或固定 `dry_run` 演示策略；没有运行发现或加载规则时会显示真实空态。
 
+向导进入第 6 步时会调用 `POST /api/v1/assessments/plan` 生成当前 Assessment Plan，并把返回 JSON 显示在页面中，同时写入 `assessment-plan` artifact。计划中会包含 `scan_options`、`remote_analysis=false`、`remote_analysis_requested`、`cloud_analysis_status` 和 `mutates_installed_agents=false` 等本地交付边界字段；这份 artifact 可作为客户评审时的授权范围和禁止动作证据。
+
 ## 4. 本机发现页面
 
 位置：
