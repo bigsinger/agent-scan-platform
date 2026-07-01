@@ -132,9 +132,17 @@ Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/execution-supervisor/normal-mode `
   -Body (@{ reason = "maintenance complete" } | ConvertTo-Json) `
   -ContentType "application/json"
+$execLog = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/executions/<execution_id>/logs `
+  -Body (@{} | ConvertTo-Json) `
+  -ContentType "application/json"
+$stop = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/executions/<execution_id>/terminate `
+  -Body (@{ reason = "maintenance window" } | ConvertTo-Json) `
+  -ContentType "application/json"
 ```
 
-执行中心安全模式只写入本系统 `module_setting`，用于停止或恢复领取新 Job；不会发送 kill 信号，不会启动或停止 Codex/Hermes/Claude Code/MCP 进程。
+执行中心安全模式只写入本系统 `module_setting`，用于停止或恢复领取新 Job；日志接口只基于 `process_execution` 和 `scan_event` 生成脱敏 `execution-log` artifact；`terminate` 只登记 `STOP_REQUESTED` 和 `execution.terminate_requested` 事件。上述操作都不会发送 kill 信号，不会启动或停止 Codex/Hermes/Claude Code/MCP 进程。
 
 Agent 适配器真实自测：
 

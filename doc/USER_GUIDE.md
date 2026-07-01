@@ -260,13 +260,17 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 - 从 SQLite 的 `process_execution` 和任务记录聚合执行槽、等待 Job、子进程数量和安全模式状态。
 - “刷新队列”会重新读取本系统执行记录并写入审计事件。
 - “进入安全模式”只写入 `module_setting=execution_supervisor_mode`，表示调度器停止领取新 Job；“退出安全模式”恢复领取新 Job。
+- “日志”会基于 `process_execution` 与 `scan_event` 生成 `execution-log` JSON 制品，输出行、事件载荷和命令摘要都会先脱敏。
+- “安全停止”只登记 `STOP_REQUESTED` 停止请求、事件流和审计记录，不会向本机进程发送 OS signal。
 
 安全边界：
 
 1. 刷新不会启动或终止任何外部进程。
 2. 进入或退出安全模式都不会发送 kill 信号，不会停止 Codex、Hermes、Claude Code 或 MCP Server。
-3. 页面展示的执行数据来自本系统 SQLite；没有记录时显示空态。
-4. 所有操作都标记 `mutates_installed_agents=false`。
+3. 日志生成只读取本系统 SQLite 和 artifact 目录，不回读或修改已安装 Agent 文件。
+4. 安全停止请求只更新本系统 `process_execution`，不 kill、不暂停、不注入 Codex、Hermes、Claude Code 或 MCP Server。
+5. 页面展示的执行数据来自本系统 SQLite；没有记录时显示空态。
+6. 所有操作都标记 `mutates_installed_agents=false`。
 
 ## 4.4 Agent 适配器真实自测
 

@@ -19,7 +19,8 @@
   ];
   const runtimeObjectKeys = [
     'selectedAsset','selectedTask','selectedMcp','selectedTool','selectedConsent','selectedSkill','selectedCase','selectedRedteamRun',
-    'selectedFinding','selectedEvidence','selectedAttackPath','selectedPolicyDraft','selectedReport','selectedRetest','selectedRule'
+    'selectedFinding','selectedEvidence','selectedAttackPath','selectedPolicyDraft','selectedReport','selectedRetest','selectedRule',
+    'selectedProcess','selectedJob'
   ];
   const defaultFormState = {adapter:'自动识别', targetPath:'', discoveryPaths:'', snapshotContent:'', assessmentName:'', businessNote:'', redteamTarget:'local-agent-dry-run', redteamCaseId:'', redteamMode:'dry-run'};
   function resetRuntimeCollections(state) {
@@ -33,6 +34,8 @@
     state.scheduleLastRun = null;
     state.retestDiff = null;
     state.completenessSummary = {};
+    state.executionLog = null;
+    state.executionTermination = null;
   }
   try {
     const { createApp } = Vue;
@@ -64,6 +67,10 @@ data(){
     initial.sqliteStatus = initial.sqliteStatus || {file_bytes:0, mode:'WAL', state:'未知', pragma:{}};
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
     initial.supervisorStatus = initial.supervisorStatus || {state:'IDLE', status:'ok', queue:0, process_count:0, slots:{running:0,max:2,available:2}, safe_mode:false};
+    initial.selectedProcess = initial.selectedProcess || {};
+    initial.selectedJob = initial.selectedJob || {};
+    initial.executionLog = initial.executionLog || null;
+    initial.executionTermination = initial.executionTermination || null;
     initial.sandboxPolicy = Object.assign({
       id:'sandbox_default',
       version:'local-readonly@4.1',
@@ -714,6 +721,52 @@ data(){
         const res=await this.apiPost('/api/v1/execution-supervisor/normal-mode', {reason:'local operator resumed from UI'});
         this.applyExecutionSupervisor(res);
         this.toastMsg('已退出执行安全模式：恢复领取新 Job');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async openExecutionLog(process){
+      if(!process) return;
+      const id=process.id || process.job || process.job_id || process.process;
+      if(!id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/executions/'+encodeURIComponent(id)+'/logs', {});
+        this.executionLog=res.log || null;
+        this.selectedProcess=process;
+        this.executionTab='日志';
+        this.toastMsg('执行日志已生成：'+(this.executionLog && this.executionLog.id || id));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async openJobLog(job){
+      if(!job) return;
+      const id=job.id || job.job || job.job_id || job.process;
+      if(!id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/jobs/'+encodeURIComponent(id)+'/logs', {});
+        this.executionLog=res.log || null;
+        this.selectedJob=job;
+        this.executionTab='日志';
+        this.go('execution');
+        this.toastMsg('Job 日志已生成：'+(this.executionLog && this.executionLog.id || id));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async requestExecutionTerminate(process){
+      if(!process || !process.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/executions/'+encodeURIComponent(process.id)+'/terminate', {reason:'local operator requested from UI'});
+        if(res.process){
+          this.mergeRecords('processes', [res.process]);
+          this.mergeRecords('jobs', [res.process]);
+          this.selectedProcess=res.process;
+        }
+        if(res.supervisor) this.applyExecutionSupervisor(res);
+        this.executionTermination=res.termination || null;
+        this.executionTab='恢复记录';
+        this.toastMsg('已记录安全停止请求：未发送外部进程信号');
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },

@@ -121,6 +121,7 @@ POST /api/v1/tasks/{id}/clone
 GET /api/v1/tasks/{id}
 GET /api/v1/tasks/{id}/events
 GET /api/v1/tasks/{id}/artifacts
+POST /api/v1/jobs/{id}/logs
 POST /api/v1/redteam-runs
 GET /api/v1/redteam-runs/{id}
 PATCH /api/v1/redteam-runs/{id}
@@ -129,6 +130,10 @@ GET /api/v1/redteam-cases
 POST /api/v1/redteam-cases
 POST /api/v1/redteam-cases/{id}/validate
 GET /api/v1/executor/health
+GET /api/v1/execution-supervisor
+POST /api/v1/execution-supervisor/refresh
+POST /api/v1/executions/{id}/logs
+POST /api/v1/executions/{id}/terminate
 GET /api/v1/scanners
 POST /api/v1/scanners/{id}/self-test
 GET /api/v1/sandbox-policy
@@ -232,10 +237,10 @@ PAGE_API_MAP = {
     "P13": ["GET /api/v1/skills", "POST /api/v1/skill-scans", "GET /api/v1/skills/{id}/findings"],
     "P14": ["GET /api/v1/skills/{id}", "GET /api/v1/skills/{id}/files", "GET /api/v1/skills/{id}/render-diff", "GET /api/v1/skills/{id}/export", "POST /api/v1/skills/{id}/quarantine"],
     "P15": ["GET /api/v1/tasks", "POST /api/v1/tasks/{id}/cancel", "POST /api/v1/tasks/{id}/retry", "POST /api/v1/tasks/{id}/clone"],
-    "P16": ["GET /api/v1/tasks/{id}", "GET /api/v1/tasks/{id}/events", "GET /api/v1/tasks/{id}/artifacts"],
+    "P16": ["GET /api/v1/tasks/{id}", "GET /api/v1/tasks/{id}/events", "GET /api/v1/tasks/{id}/artifacts", "POST /api/v1/jobs/{id}/logs"],
     "P17": ["POST /api/v1/redteam-runs", "GET /api/v1/redteam-runs/{id}", "PATCH /api/v1/redteam-runs/{id}", "POST /api/v1/redteam-runs/{id}/stop"],
     "P18": ["GET /api/v1/redteam-cases", "POST /api/v1/redteam-cases", "POST /api/v1/redteam-cases/{id}/validate", "POST /api/v1/redteam-cases/{id}/dry-run"],
-    "P19": ["GET /api/v1/executor/health", "GET /api/v1/scanners", "POST /api/v1/scanners/{id}/self-test"],
+    "P19": ["GET /api/v1/executor/health", "GET /api/v1/execution-supervisor", "POST /api/v1/execution-supervisor/refresh", "POST /api/v1/executions/{id}/logs", "POST /api/v1/executions/{id}/terminate", "GET /api/v1/scanners", "POST /api/v1/scanners/{id}/self-test"],
     "P20": ["GET /api/v1/sandbox-policy", "PUT /api/v1/sandbox-policy", "POST /api/v1/sandbox-policy/test", "GET /api/v1/sandbox-policy/export"],
     "P21": ["GET /api/v1/findings", "GET /api/v1/findings/export", "PATCH /api/v1/findings/{id}", "POST /api/v1/findings/{id}/accept"],
     "P22": ["GET /api/v1/findings/{id}", "GET /api/v1/findings/{id}/evidence", "POST /api/v1/findings/{id}/retest"],

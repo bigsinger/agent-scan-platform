@@ -423,6 +423,15 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path.startswith("/backups/") and path.endswith("/restore-drill"):
         backup_id = path.split("/")[-2]
         result.update(run_backup_restore_drill(store, state, backup_id, body))
+    elif path.startswith("/executions/") and path.endswith("/logs"):
+        execution_id = path.split("/")[-2]
+        result.update(open_execution_log(store, state, execution_id, body))
+    elif path.startswith("/executions/") and path.endswith("/terminate"):
+        execution_id = path.split("/")[-2]
+        result.update(request_execution_terminate(store, state, execution_id, body))
+    elif path.startswith("/jobs/") and path.endswith("/logs"):
+        job_id = path.split("/")[-2]
+        result.update(open_job_log(store, state, job_id, body))
     elif path == "/skill-scans":
         result.update(run_skill_scan(store, state, body))
         return result
@@ -1719,6 +1728,285 @@ def leave_execution_safe_mode(store: Any, body: dict) -> dict:
         "supervisor": supervisor,
         "setting": setting,
         "safe_mode": "scheduler-resumed",
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
+    }
+
+
+EXECUTION_LOOKUP_FIELDS = ("id", "job", "job_id", "process", "process_id", "pid")
+
+
+def execution_records_for_lookup(store: Any, state: dict) -> list[dict]:
+    records: list[dict] = []
+    seen: set[str] = set()
+    for collection in [store.list_records("process_execution", limit=5000), state.get("processes", []), state.get("jobs", [])]:
+        for item in collection or []:
+            if not isinstance(item, dict):
+                continue
+            identity = str(item.get("id") or item.get("job") or item.get("job_id") or item.get("process") or len(records))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            records.append(item)
+    return records
+
+
+def find_execution_record(store: Any, state: dict, lookup_id: str) -> dict | None:
+    target = str(lookup_id)
+    direct = store.get_record("process_execution", target)
+    if direct:
+        return direct
+    for record in execution_records_for_lookup(store, state):
+        for field in EXECUTION_LOOKUP_FIELDS:
+            if str(record.get(field) or "") == target:
+                return record
+    return None
+
+
+def sanitize_execution_record(record: dict) -> dict:
+    safe: dict[str, Any] = {}
+    for key, value in record.items():
+        if isinstance(value, str):
+            safe[key] = redact_text(value, max_len=1200)
+        elif isinstance(value, (int, float, bool)) or value is None:
+            safe[key] = value
+        elif isinstance(value, (list, dict)):
+            safe[key] = redact_text(json.dumps(value, ensure_ascii=False, default=str), max_len=2000)
+        else:
+            safe[key] = redact_text(str(value), max_len=1200)
+    return safe
+
+
+def execution_assessment_id(record: dict, fallback: str) -> str:
+    return str(
+        record.get("assessment_id")
+        or record.get("task_id")
+        or record.get("task")
+        or record.get("assessment")
+        or record.get("target_task_id")
+        or fallback
+    )
+
+
+def execution_job_id(record: dict, fallback: str = "") -> str:
+    return str(record.get("job_id") or record.get("job") or record.get("process") or fallback or record.get("id") or "")
+
+
+def sanitized_execution_events(store: Any, record: dict, fallback_id: str) -> list[dict]:
+    assessment_id = execution_assessment_id(record, fallback_id)
+    job_id = execution_job_id(record, fallback_id)
+    events = store.list_scan_events(assessment_id) if assessment_id else []
+    if job_id:
+        matched = [
+            event
+            for event in events
+            if not event.get("job_id")
+            or str(event.get("job_id")) == job_id
+            or str((event.get("payload") or {}).get("job_id") or "") == job_id
+        ]
+        if matched:
+            events = matched
+    sanitized: list[dict] = []
+    for event in events:
+        payload = event.get("payload") or {}
+        payload_text = redact_text(json.dumps(payload, ensure_ascii=False, default=str), max_len=2000)
+        text = redact_text(str(payload.get("message") or payload.get("text") or event.get("text") or event.get("type") or ""), max_len=800)
+        sanitized.append(
+            {
+                "seq": event.get("seq"),
+                "assessment_id": redact_text(str(event.get("assessment_id") or ""), max_len=300),
+                "job_id": redact_text(str(event.get("job_id") or ""), max_len=300),
+                "type": event.get("type"),
+                "time": event.get("time") or event.get("created_at"),
+                "text": text,
+                "payload": payload_text,
+            }
+        )
+    return sanitized
+
+
+def execution_log_lines(record: dict, events: list[dict], requested_id: str) -> list[str]:
+    safe = sanitize_execution_record(record)
+    lines = [
+        "execution="
+        + redact_text(str(safe.get("id") or requested_id), max_len=300)
+        + " job="
+        + redact_text(str(safe.get("job") or safe.get("job_id") or "-"), max_len=300)
+        + " scanner="
+        + redact_text(str(safe.get("scanner") or "-"), max_len=300)
+        + " status="
+        + redact_text(str(safe.get("status") or safe.get("state") or "-"), max_len=120),
+        "safe_mode=local-readonly mutates_installed_agents=false external_process_signal_sent=false",
+    ]
+    process_line = "pid=" + redact_text(str(safe.get("pid") or "-"), max_len=120)
+    process_line += " pgid=" + redact_text(str(safe.get("pgid") or "-"), max_len=120)
+    process_line += " elapsed=" + redact_text(str(safe.get("elapsed") or "-"), max_len=120)
+    process_line += " output=" + redact_text(str(safe.get("output") or safe.get("summary") or "-"), max_len=1000)
+    lines.append(process_line)
+    if not events:
+        lines.append("events=0 no_scan_events_recorded_for_execution")
+    for event in events[-80:]:
+        lines.append(
+            "#"
+            + str(event.get("seq") or "-")
+            + " "
+            + str(event.get("time") or "-")
+            + " "
+            + str(event.get("type") or "-")
+            + " "
+            + redact_text(str(event.get("text") or ""), max_len=1000)
+        )
+    return lines
+
+
+def build_execution_log(store: Any, record: dict, requested_id: str, scope: str) -> dict:
+    safe_record = sanitize_execution_record(record)
+    events = sanitized_execution_events(store, record, requested_id)
+    lines = execution_log_lines(record, events, requested_id)
+    log_id = new_id("elog")
+    payload = {
+        "schema": "agent-security-execution-log@4.1",
+        "id": log_id,
+        "scope": scope,
+        "execution_id": str(record.get("id") or requested_id),
+        "job_id": execution_job_id(record, requested_id),
+        "assessment_id": execution_assessment_id(record, requested_id),
+        "record": safe_record,
+        "events": events,
+        "lines": lines,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
+        "opened_at": utc_now(),
+    }
+    artifact = store.write_artifact(
+        "execution-log",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"execution_id": payload["execution_id"], "job_id": payload["job_id"], "safe_mode": "local-readonly"},
+    )
+    payload["artifact"] = artifact
+    payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    store.audit_event(
+        "execution.log.opened" if scope == "execution" else "job.log.opened",
+        "process_execution",
+        payload["execution_id"],
+        {
+            "log_id": log_id,
+            "artifact_id": artifact["id"],
+            "job_id": payload["job_id"],
+            "mutates_installed_agents": False,
+            "external_process_signal_sent": False,
+        },
+    )
+    return payload
+
+
+def redact_execution_runtime_fields(record: dict) -> None:
+    for key in ("output", "summary", "error", "stdout", "stderr", "command"):
+        if key in record:
+            record[key] = redact_text(str(record.get(key) or ""), max_len=1200)
+    if isinstance(record.get("args"), list):
+        record["args"] = [redact_text(str(item), max_len=500) for item in record["args"]]
+    elif "args" in record:
+        record["args"] = redact_text(str(record.get("args") or ""), max_len=1200)
+
+
+def open_execution_log(store: Any, state: dict, execution_id: str, body: dict) -> dict:
+    record = find_execution_record(store, state, execution_id)
+    if not record:
+        raise HTTPException(status_code=404, detail={"message": "execution record not found", "execution_id": execution_id})
+    return {
+        "log": build_execution_log(store, record, execution_id, "execution"),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
+    }
+
+
+def open_job_log(store: Any, state: dict, job_id: str, body: dict) -> dict:
+    record = find_execution_record(store, state, job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail={"message": "job record not found", "job_id": job_id})
+    return {
+        "log": build_execution_log(store, record, job_id, "job"),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "external_process_signal_sent": False,
+    }
+
+
+def request_execution_terminate(store: Any, state: dict, execution_id: str, body: dict) -> dict:
+    record = find_execution_record(store, state, execution_id)
+    if not record:
+        raise HTTPException(status_code=404, detail={"message": "execution record not found", "execution_id": execution_id})
+    previous_status = str(record.get("status") or record.get("state") or "")
+    requested_at = utc_now()
+    updated = dict(record)
+    redact_execution_runtime_fields(updated)
+    updated.update(
+        {
+            "status": "STOP_REQUESTED" if previous_status == "RUNNING" else (previous_status or "STOP_REQUESTED"),
+            "state": "STOP_REQUESTED" if previous_status == "RUNNING" else (record.get("state") or previous_status or "STOP_REQUESTED"),
+            "terminate_requested": True,
+            "terminate_requested_at": requested_at,
+            "terminate_reason": redact_text(str(body.get("reason") or "local operator requested safe stop"), max_len=500),
+            "termination_mode": "record-only-no-signal",
+            "mutates_installed_agents": False,
+            "external_process_signal_sent": False,
+            "boundary": "只登记本系统执行停止请求，不发送 OS signal，不 kill 或修改已安装 Agent。",
+        }
+    )
+    stored = store.upsert_record("process_execution", updated, status=str(updated.get("status") or "STOP_REQUESTED"))
+    merge_state_record(state, "processes", stored)
+    merge_state_record(state, "jobs", stored)
+    assessment_id = execution_assessment_id(stored, execution_id)
+    job_id = execution_job_id(stored, execution_id)
+    event = store.scan_event(
+        assessment_id,
+        "execution.terminate_requested",
+        {
+            "message": f"Execution {stored.get('id')} 已登记安全停止请求；未发送外部进程信号。",
+            "execution_id": stored.get("id"),
+            "previous_status": previous_status,
+            "next_status": stored.get("status"),
+            "termination_mode": "record-only-no-signal",
+            "mutates_installed_agents": False,
+            "external_process_signal_sent": False,
+        },
+        job_id=job_id,
+    )
+    store.audit_event(
+        "execution.terminate_requested",
+        "process_execution",
+        str(stored.get("id") or execution_id),
+        {
+            "previous_status": previous_status,
+            "next_status": stored.get("status"),
+            "event_seq": event["seq"],
+            "termination_mode": "record-only-no-signal",
+            "mutates_installed_agents": False,
+            "external_process_signal_sent": False,
+        },
+    )
+    refreshed = runtime_state()
+    return {
+        "process": stored,
+        "termination": {
+            "execution_id": str(stored.get("id") or execution_id),
+            "job_id": job_id,
+            "requested_at": requested_at,
+            "previous_status": previous_status,
+            "next_status": stored.get("status"),
+            "mode": "record-only-no-signal",
+            "event": event,
+            "mutates_installed_agents": False,
+            "external_process_signal_sent": False,
+        },
+        "supervisor": executor_health(refreshed),
+        "jobs": refreshed.get("jobs", []),
+        "processes": refreshed.get("processes", []),
+        "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
         "external_process_signal_sent": False,
     }

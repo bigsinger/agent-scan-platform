@@ -163,6 +163,27 @@ def test_sqlite_backup_restore_drill_ui_is_api_backed():
     assert "current_database_mutated" not in html
 
 
+def test_execution_log_and_stop_request_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "已打开 Job 日志" not in html
+    assert "已打开脱敏日志" not in html
+    assert "已发送终止信号，10 秒后强制 Kill" not in html
+    assert "@click=\"openJobLog(j)\"" in html
+    assert "@click=\"openExecutionLog(p)\"" in html
+    assert "@click=\"requestExecutionTerminate(p)\"" in html
+    assert "executionLog" in html
+    assert "executionTermination" in html
+    assert "executionTermination.mode" in html
+    assert "async openExecutionLog" in app_js
+    assert "async openJobLog" in app_js
+    assert "async requestExecutionTerminate" in app_js
+    assert "'/api/v1/executions/'+encodeURIComponent(id)+'/logs'" in app_js
+    assert "'/api/v1/jobs/'+encodeURIComponent(id)+'/logs'" in app_js
+    assert "'/api/v1/executions/'+encodeURIComponent(process.id)+'/terminate'" in app_js
+    assert "未发送外部进程信号" in app_js
+
+
 def test_task_retry_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

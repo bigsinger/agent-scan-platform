@@ -604,6 +604,85 @@ def test_execution_supervisor_is_sqlite_backed_and_safe_mode_is_local_only():
     assert resumed["external_process_signal_sent"] is False
 
 
+def test_execution_logs_and_terminate_are_local_only_and_audited(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "execution-logs.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    process = store.upsert_record(
+        "process_execution",
+        {
+            "id": "exec-contract-1",
+            "job": "job-contract-1",
+            "job_id": "job-contract-1",
+            "scanner": "local-analysis",
+            "pid": "9999",
+            "pgid": "9999",
+            "status": "RUNNING",
+            "elapsed": "3s",
+            "output": "processed api_key=sk-contractexecutionsecret1234567890",
+            "assessment_id": "asm-exec-contract",
+        },
+        status="RUNNING",
+    )
+    store.scan_event(
+        "asm-exec-contract",
+        "job.progress",
+        {"message": "progress 50 token=sk-contracteventsecret1234567890", "progress": 50},
+        job_id="job-contract-1",
+    )
+
+    log_response = client.post(f"/api/v1/executions/{process['id']}/logs", json={})
+    assert log_response.status_code == 200
+    log = log_response.json()["log"]
+    assert log["schema"] == "agent-security-execution-log@4.1"
+    assert log["mutates_installed_agents"] is False
+    assert log["external_process_signal_sent"] is False
+    assert log["artifact"]["kind"] == "execution-log"
+    assert log["download"].startswith("/api/v1/artifacts/")
+    assert store.get_record("artifact", log["artifact"]["id"]) is not None
+    assert "sk-contract" not in json.dumps(log, ensure_ascii=False)
+    assert "<REDACTED" in json.dumps(log, ensure_ascii=False)
+
+    job_log_response = client.post("/api/v1/jobs/job-contract-1/logs", json={})
+    assert job_log_response.status_code == 200
+    job_log = job_log_response.json()["log"]
+    assert job_log["scope"] == "job"
+    assert job_log["job_id"] == "job-contract-1"
+    assert "sk-contract" not in json.dumps(job_log, ensure_ascii=False)
+
+    terminate_response = client.post(
+        f"/api/v1/executions/{process['id']}/terminate",
+        json={"reason": "contract maintenance"},
+    )
+    assert terminate_response.status_code == 200
+    termination = terminate_response.json()["termination"]
+    assert termination["mode"] == "record-only-no-signal"
+    assert termination["mutates_installed_agents"] is False
+    assert termination["external_process_signal_sent"] is False
+    assert termination["previous_status"] == "RUNNING"
+    assert termination["next_status"] == "STOP_REQUESTED"
+
+    updated = store.get_record("process_execution", process["id"])
+    assert updated["status"] == "STOP_REQUESTED"
+    assert updated["terminate_requested"] is True
+    assert updated["termination_mode"] == "record-only-no-signal"
+    assert updated["external_process_signal_sent"] is False
+    assert "sk-contract" not in updated["output"]
+
+    events = store.list_scan_events("asm-exec-contract")
+    assert any(event["type"] == "execution.terminate_requested" for event in events)
+    with store.connect() as conn:
+        audit_rows = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 10",
+            (process["id"],),
+        ).fetchall()
+    audit_payload = json.dumps([dict(row) for row in audit_rows], ensure_ascii=False)
+    assert "execution.log.opened" in audit_payload
+    assert "execution.terminate_requested" in audit_payload
+    assert "external_process_signal_sent" in audit_payload
+
+
 def test_report_evidence_and_risk_closure_actions():
     scan = client.post("/api/v1/quick-scans", json={"mode": "fixture", "max_files": 50}).json()
     report = client.post("/api/v1/reports", json={"assessment_id": scan["assessment"]["id"], "type": "Standard"}).json()["report"]
