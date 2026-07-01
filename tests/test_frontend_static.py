@@ -178,6 +178,18 @@ def test_quick_scan_snapshot_upload_merges_scan_results():
     assert "快照已保存并扫描" in app_js
 
 
+def test_discovery_run_ui_exposes_current_evidence_download():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "下载本次证据" in html
+    assert 'v-if="discoveryRunEvidence"' in html
+    assert ':href="discoveryRunEvidence"' in html
+    assert "discoveryRunEvidence" in app_js
+    assert "this.discoveryRunEvidence=res.download || (res.run&&res.run.download) || ''" in app_js
+    assert "this.mergeRecords('discoveryRuns', [res.run])" in app_js
+    assert "evidence='+this.discoveryRunEvidence" in app_js
+
+
 def test_consent_bulk_decline_ui_is_api_backed():
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "async denyAllConsents" in app_js

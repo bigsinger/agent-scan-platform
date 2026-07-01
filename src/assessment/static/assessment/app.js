@@ -31,6 +31,7 @@
     state.quickHistory = [];
     state.quickHistorySummary = {};
     state.uploadResult = null;
+    state.discoveryRunEvidence = '';
     state.skillScanResult = null;
     state.mcpInspection = null;
     state.scheduleLastRun = null;
@@ -52,6 +53,7 @@ data(){
     initial.quickHistorySummary = {};
     initial.quickBusy = false;
     initial.uploadResult = null;
+    initial.discoveryRunEvidence = '';
     initial.discoveryErrors = initial.discoveryErrors || [];
     initial.discoveryLog = initial.discoveryLog || [];
     initial.caseLibrary = initial.caseLibrary || [];
@@ -1214,6 +1216,7 @@ data(){
     async runDiscovery(){
       if(this.discoveryRunning){ this.discoveryRunning=false; this.toastMsg('发现已停止并保留当前命中'); return; }
       this.discoveryRunning=true; this.apiError='';
+      this.discoveryRunEvidence='';
       this.discoveryLog=['discovery.started scope=current-user'];
       this.toastMsg('本机发现已启动；不会启动 stdio MCP');
       try {
@@ -1229,9 +1232,13 @@ data(){
         this.mergeRecords('consents', res.consents);
         this.mergeRecords('skills', res.skills);
         this.mergeRecords('discoveryErrors', res.errors);
+        if(res.run) this.mergeRecords('discoveryRuns', [res.run]);
+        this.discoveryRunEvidence=res.download || (res.run&&res.run.download) || '';
         this.discoveryLog=[
           'discovery.completed run='+res.run.id,
           'agents='+(res.agents||[]).length+' hits='+(res.hits||[]).length+' mcp='+(res.mcp_servers||[]).length+' skills='+(res.skills||[]).length,
+          'safe_mode='+(res.safe_mode||'local-readonly')+' mutates_installed_agents='+String(Boolean(res.mutates_installed_agents)),
+          this.discoveryRunEvidence ? 'evidence='+this.discoveryRunEvidence : 'evidence=not-generated',
           ...((res.hits||[]).slice(0,8).map(x=>'hit '+x.type+' '+x.agent+' '+x.path))
         ];
         this.toastMsg('本机发现完成：'+((res.agents||[]).length)+' 个 Agent，'+((res.hits||[]).length)+' 个命中');

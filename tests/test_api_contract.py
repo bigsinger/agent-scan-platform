@@ -1389,6 +1389,53 @@ def test_diagnostic_scenario_is_readonly_and_persisted(monkeypatch, tmp_path):
     assert "仅生成本地快照证据" in artifact.text
 
 
+def test_discovery_run_writes_readonly_evidence_artifact(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "discovery-run.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.post(
+        "/api/v1/discovery-runs",
+        json={"path": "tests/fixtures/sample_agent_project", "scope": "regression-sample"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["safe_mode"] == "local-readonly"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["stdio_mcp_started"] is False
+    assert payload["artifact"]["kind"] == "discovery-run"
+    assert payload["download"].startswith("/api/v1/artifacts/")
+    assert payload["run"]["artifact_id"] == payload["artifact"]["id"]
+    assert payload["run"]["download"] == payload["download"]
+    assert payload["run"]["mutates_installed_agents"] is False
+    assert store.get_record("discovery_run", payload["run"]["id"])["artifact_id"] == payload["artifact"]["id"]
+
+    downloaded = client.get(payload["download"])
+    assert downloaded.status_code == 200
+    evidence = json.loads(downloaded.text)
+    assert evidence["schema"] == "agent-security-discovery-run@4.1"
+    assert evidence["safe_mode"] == "local-readonly"
+    assert evidence["mutates_installed_agents"] is False
+    assert evidence["stdio_mcp_started"] is False
+    assert evidence["artifact_id"] == payload["artifact"]["id"]
+    assert evidence["download"] == payload["download"]
+    assert evidence["run"]["artifact_id"] == payload["artifact"]["id"]
+    assert evidence["local_probe"]["external_agent_paths_written"] is False
+    assert evidence["counts"]["hits"] >= 1
+    assert evidence["request"]["keys"] == ["path", "scope"]
+
+    with store.connect() as conn:
+        event = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (payload["run"]["id"],),
+        ).fetchone()
+    assert event["action"] == "post.discovery-runs"
+    audit_payload = json.loads(event["payload_json"])
+    assert audit_payload["artifact_id"] == payload["artifact"]["id"]
+    assert audit_payload["mutates_installed_agents"] is False
+
+
 def test_discovery_hit_asset_actions_are_persisted():
     discovery = client.post(
         "/api/v1/discovery-runs",

@@ -90,6 +90,10 @@ class DiscoveryEngine:
             "scope": scope,
             "started_at": utc_now(),
             "finished_at": utc_now(),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "stdio_mcp_started": False,
+            "agent_runtime_started": False,
             "note": "只读发现；未启动 stdio MCP Server",
         }
         result = DiscoveryResult(run=run)

@@ -238,7 +238,7 @@ production.write</textarea></div></div></div>
 <!-- P04 DISCOVERY -->
 <div v-if="current==='discovery'">
   <div class="card">
-    <div class="card-head"><div><h2>本机 Agent 发现</h2><div class="desc">组合 agent-scan Discoverers、well-known paths 和 V4 专用 OpenClaw/Hermes 扩展。发现阶段不启动 stdio MCP。</div></div><div><button class="btn" :disabled="opsBusy" @click="exportDiscovery">导出清单</button> <button class="btn primary" @click="runDiscovery">{{discoveryRunning?'停止发现':'开始发现'}}</button></div></div>
+    <div class="card-head"><div><h2>本机 Agent 发现</h2><div class="desc">组合 agent-scan Discoverers、well-known paths 和 V4 专用 OpenClaw/Hermes 扩展。发现阶段不启动 stdio MCP。</div></div><div><a v-if="discoveryRunEvidence" class="btn soft" :href="discoveryRunEvidence" target="_blank" rel="noopener">下载本次证据</a> <button class="btn" :disabled="opsBusy" @click="exportDiscovery">导出清单</button> <button class="btn primary" @click="runDiscovery">{{discoveryRunning?'停止发现':'开始发现'}}</button></div></div>
     <div class="grid g4">
       <div class="metric"><div class="metric-label">用户范围</div><div class="metric-value">1</div><div class="metric-foot">当前用户</div></div>
       <div class="metric"><div class="metric-label">Agent 命中</div><div class="metric-value">{{discoveryHits.filter(x=>x.type==='Agent').length}}</div></div>

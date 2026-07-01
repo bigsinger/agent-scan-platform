@@ -807,6 +807,26 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result.update(handle_upload(store, state, body))
     elif path == "/discovery-runs":
         discovery = LocalScanEngine(store).run_discovery(body)
+        discovery.run.update(
+            {
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "stdio_mcp_started": False,
+                "agent_runtime_started": False,
+            }
+        )
+        artifact = write_discovery_run_artifact(store, discovery, body)
+        discovery.run.update(
+            {
+                "artifact_id": artifact["id"],
+                "artifact_path": artifact["relative_path"],
+                "download": f"/api/v1/artifacts/{artifact['id']}/download",
+            }
+        )
+        store.upsert_record("discovery_run", discovery.run, status=discovery.run.get("status", "COMPLETED"))
+        persisted_state = store.get_state()
+        merge_state_record(persisted_state, "discoveryRuns", discovery.run)
+        store.save_state(persisted_state)
         result["run"] = discovery.run
         result["hits"] = discovery.hits
         result["agents"] = discovery.agents
@@ -814,7 +834,24 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["consents"] = discovery.consents
         result["skills"] = public_skill_records(discovery.skills)
         result["errors"] = discovery.errors
-        result["audit_event"] = store.audit_event(path_action(method, path), "discovery_run", discovery.run["id"], {"body": body})
+        result["artifact"] = artifact
+        result["download"] = discovery.run["download"]
+        result["safe_mode"] = "local-readonly"
+        result["mutates_installed_agents"] = False
+        result["stdio_mcp_started"] = False
+        result["audit_event"] = store.audit_event(
+            path_action(method, path),
+            "discovery_run",
+            discovery.run["id"],
+            {
+                "body": redacted_body_summary(body),
+                "artifact_id": artifact["id"],
+                "counts": discovery_counts(discovery),
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "stdio_mcp_started": False,
+            },
+        )
         return result
     elif path.startswith("/discovery-hits/") and path.endswith("/import"):
         hit_id = path.split("/")[-2]
@@ -4092,6 +4129,78 @@ def export_quick_scan_history(store: Any, state: dict) -> dict:
     return payload
 
 
+def discovery_counts(discovery: Any) -> dict:
+    return {
+        "hits": len(discovery.hits),
+        "agents": len(discovery.agents),
+        "mcp_servers": len(discovery.mcp_servers),
+        "consents": len(discovery.consents),
+        "skills": len(discovery.skills),
+        "components": len(discovery.components),
+        "errors": len(discovery.errors),
+        "scan_files": len(discovery.scan_paths),
+    }
+
+
+def discovery_run_evidence_payload(discovery: Any, body: dict) -> dict:
+    return {
+        "schema": "agent-security-discovery-run@4.1",
+        "format": "json",
+        "created_at": utc_now(),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "stdio_mcp_started": False,
+        "agent_runtime_started": False,
+        "boundary": "本机发现只读取常见 Agent 配置、MCP 与 Skill 路径，并写入本系统 SQLite/artifact；不启动 stdio MCP，不修改已安装 Agent。",
+        "request": redacted_body_summary(body),
+        "counts": discovery_counts(discovery),
+        "run": discovery.run,
+        "hits": discovery.hits[:500],
+        "agents": discovery.agents[:200],
+        "mcp_servers": discovery.mcp_servers[:200],
+        "consents": discovery.consents[:200],
+        "skills": public_skill_records(discovery.skills[:500]),
+        "components": discovery.components[:500],
+        "errors": discovery.errors[:200],
+        "scan_file_sample": [safe_display_path(path) for path in discovery.scan_paths[:50]],
+        "local_probe": {
+            "installed_agent_version_probe": True,
+            "installed_agent_probe_scope": "version-and-well-known-path-only",
+            "external_agent_paths_written": False,
+            "external_agent_processes_started": False,
+        },
+    }
+
+
+def write_discovery_run_artifact(store: Any, discovery: Any, body: dict) -> dict:
+    payload = discovery_run_evidence_payload(discovery, body)
+    artifact = store.write_artifact(
+        "discovery-run",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "run_id": discovery.run.get("id"),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            **discovery_counts(discovery),
+        },
+    )
+    discovery.run.update(
+        {
+            "artifact_id": artifact["id"],
+            "artifact_path": artifact["relative_path"],
+            "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        }
+    )
+    payload = discovery_run_evidence_payload(discovery, body)
+    payload["artifact_id"] = artifact["id"]
+    payload["download"] = discovery.run["download"]
+    path = artifact_disk_path(artifact)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    artifact.update({"sha256": file_sha256(path), "size": path.stat().st_size})
+    return store.upsert_record("artifact", artifact, status="READY")
+
+
 def export_discovery_inventory(store: Any, state: dict) -> dict:
     runs = combine_items(store.list_records("discovery_run"), state.get("discoveryRuns", []))
     hits = combine_items(store.list_records("discovery_hit"), state.get("discoveryHits", []))
@@ -4102,6 +4211,7 @@ def export_discovery_inventory(store: Any, state: dict) -> dict:
         "schema": "agent-scan-platform.discovery-inventory@4.1",
         "exported_at": utc_now(),
         "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
         "counts": {
             "runs": len(runs),
             "hits": len(hits),
@@ -4121,8 +4231,16 @@ def export_discovery_inventory(store: Any, state: dict) -> dict:
         suffix="json",
         metadata={"safe_mode": "local-readonly"},
     )
-    store.audit_event("get.discovery-hits.export", "artifact", artifact["id"], {"counts": payload["counts"]})
-    return {"format": "json", "artifact": artifact, "counts": payload["counts"], "exported_at": payload["exported_at"]}
+    store.audit_event("get.discovery-hits.export", "artifact", artifact["id"], {"counts": payload["counts"], "mutates_installed_agents": False})
+    return {
+        "format": "json",
+        "artifact": artifact,
+        "counts": payload["counts"],
+        "exported_at": payload["exported_at"],
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
 
 
 def import_discovery_hit(store: Any, state: dict, hit_id: str, body: dict) -> dict:

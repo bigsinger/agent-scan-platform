@@ -752,6 +752,25 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
+每次发现都会生成单次运行证据包，页面会出现“下载本次证据”。命令行可直接下载：
+
+```powershell
+$discovery = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/discovery-runs `
+  -Body (@{ scope = "current-user" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+$discovery.safe_mode
+$discovery.mutates_installed_agents
+$discovery.stdio_mcp_started
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($discovery.download)" `
+  -OutFile ".\discovery-run-evidence.json"
+```
+
+证据包 schema 为 `agent-security-discovery-run@4.1`，包含本次请求脱敏摘要、命中统计、Agent/MCP/Skill 摘要、权限跳过记录和只读边界声明。它只写入本系统 SQLite 与 `data/artifacts`，不会启动 stdio MCP，也不会修改 Codex、Hermes、Claude Code 等已安装 Agent。
+
 导入、忽略、导出和重探测：
 
 ```powershell

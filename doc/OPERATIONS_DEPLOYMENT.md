@@ -745,12 +745,18 @@ $test.test.id
 
 ```powershell
 $discovery = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/discovery-runs -Body (@{ scope = "current-user" } | ConvertTo-Json) -ContentType "application/json"
+$discovery.safe_mode
+$discovery.mutates_installed_agents
+$discovery.stdio_mcp_started
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($discovery.download)" -OutFile ".\discovery-run-evidence.json"
 $hit = $discovery.hits[0]
 $asset = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/import"
 Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/agents/$($asset.agent.id)/probe"
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agents -Body (@{ name = "手工登记 Agent"; adapter = "Codex"; path = "$env:USERPROFILE\.codex\config.toml" } | ConvertTo-Json) -ContentType "application/json"
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
 ```
+
+`$discovery.download` 指向本次发现证据包，schema 为 `agent-security-discovery-run@4.1`。验收时应检查 `safe_mode=local-readonly`、`mutates_installed_agents=false`、`stdio_mcp_started=false`、命中统计、权限跳过和 `boundary` 说明；这能证明发现动作只写本系统 SQLite 与 `data/artifacts`。
 
 手工登记资产会写入 `agent_instance` 并生成 `manual-agent-registration` artifact，状态为 `probe=待探测`；它不读取、不启动、不修改目标 Agent。`consents/{id}/decision`、`mcp-consents/{id}/approve|decline` 与 `consents/bulk-decision` 都会更新 `mcp_consent` 和 `consent_request`，返回实际更新数量或更新后的审批记录；这些接口只写本系统审批状态和审计事件，不能作为 MCP 启停动作验收。
 
