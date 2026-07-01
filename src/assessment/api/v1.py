@@ -692,8 +692,15 @@ async def generic_get(resource: str, request: Request) -> dict:
     path = "/" + resource.strip("/")
     state = runtime_state()
 
+    if path == "/quick-scans/recent/export":
+        return export_quick_scan_history(get_store(), state)
     if path.startswith("/quick-scans/recent"):
-        return page(combine_items(get_store().list_records("assessment", limit=20), state.get("tasks", []))[:5], request)
+        rows = quick_scan_history(get_store(), state, limit=coerce_int(request.query_params.get("limit"), 20))
+        payload = page(rows, request)
+        payload["summary"] = quick_scan_history_summary(rows)
+        payload["safe_mode"] = "local-readonly"
+        payload["mutates_installed_agents"] = False
+        return payload
     if path == "/openapi.json":
         return request.app.openapi()
     if path == "/agent-scan/status":
@@ -3955,6 +3962,134 @@ def report_preview(report: dict | None, store: Any | None = None) -> dict:
         "mutates_installed_agents": False,
         "download": f"/api/v1/reports/{(report or {}).get('id', 'unknown')}/download",
     }
+
+
+def quick_scan_history(store: Any, state: dict, limit: int = 20) -> list[dict]:
+    assessments = combine_items(store.list_records("assessment", limit=1000), state.get("tasks", []))
+    assessments = [item for item in assessments if item.get("id") and str(item.get("status") or "").upper() != "DRAFT"]
+    assessments.sort(key=lambda item: str(item.get("finished_at") or item.get("started_at") or item.get("created_at") or ""), reverse=True)
+
+    reports = combine_items(store.list_records("report", limit=1000), state.get("reports", []))
+    findings = combine_items(store.list_records("finding", limit=5000), state.get("findings", []))
+    evidence = combine_items(store.list_records("evidence", limit=5000), state.get("evidenceItems", []))
+
+    reports_by_assessment: dict[str, list[dict]] = {}
+    for report in reports:
+        assessment_id = str(report.get("assessment_id") or report.get("task") or "")
+        if assessment_id:
+            reports_by_assessment.setdefault(assessment_id, []).append(report)
+    findings_by_assessment: dict[str, list[dict]] = {}
+    for finding in findings:
+        assessment_id = str(finding.get("assessment_id") or "")
+        if assessment_id:
+            findings_by_assessment.setdefault(assessment_id, []).append(finding)
+    evidence_by_assessment: dict[str, list[dict]] = {}
+    for item in evidence:
+        assessment_id = str(item.get("assessment_id") or "")
+        if assessment_id:
+            evidence_by_assessment.setdefault(assessment_id, []).append(item)
+
+    rows = [
+        quick_scan_history_row(
+            store,
+            assessment,
+            reports_by_assessment.get(str(assessment.get("id")), []),
+            findings_by_assessment.get(str(assessment.get("id")), []),
+            evidence_by_assessment.get(str(assessment.get("id")), []),
+        )
+        for assessment in assessments[: max(1, min(limit, 200))]
+    ]
+    return rows
+
+
+def quick_scan_history_row(store: Any, assessment: dict, reports: list[dict], findings: list[dict], evidence: list[dict]) -> dict:
+    assessment_id = str(assessment.get("id") or "")
+    latest_report = sorted(reports, key=lambda item: str(item.get("time") or item.get("created_at") or ""), reverse=True)[0] if reports else {}
+    events = store.list_scan_events(assessment_id) if assessment_id else []
+    last_event = events[-1] if events else {}
+    severity = quick_scan_severity_counts(findings)
+    return {
+        "id": assessment_id,
+        "name": assessment.get("name") or assessment_id,
+        "target": assessment.get("target") or "",
+        "adapter": assessment.get("adapter") or "auto",
+        "status": assessment.get("status") or "",
+        "stage": assessment.get("stage") or "",
+        "started_at": assessment.get("started_at") or "",
+        "finished_at": assessment.get("finished_at") or "",
+        "files_scanned": coerce_int(assessment.get("files_scanned"), 0),
+        "files_skipped": coerce_int(assessment.get("files_skipped"), 0),
+        "finding_count": len(findings),
+        "evidence_count": len(evidence),
+        "report_count": len(reports),
+        "severity": severity,
+        "report": integration_report_summary(latest_report) if latest_report else {},
+        "report_download": f"/api/v1/reports/{latest_report.get('id')}/download" if latest_report.get("id") else "",
+        "events": {"count": len(events), "last": {"type": last_event.get("type", ""), "time": last_event.get("time") or last_event.get("created_at") or "", "text": last_event.get("text", "")}},
+        "safe_mode": assessment.get("safe_mode") or "read_only",
+        "remote_analysis": bool(assessment.get("remote_analysis", False)),
+        "mutates_installed_agents": False,
+    }
+
+
+def quick_scan_severity_counts(findings: list[dict]) -> dict:
+    counts = {"p0": 0, "p1": 0, "p2": 0, "other": 0}
+    for finding in findings:
+        severity = str(finding.get("severity") or finding.get("sevClass") or "").lower()
+        if "p0" in severity or "严重" in severity or "critical" in severity:
+            counts["p0"] += 1
+        elif "p1" in severity or "高危" in severity or "high" in severity:
+            counts["p1"] += 1
+        elif "p2" in severity or "中危" in severity or "medium" in severity:
+            counts["p2"] += 1
+        else:
+            counts["other"] += 1
+    return counts
+
+
+def quick_scan_history_summary(rows: list[dict]) -> dict:
+    return {
+        "total_scans": len(rows),
+        "completed": sum(1 for row in rows if str(row.get("status")) in {"已完成", "部分完成", "COMPLETED"}),
+        "failed": sum(1 for row in rows if "失败" in str(row.get("status")) or str(row.get("stage")) == "FAILED"),
+        "findings": sum(coerce_int(row.get("finding_count"), 0) for row in rows),
+        "evidence": sum(coerce_int(row.get("evidence_count"), 0) for row in rows),
+        "reports": sum(coerce_int(row.get("report_count"), 0) for row in rows),
+        "p0": sum(coerce_int(row.get("severity", {}).get("p0"), 0) for row in rows),
+        "p1": sum(coerce_int(row.get("severity", {}).get("p1"), 0) for row in rows),
+        "files_scanned": sum(coerce_int(row.get("files_scanned"), 0) for row in rows),
+        "updated_at": utc_now(),
+    }
+
+
+def export_quick_scan_history(store: Any, state: dict) -> dict:
+    rows = quick_scan_history(store, state, limit=200)
+    summary = quick_scan_history_summary(rows)
+    payload = {
+        "schema": "agent-security-quick-scan-history@4.1",
+        "format": "json",
+        "summary": summary,
+        "items": rows,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "boundary": "快速扫描历史导出只读取本系统 assessment、report、finding、evidence 和 scan_event 记录并写入 artifact；不会重新扫描客户目录，不启动或修改已安装 Agent。",
+        "exported_at": utc_now(),
+    }
+    artifact = store.write_artifact(
+        "quick-scan-history",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"safe_mode": "local-readonly", "scans": summary["total_scans"], "findings": summary["findings"]},
+    )
+    store.audit_event(
+        "get.quick-scans.recent.export",
+        "artifact",
+        artifact["id"],
+        {"scans": summary["total_scans"], "findings": summary["findings"], "mutates_installed_agents": False},
+    )
+    payload["artifact"] = artifact
+    payload["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    return payload
 
 
 def export_discovery_inventory(store: Any, state: dict) -> dict:

@@ -467,7 +467,12 @@ $body = @{
   max_files = 500
 } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
+$history = Invoke-RestMethod http://127.0.0.1:8000/api/v1/quick-scans/recent?page_size=20
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/quick-scans/recent/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile quick-scan-history.json
 ```
+
+快速扫描历史只读取本系统 SQLite 中的 assessment/report/finding/evidence/scan_event 记录，并生成 `quick-scan-history` artifact；它用于复盘和验收留档，不会重新扫描客户目录、不启动 MCP、不修改 Codex/Hermes。
 
 上传快照扫描：
 

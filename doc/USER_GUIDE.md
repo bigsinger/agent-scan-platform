@@ -109,6 +109,16 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 - Evidence 证据。
 - HTML/JSON 报告。
 
+扫描历史：
+
+```powershell
+$history = Invoke-RestMethod http://127.0.0.1:8000/api/v1/quick-scans/recent?page_size=20
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/quick-scans/recent/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile quick-scan-history.json
+```
+
+`quick-scans/recent` 会从当前 SQLite 的 `assessment`、`report`、`finding`、`evidence` 和 `scan_event` 聚合最近扫描，不使用原型样例。`quick-scans/recent/export` 会生成 `quick-scan-history` JSON artifact，用于客户评审时留存扫描 ID、报告下载地址、风险/证据计数、事件数量和只读安全边界；导出不会重新扫描客户目录，不启动或修改已安装 Agent。
+
 ## 3.1 测评模板
 
 位置：

@@ -513,6 +513,55 @@ def test_write_api_updates_state_and_audit():
     assert payload["audit_event"]["action"] == "post.quick-scans"
 
 
+def test_quick_scan_recent_history_is_real_and_exportable(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "quick-history.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    scan = client.post(
+        "/api/v1/quick-scans",
+        json={"mode": "path", "target_path": "tests/fixtures/sample_agent_project", "max_files": 50},
+    ).json()
+
+    recent = client.get("/api/v1/quick-scans/recent?page_size=10")
+    assert recent.status_code == 200
+    recent_body = recent.json()
+    assert recent_body["summary"]["total_scans"] >= 1
+    assert recent_body["summary"]["reports"] >= 1
+    assert recent_body["summary"]["findings"] >= 1
+    assert recent_body["safe_mode"] == "local-readonly"
+    assert recent_body["mutates_installed_agents"] is False
+    item = next(row for row in recent_body["items"] if row["id"] == scan["assessment"]["id"])
+    assert item["report_download"].endswith("/download")
+    assert item["finding_count"] == len(scan["findings"])
+    assert item["evidence_count"] == len(scan["evidence"])
+    assert item["events"]["count"] >= 1
+    assert item["mutates_installed_agents"] is False
+
+    exported = client.get("/api/v1/quick-scans/recent/export")
+    assert exported.status_code == 200
+    export_body = exported.json()
+    assert export_body["schema"] == "agent-security-quick-scan-history@4.1"
+    assert export_body["artifact"]["kind"] == "quick-scan-history"
+    assert export_body["download"].startswith("/api/v1/artifacts/")
+    assert export_body["mutates_installed_agents"] is False
+    assert store.get_record("artifact", export_body["artifact"]["id"]) is not None
+
+    downloaded = client.get(export_body["download"])
+    assert downloaded.status_code == 200
+    assert "agent-security-quick-scan-history@4.1" in downloaded.text
+    assert scan["assessment"]["id"] in downloaded.text
+    assert '"mutates_installed_agents": false' in downloaded.text
+
+    with store.connect() as conn:
+        event = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (export_body["artifact"]["id"],),
+        ).fetchone()
+    assert event["action"] == "get.quick-scans.recent.export"
+    assert json.loads(event["payload_json"])["mutates_installed_agents"] is False
+
+
 def test_quick_scan_snapshot_upload_scans_and_persists_redacted_artifacts(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "snapshot-upload.db")
     store.initialize()
