@@ -929,6 +929,28 @@ data(){
         }
       ];
     },
+    agentScanCloudPreview(){
+      const agent=(this.selectedAsset && (this.selectedAsset.id || this.selectedAsset.name)) ? this.selectedAsset : ((this.agentAssets || [])[0] || {});
+      const matches=record => agent && (agent.id || agent.name) ? this.recordMatchesAgent(record, agent) : false;
+      const rawPath=String(agent.path || agent.config_path || agent.root || '');
+      const normalizedPath=rawPath.replace(/\\/g, '/');
+      const redactedPath=normalizedPath
+        ? normalizedPath.replace(/^[A-Za-z]:\/Users\/[^/]+/i, '<USERPROFILE>').replace(/^\/home\/[^/]+/i, '~')
+        : '未选择资产';
+      return {
+        agent:agent.adapter || agent.name || agent.id || 'local-agent',
+        path:redactedPath,
+        servers:(this.mcpServers || []).filter(matches).length,
+        skills:(this.skills || []).filter(matches).length,
+        secrets:'<REDACTED>',
+        push:false,
+        cloud_required:!!(this.agentScanCompat && this.agentScanCompat.cloud_required),
+        source:'runtime-state'
+      };
+    },
+    agentScanCloudPreviewJson(){
+      return JSON.stringify(this.agentScanCloudPreview, null, 2);
+    },
     selectedAgentComponents(){
       return (this.agentDetail && this.agentDetail.components) || (this.components || []).filter(c=>this.recordMatchesAgent(c, this.selectedAsset));
     },

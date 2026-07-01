@@ -142,16 +142,22 @@ def test_agent_scan_compat_ui_is_api_backed():
     assert "<td>E002</td><td>MCP-TS-001</td><td>Cross-server Reference</td>" not in html
     assert "W015~W020" not in html
     assert "映射 E001/E004/W019/DM-05" not in html
+    assert '"agent": "claude_code"' not in html
+    assert '"servers": 3' not in html
+    assert '"skills": 8' not in html
     assert 'data-testid="agent-scan-self-test"' in html
     assert "@click=\"refreshAgentScanCompat()\"" in html
     assert "@click=\"runAgentScanSelfTest\"" in html
     assert "agentScanSelfTestResult" in html
     assert "agentScanLocalRuleRows()" in app_js
     assert "agentScanIssueCodesText()" in app_js
+    assert "agentScanCloudPreview()" in app_js
+    assert "agentScanCloudPreviewJson()" in app_js
     assert "agentScanIssues=issues.items || []" in app_js
     assert "v-for=\"row in agentScanDiscoveryRows\"" in html
     assert "v-for=\"col in agentScanDiscoveryColumns\"" in html
     assert "v-for=\"row in agentScanLocalRuleRows\"" in html
+    assert "{{agentScanCloudPreviewJson}}" in html
     assert "async refreshAgentScanCompat" in app_js
     assert "async runAgentScanSelfTest" in app_js
     assert "agentScanDiscoveryRows()" in app_js

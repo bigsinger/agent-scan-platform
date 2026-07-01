@@ -363,6 +363,8 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 
 “本地分析替代”和“补丁与漂移”的 Issue 映射来自 `/api/v1/agent-scan/issues`，字段包括 `code`、`local_rule`、`analyzer`、`severity`、`status` 和 `mutates_installed_agents=false`。页面不得再使用固定 `E001/E002/W015~W020` 原型表作为兼容证据。
 
+“云连接边界”的上传预览由当前选中 Agent、已发现 MCP/Skill 数量和 `/api/v1/agent-scan/compat.cloud_required` 派生，路径只显示脱敏后的用户目录占位符。默认 `push=false`，页面不会因为打开预览而访问 Snyk 云。
+
 ## 5. MCP 启动审批
 
 位置：

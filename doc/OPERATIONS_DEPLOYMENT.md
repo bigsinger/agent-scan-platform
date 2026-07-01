@@ -196,6 +196,8 @@ $selfTest.self_test.download
 
 P10 “本地分析替代”和“补丁与漂移”的兼容码表必须来自 `$issues.items`，不得使用固定 `E001/E002/W015~W020` 原型表；每条映射都应带 `mutates_installed_agents=false`。
 
+P10 “云连接边界”的上传预览必须由当前 `agent_instance`、`mcp_server`、`skill` 和 `agent-scan/compat` 状态派生，路径需脱敏，`push=false`。不得用固定 `claude_code`、`servers=3`、`skills=8` 原型 JSON 作为验收依据。
+
 测评模板校验：
 
 ```powershell
