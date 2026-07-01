@@ -225,6 +225,7 @@ class DiscoveryEngine:
             "name": skill_root.name,
             "agent": product,
             "path": safe_display_path(skill_root, display_root),
+            "real_path": str(skill_root.resolve()),
             "scope": "Project",
             "metadata": "SKILL.md",
             "files": file_count,

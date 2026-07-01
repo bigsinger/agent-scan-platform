@@ -18,7 +18,7 @@ def test_core_health_and_dashboard():
     health = client.get("/api/v1/health")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
-    client.post("/api/v1/discovery-runs", json={"path": "tests/fixtures/sample_agent_project", "scope": "fixture"})
+    client.post("/api/v1/discovery-runs", json={"path": "tests/fixtures/sample_agent_project", "scope": "regression-sample"})
     dashboard = client.get("/api/v1/dashboard")
     assert dashboard.status_code == 200
     assert dashboard.json()["metrics"]["agents"] >= 1
@@ -1041,7 +1041,7 @@ def test_capability_management_actions_are_persisted():
 def test_discovery_hit_asset_actions_are_persisted():
     discovery = client.post(
         "/api/v1/discovery-runs",
-        json={"path": "tests/fixtures/sample_agent_project", "scope": "fixture"},
+        json={"path": "tests/fixtures/sample_agent_project", "scope": "regression-sample"},
     )
     assert discovery.status_code == 200
     hit = discovery.json()["hits"][0]

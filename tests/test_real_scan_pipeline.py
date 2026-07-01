@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from assessment.api import v1 as api_v1
 from assessment.main import app
 from assessment.scanning import discovery as discovery_module
 from assessment.scanning.discovery import DiscoveryEngine
@@ -48,7 +49,7 @@ def test_quick_scan_generates_findings_evidence_and_report():
 
 
 def test_discovery_creates_mcp_consent_without_starting_stdio():
-    response = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "fixture"})
+    response = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "regression-sample"})
 
     assert response.status_code == 200
     payload = response.json()
@@ -60,7 +61,7 @@ def test_discovery_creates_mcp_consent_without_starting_stdio():
 
 
 def test_agent_detail_abom_snapshots_and_export_are_derived_from_discovery():
-    discovery = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "fixture-abom"})
+    discovery = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "regression-sample-abom"})
     assert discovery.status_code == 200
     agent = discovery.json()["agents"][0]
 
@@ -107,7 +108,7 @@ def test_agent_detail_abom_snapshots_and_export_are_derived_from_discovery():
 
 
 def test_mcp_static_inspect_derives_tools_and_evidence_without_starting_stdio():
-    discovery = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "fixture"})
+    discovery = client.post("/api/v1/discovery-runs", json={"path": str(FIXTURE), "scope": "regression-sample"})
     assert discovery.status_code == 200
     server = discovery.json()["mcp_servers"][0]
 
@@ -156,6 +157,8 @@ def test_skill_static_scan_detail_export_and_logical_quarantine_are_readonly():
     assert payload["mutates_installed_agents"] is False
     assert payload["counts"]["checked"] >= 1
     assert payload["skills"]
+    assert "real_path" not in payload["skills"][0]
+    assert "real_path" not in response.text
     assert payload["findings"]
     assert {finding["rule"] for finding in payload["findings"]} & {"SKILL-PI-001", "SKILL-CODE-001"}
     assert skill_md.read_text(encoding="utf-8") == before
@@ -165,6 +168,7 @@ def test_skill_static_scan_detail_export_and_logical_quarantine_are_readonly():
     assert detail.status_code == 200
     detail_payload = detail.json()
     assert detail_payload["item"]["safe_mode"] == "local-readonly"
+    assert "real_path" not in detail_payload["item"]
     assert detail_payload["files"]
     assert "ignore previous system instructions" in detail_payload["item"]["skill_md"]
 
@@ -190,6 +194,31 @@ def test_skill_static_scan_detail_export_and_logical_quarantine_are_readonly():
     assert quarantine.json()["status"] == "QUARANTINED"
     assert quarantine.json()["mutates_installed_agents"] is False
     assert skill_md.read_text(encoding="utf-8") == before
+
+
+def test_skill_detail_does_not_fallback_to_repo_regression_sample_without_real_path(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "skill-unresolved.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    skill_id = "skill_unresolved_regression_sample_guard"
+    store.upsert_record(
+        "skill",
+        {
+            "id": skill_id,
+            "name": "danger-skill",
+            "path": "<target>/.agents/skills/danger-skill",
+            "status": "已发现",
+        },
+        status="DISCOVERED",
+    )
+
+    detail = client.get(f"/api/v1/skills/{skill_id}")
+
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["files"] == []
+    assert "skill_md" not in payload["item"]
+    assert "ignore previous system instructions" not in detail.text
 
 
 def test_discovery_probes_installed_hermes_and_codex(monkeypatch, tmp_path):

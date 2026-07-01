@@ -442,6 +442,8 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 - “导出脱敏副本”：生成本系统 artifact，内容已脱敏，不覆盖原 Skill 文件。
 - “隔离”：只把 Skill 在本系统内标记为逻辑隔离，写入 SQLite 与审计，不移动、不删除、不改名已安装 Agent 的 Skill 目录。
 
+发现或 Skill 扫描会在本系统 SQLite 中保存内部 `real_path`，只用于后续详情、文件树、脱敏导出和复测的只读读取。API 响应、前端表格和导出 artifact 不回传 `real_path`，只展示脱敏后的 `path`。
+
 API 示例：
 
 ```powershell
@@ -844,7 +846,7 @@ Invoke-WebRequest `
 $discovery = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/discovery-runs `
-  -Body (@{ path = "tests\fixtures\sample_agent_project"; scope = "fixture" } | ConvertTo-Json) `
+  -Body (@{ path = "tests\fixtures\sample_agent_project"; scope = "regression-sample" } | ConvertTo-Json) `
   -ContentType "application/json"
 
 $mcp = $discovery.mcp_servers[0]

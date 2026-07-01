@@ -26,6 +26,7 @@ from ..store import DATA_DIR, REPO_ROOT, file_sha256, get_store, new_id, utc_now
 
 router = APIRouter(prefix="/api/v1", tags=["assessment"])
 PUBLIC_QUICK_SCAN_MODES = {"machine", "path", "mcp"}
+INTERNAL_SKILL_PATH_KEYS = {"real_path", "source_path"}
 
 
 LIST_KEYS = {
@@ -431,7 +432,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["agents"] = discovery.agents
         result["mcp_servers"] = discovery.mcp_servers
         result["consents"] = discovery.consents
-        result["skills"] = discovery.skills
+        result["skills"] = public_skill_records(discovery.skills)
         result["errors"] = discovery.errors
         result["audit_event"] = store.audit_event(path_action(method, path), "discovery_run", discovery.run["id"], {"body": body})
         return result
@@ -1077,15 +1078,27 @@ def find_item(items: list[dict], item_id: str) -> dict | None:
 
 def decorate_rule_item(rule: dict) -> dict:
     item = dict(rule)
+    legacy_fixture = item.pop("fixture", None)
     item.setdefault("dimension", item.get("category") or "本地规则")
     item.setdefault("method", item.get("analyzer") or item.get("engine") or "deterministic")
     item.setdefault("evidence", item.get("evidence_schema") or "structured")
-    item.setdefault("fixture", item.get("test_fixture") or "本地规则引擎")
+    item.setdefault("coverage", item.get("test_coverage") or legacy_fixture or item.get("test_fixture") or "本地规则引擎")
     item.setdefault("sevClass", severity_class_from_text(str(item.get("severity") or "")))
     item.setdefault("status", item.get("status") or "DRAFT")
     item.setdefault("source", item.get("source") or "local-static")
     item.setdefault("version", item.get("version") or "local")
     return item
+
+
+def public_skill_record(skill: dict) -> dict:
+    item = dict(skill)
+    for key in INTERNAL_SKILL_PATH_KEYS:
+        item.pop(key, None)
+    return item
+
+
+def public_skill_records(skills: list[dict]) -> list[dict]:
+    return [public_skill_record(skill) for skill in skills]
 
 
 def update_item(items: list[dict], item_id: str, values: dict) -> dict:
@@ -3787,7 +3800,7 @@ def run_skill_scan(store: Any, state: dict, body: dict) -> dict:
         "status": "COMPLETED",
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
-        "skills": checked,
+        "skills": public_skill_records(checked),
         "findings": findings,
         "evidence": evidence,
         "skipped": skipped,
@@ -3798,7 +3811,7 @@ def run_skill_scan(store: Any, state: dict, body: dict) -> dict:
             "agents": discovery.agents,
             "mcp_servers": discovery.mcp_servers,
             "consents": discovery.consents,
-            "skills": discovery.skills,
+            "skills": public_skill_records(discovery.skills),
             "errors": discovery.errors,
         }
         if discovery
@@ -3941,7 +3954,7 @@ def skill_detail(store: Any, state: dict, skill_id: str) -> dict:
     if root:
         skill_md = root / "SKILL.md"
         detail["skill_md"] = redact_text(read_skill_text(skill_md) or "", max_len=3000)
-    return {"item": detail, "files": files, "findings": findings, "evidence": evidence}
+    return {"item": public_skill_record(detail), "files": files, "findings": findings, "evidence": evidence}
 
 
 def quarantine_skill(store: Any, state: dict, skill_id: str, body: dict) -> dict:
@@ -4033,8 +4046,6 @@ def resolve_skill_root(skill: dict, body: dict | None = None) -> Path | None:
     search_roots = [base] if base else []
     search_roots.extend(
         [
-            REPO_ROOT / "tests" / "fixtures" / "sample_agent_project",
-            REPO_ROOT,
             Path.home() / ".agents" / "skills",
             Path.home() / ".codex" / "skills",
             Path.home() / ".codex" / "plugins" / "cache",
@@ -5496,7 +5507,7 @@ def validate_assessment_profile(store: Any, state: dict, profile_id: str) -> dic
             **result,
             "subject_type": "assessment_profile",
             "subject_id": profile.get("id") or profile_id,
-            "fixture": "profile-policy",
+            "coverage": "profile-policy",
             "result_json": result,
             "run_at": result["checked_at"],
         },
@@ -6534,7 +6545,7 @@ def real_items_for_path(path: str) -> list[dict]:
     if path == "/mcp-consents":
         return combine_items(get_store().list_records("mcp_consent"), get_store().list_records("consent_request"))
     if path == "/skills":
-        return combine_items(get_store().list_records("skill"), get_store().list_records("skill_file"))
+        return public_skill_records(combine_items(get_store().list_records("skill"), get_store().list_records("skill_file")))
     if path == "/scanners":
         return combine_items(get_store().list_records("scanner_plugin"), get_store().list_records("scanner"))
     if path == "/integrations":
@@ -6577,7 +6588,7 @@ def scan_payload(scan: Any) -> dict:
             "agents": scan.discovery.agents,
             "mcp_servers": scan.discovery.mcp_servers,
             "consents": scan.discovery.consents,
-            "skills": scan.discovery.skills,
+            "skills": public_skill_records(scan.discovery.skills),
             "errors": scan.discovery.errors,
         },
         "files_scanned": scan.files_scanned,

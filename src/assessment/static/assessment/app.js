@@ -935,7 +935,7 @@ data(){
           adapter:'All',
           variants:1,
           evaluator:'Deterministic Rules',
-          fixture:'local',
+          coverage:'local-deterministic',
           version:'draft',
           status:'DRAFT',
           safe_mode:'dry-run',

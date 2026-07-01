@@ -213,7 +213,7 @@ MCP / Tool 只读静态检查：
 $discovery = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/discovery-runs `
-  -Body (@{ path = "tests\fixtures\sample_agent_project"; scope = "fixture" } | ConvertTo-Json) `
+  -Body (@{ path = "tests\fixtures\sample_agent_project"; scope = "regression-sample" } | ConvertTo-Json) `
   -ContentType "application/json"
 
 $mcp = $discovery.mcp_servers[0]
@@ -290,6 +290,8 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/skills/$($skil
 ```
 
 上述 `quarantine` 是本系统内的逻辑隔离状态和审计记录，只写 SQLite 与 artifact，不移动、不重命名、不覆盖客户机器上的 Skill 文件。
+
+Skill 发现记录会在 SQLite 中保留内部 `real_path`，便于后续详情、文件树、脱敏导出和复测继续读取同一个本机目录。API 响应、前端列表和导出 artifact 必须剥离 `real_path`，只返回脱敏 `path`；如果记录没有内部真实路径，详情/导出不会回退读取仓库回归样本。
 
 ABOM/攻击面 POC 可以在发现或快速扫描后验证：
 
