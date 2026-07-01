@@ -131,13 +131,14 @@
         <div class="field full"><label>路径 / URL</label><input v-model="form.targetPath" placeholder="machine 模式留空扫描本机 Agent；path 模式填写本机路径、配置文件或 Remote MCP URL"></div>
         <div class="field"><label>用户范围</label><select><option>当前用户</option><option>所有可读用户</option></select><div class="hint">扫描所有用户需要系统权限，并可能产生更多路径元数据。</div></div>
         <div class="field"><label>执行模式</label><select><option>只读检查（推荐）</option><option>检查 + MCP 逐项审批</option><option>完整 Dry-run 红队</option></select></div>
-        <div class="field"><label class="toggle"><input type="checkbox" checked> 扫描 Skills</label></div>
-        <div class="field"><label class="toggle"><input type="checkbox" checked> 运行本地分析器</label></div>
-        <div class="field"><label class="toggle"><input type="checkbox"> 调用已有 Skill/SCA</label></div>
-        <div class="field"><label class="toggle"><input type="checkbox"> 允许远程 Snyk 分析</label><div class="hint">默认关闭；开启前展示上传预览和条款。</div></div>
+        <div class="field"><label class="toggle"><input type="checkbox" v-model="form.scanSkills"> 扫描 Skills</label></div>
+        <div class="field"><label class="toggle"><input type="checkbox" v-model="form.runLocalAnalyzers"> 运行本地分析器</label></div>
+        <div class="field"><label class="toggle"><input type="checkbox" v-model="form.useExistingSca"> 调用已有 Skill/SCA</label><div class="hint">本地模式只记录请求，不会自动执行外部扫描器。</div></div>
+        <div class="field"><label class="toggle"><input type="checkbox" v-model="form.remoteAnalysis"> 允许远程 Snyk 分析</label><div class="hint">本地模式会记录为请求意图，但实际保持 remote_analysis=false。</div></div>
         <div class="field full"><label>上传快照内容</label><textarea v-model="form.snapshotContent" placeholder="可粘贴脱敏后的配置快照；留空时会生成当前扫描参数快照。"></textarea></div>
       </div>
       <div class="callout amber"><b>安全提示：</b>只读检查不会启动 stdio MCP Server。需要获取 Tool/Prompt/Resource Signature 时，系统会暂停任务并进入“启动审批”。</div>
+      <div v-if="form.remoteAnalysis || form.useExistingSca" class="callout amber"><b>本地边界：</b>本次会把可选云分析或外部 SCA 记录进审计和任务选项，但不会连接 Snyk 云端、不会启动已安装 Agent、不会改写 Codex/Hermes 配置。</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" :disabled="quickBusy" @click="quickMode='machine';startQuickScan()">扫描本机</button><button class="btn" :disabled="quickBusy" @click="uploadSnapshot">上传快照</button><button class="btn" :disabled="quickBusy" @click="precheckQuickScan">仅检查</button><button class="btn primary" :disabled="quickBusy" @click="startQuickScan">{{quickBusy?'处理中...':'开始快速扫描'}}</button><button class="btn" :disabled="!selectedTask" @click="go('task-detail')">查看结果</button></div>
       <div v-if="uploadResult" class="callout green" style="margin-top:10px">快照已保存：{{uploadResult.id}} · {{uploadResult.relative_path}}</div>
     </div>
@@ -220,13 +221,13 @@ production.write</textarea></div></div></div>
         <div class="field"><label>最大 Tool Call</label><input value="100"></div>
         <div class="field"><label>最大证据体积</label><input value="500 MiB"></div>
       </div>
-      <div><h3>MCP 启动策略</h3><div class="kv"><div>stdio</div><div><span class="badge high">逐 Server 审批</span></div><div>远程 MCP</div><div>SSRF 校验后连接</div><div>审批超时</div><div>默认拒绝</div><div>配置变化</div><div>重新审批</div><div>无人值守</div><div>不启动 stdio</div></div><label class="toggle" style="margin-top:12px"><input type="checkbox"> 允许本任务调用可选云分析</label><div class="hint">开启后提交前显示脱敏上传预览。</div></div>
+      <div><h3>MCP 启动策略</h3><div class="kv"><div>stdio</div><div><span class="badge high">逐 Server 审批</span></div><div>远程 MCP</div><div>SSRF 校验后连接</div><div>审批超时</div><div>默认拒绝</div><div>配置变化</div><div>重新审批</div><div>无人值守</div><div>不启动 stdio</div></div><label class="toggle" style="margin-top:12px"><input type="checkbox" v-model="form.assessmentRemoteAnalysis"> 允许本任务调用可选云分析</label><div class="hint">本地企业模式只记录请求意图，实际提交保持 remote_analysis=false。</div></div>
     </div>
 
     <div v-if="wizard===6">
       <div class="grid g2">
         <div><h3>Assessment Plan</h3><div class="code">{{planJson}}</div></div>
-        <div><h3>执行摘要</h3><table><tbody><tr><td>Stages</td><td>{{taskStages.length||4}}</td><td><span class="badge low">按模板</span></td></tr><tr><td>Rules</td><td>{{ruleRows.length||0}} 项</td><td><span class="badge low">可执行</span></td></tr><tr><td>Cases</td><td>{{caseLibrary.length||redCases.length||0}} 项</td><td><span class="badge low">Dry-run</span></td></tr><tr><td>stdio MCP</td><td>{{stdioMcpCount}}</td><td><span class="badge medium">执行中暂停审批</span></td></tr><tr><td>远程分析</td><td>关闭</td><td><span class="badge gray">本地结果完整</span></td></tr><tr><td>预计耗时</td><td>提交后统计</td><td>{{executionSlotMax}} 并行</td></tr></tbody></table><label class="toggle" style="margin-top:12px"><input type="checkbox" v-model="planConfirmed"> 我确认授权范围、MCP 启动策略和禁止动作</label></div>
+        <div><h3>执行摘要</h3><table><tbody><tr><td>Stages</td><td>{{taskStages.length||4}}</td><td><span class="badge low">按模板</span></td></tr><tr><td>Rules</td><td>{{ruleRows.length||0}} 项</td><td><span class="badge low">可执行</span></td></tr><tr><td>Cases</td><td>{{caseLibrary.length||redCases.length||0}} 项</td><td><span class="badge low">Dry-run</span></td></tr><tr><td>stdio MCP</td><td>{{stdioMcpCount}}</td><td><span class="badge medium">执行中暂停审批</span></td></tr><tr><td>远程分析</td><td>{{form.assessmentRemoteAnalysis?'已请求（本地关闭）':'关闭'}}</td><td><span class="badge gray">本地结果完整</span></td></tr><tr><td>预计耗时</td><td>提交后统计</td><td>{{executionSlotMax}} 并行</td></tr></tbody></table><label class="toggle" style="margin-top:12px"><input type="checkbox" v-model="planConfirmed"> 我确认授权范围、MCP 启动策略和禁止动作</label></div>
       </div>
     </div>
 

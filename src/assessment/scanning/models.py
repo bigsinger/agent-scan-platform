@@ -23,6 +23,9 @@ class ScanRequest:
     include_skills: bool = True
     include_mcp: bool = True
     include_discovery: bool = True
+    run_local_analyzers: bool = True
+    use_existing_sca: bool = False
+    remote_analysis_requested: bool = False
     limits: ScanLimits = field(default_factory=ScanLimits)
 
     @classmethod
@@ -50,11 +53,50 @@ class ScanRequest:
             mode=mode,
             target_path=target,
             adapter=str(payload.get("adapter") or "auto"),
-            include_skills=bool(payload.get("include_skills", True)),
-            include_mcp=bool(payload.get("include_mcp", True)),
-            include_discovery=bool(payload.get("include_discovery", True)),
+            include_skills=flag(payload, ("include_skills", "scan_skills", "scanSkills"), True),
+            include_mcp=flag(payload, ("include_mcp", "scan_mcp", "scanMcp"), True),
+            include_discovery=flag(payload, ("include_discovery", "run_discovery", "runDiscovery"), True),
+            run_local_analyzers=flag(payload, ("run_local_analyzers", "local_analyzers", "runLocalAnalyzers"), True),
+            use_existing_sca=flag(payload, ("use_existing_sca", "invoke_existing_sca", "useExistingSca"), False),
+            remote_analysis_requested=flag(payload, ("remote_analysis_requested", "remoteAnalysisRequested", "remote_analysis", "remoteAnalysis", "cloud_analysis"), False),
             limits=ScanLimits(max_files=max_files, max_file_bytes=max_file_bytes, max_depth=max_depth),
         )
+
+    @property
+    def scan_options(self) -> dict[str, Any]:
+        cloud_status = "OPTIONAL_DISABLED" if self.remote_analysis_requested else "DISABLED"
+        return {
+            "scan_skills": self.include_skills,
+            "include_skills": self.include_skills,
+            "include_mcp": self.include_mcp,
+            "include_discovery": self.include_discovery,
+            "run_local_analyzers": self.run_local_analyzers,
+            "use_existing_sca": self.use_existing_sca,
+            "external_sca_executed": False,
+            "remote_analysis_requested": self.remote_analysis_requested,
+            "remote_analysis": False,
+            "cloud_analysis_status": cloud_status,
+            "mutates_installed_agents": False,
+        }
+
+
+def flag(payload: dict[str, Any], keys: tuple[str, ...], default: bool) -> bool:
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on", "enabled", "开启"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", "disabled", "关闭"}:
+                return False
+        return bool(value)
+    return default
 
 
 @dataclass(slots=True)

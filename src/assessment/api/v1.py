@@ -31,6 +31,67 @@ PUBLIC_QUICK_SCAN_MODES = {"machine", "path", "mcp"}
 INTERNAL_SKILL_PATH_KEYS = {"real_path", "source_path"}
 
 
+def request_flag(values: dict[str, Any], keys: tuple[str, ...], default: bool) -> bool:
+    for key in keys:
+        if key not in values:
+            continue
+        value = values.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on", "enabled", "开启"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", "disabled", "关闭"}:
+                return False
+        return bool(value)
+    return default
+
+
+def local_scan_boundary(body: dict[str, Any], source: dict[str, Any] | None = None) -> dict[str, Any]:
+    values = {**(source or {}), **(body or {})}
+    remote_requested = request_flag(
+        values,
+        ("remote_analysis_requested", "remoteAnalysisRequested", "remote_analysis", "remoteAnalysis", "cloud_analysis"),
+        False,
+    )
+    scan_skills = request_flag(values, ("scan_skills", "include_skills", "scanSkills"), True)
+    run_local = request_flag(values, ("run_local_analyzers", "local_analyzers", "runLocalAnalyzers"), True)
+    use_sca = request_flag(values, ("use_existing_sca", "invoke_existing_sca", "useExistingSca"), False)
+    scan_options = {
+        "scan_skills": scan_skills,
+        "include_skills": scan_skills,
+        "include_mcp": request_flag(values, ("include_mcp", "scan_mcp", "scanMcp"), True),
+        "include_discovery": request_flag(values, ("include_discovery", "run_discovery", "runDiscovery"), True),
+        "run_local_analyzers": run_local,
+        "use_existing_sca": use_sca,
+        "external_sca_executed": False,
+        "remote_analysis_requested": remote_requested,
+        "remote_analysis": False,
+        "cloud_analysis_status": "OPTIONAL_DISABLED" if remote_requested else "DISABLED",
+        "mutates_installed_agents": False,
+    }
+    return {
+        "scan_options": scan_options,
+        "scan_skills": scan_skills,
+        "include_skills": scan_skills,
+        "run_local_analyzers": run_local,
+        "use_existing_sca": use_sca,
+        "external_sca_executed": False,
+        "remote_analysis_requested": remote_requested,
+        "remote_analysis": False,
+        "cloud_analysis_status": scan_options["cloud_analysis_status"],
+        "mutates_installed_agents": False,
+    }
+
+
+def normalize_local_scan_payload(body: dict[str, Any]) -> dict[str, Any]:
+    boundary = local_scan_boundary(body)
+    return {**body, **boundary, **boundary["scan_options"]}
+
+
 LIST_KEYS = {
     "/agents": "agentAssets",
     "/adapters": "agents",
@@ -780,9 +841,10 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     result: dict[str, Any] = {"ok": True, "route": path, "method": method, "received": body}
 
     if path == "/quick-scans/precheck":
-        validate_public_quick_scan_mode(body)
+        scan_body = normalize_local_scan_payload(body)
+        validate_public_quick_scan_mode(scan_body)
         try:
-            result["precheck"] = LocalScanEngine(store).precheck_quick_scan(body)
+            result["precheck"] = LocalScanEngine(store).precheck_quick_scan(scan_body)
         except ValueError as exc:
             raise HTTPException(
                 status_code=422,
@@ -791,12 +853,18 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
                     "validation_errors": [{"field": "mode", "message": str(exc)}],
                 },
             ) from exc
-        result["audit_event"] = store.audit_event(path_action(method, path), "quick_scan", "precheck", {"body": body})
+        result["scan_options"] = scan_body["scan_options"]
+        result["remote_analysis"] = False
+        result["remote_analysis_requested"] = scan_body["remote_analysis_requested"]
+        result["cloud_analysis_status"] = scan_body["cloud_analysis_status"]
+        result["mutates_installed_agents"] = False
+        result["audit_event"] = store.audit_event(path_action(method, path), "quick_scan", "precheck", {"body": scan_body})
         return result
     if path == "/quick-scans":
-        validate_public_quick_scan_mode(body)
+        scan_body = normalize_local_scan_payload(body)
+        validate_public_quick_scan_mode(scan_body)
         try:
-            scan = LocalScanEngine(store).run_quick_scan(body)
+            scan = LocalScanEngine(store).run_quick_scan(scan_body)
         except ValueError as exc:
             raise HTTPException(
                 status_code=422,
@@ -806,7 +874,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
                 },
             ) from exc
         result.update(scan_payload(scan))
-        result["audit_event"] = store.audit_event(path_action(method, path), "assessment", scan.assessment["id"], {"body": body})
+        result["audit_event"] = store.audit_event(path_action(method, path), "assessment", scan.assessment["id"], {"body": scan_body})
         return result
     elif path == "/uploads":
         result.update(handle_upload(store, state, body))
@@ -912,19 +980,19 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         agent_id = path.split("/")[-2]
         result.update(probe_agent_asset(store, state, agent_id, body))
     elif path == "/assessments/drafts":
-        result["draft"] = create_assessment_draft(store, state, body)
+        result["draft"] = create_assessment_draft(store, state, normalize_local_scan_payload(body))
     elif path == "/assessments/plan":
-        plan = build_assessment_plan(body, state)
+        plan = build_assessment_plan(normalize_local_scan_payload(body), state)
         result["plan"] = plan
         result["snapshot"] = store.write_artifact("assessment-plan", json.dumps(plan, ensure_ascii=False, indent=2), suffix="json")
     elif path == "/assessments":
-        payload = dict(body)
+        payload = normalize_local_scan_payload(dict(body))
         payload.setdefault("mode", "assessment")
         if not any(payload.get(key) for key in ("target_path", "path", "target", "workspace")):
             payload["target_path"] = str(REPO_ROOT)
         scan = LocalScanEngine(store).run_quick_scan(payload)
         result.update(scan_payload(scan))
-        result["audit_event"] = store.audit_event(path_action(method, path), "assessment", scan.assessment["id"], {"body": body})
+        result["audit_event"] = store.audit_event(path_action(method, path), "assessment", scan.assessment["id"], {"body": payload})
         return result
     elif "/consents/" in path and path.endswith("/decision"):
         consent_id = path.split("/")[-2]
@@ -4151,6 +4219,7 @@ def quick_scan_history_row(store: Any, assessment: dict, reports: list[dict], fi
     events = store.list_scan_events(assessment_id) if assessment_id else []
     last_event = events[-1] if events else {}
     severity = quick_scan_severity_counts(findings)
+    boundary = local_scan_boundary(assessment)
     return {
         "id": assessment_id,
         "name": assessment.get("name") or assessment_id,
@@ -4170,7 +4239,14 @@ def quick_scan_history_row(store: Any, assessment: dict, reports: list[dict], fi
         "report_download": f"/api/v1/reports/{latest_report.get('id')}/download" if latest_report.get("id") else "",
         "events": {"count": len(events), "last": {"type": last_event.get("type", ""), "time": last_event.get("time") or last_event.get("created_at") or "", "text": last_event.get("text", "")}},
         "safe_mode": assessment.get("safe_mode") or "read_only",
-        "remote_analysis": bool(assessment.get("remote_analysis", False)),
+        "scan_options": assessment.get("scan_options") or boundary["scan_options"],
+        "scan_skills": boundary["scan_skills"],
+        "run_local_analyzers": boundary["run_local_analyzers"],
+        "use_existing_sca": boundary["use_existing_sca"],
+        "external_sca_executed": False,
+        "remote_analysis": False,
+        "remote_analysis_requested": boundary["remote_analysis_requested"],
+        "cloud_analysis_status": boundary["cloud_analysis_status"],
         "mutates_installed_agents": False,
     }
 
@@ -5430,6 +5506,7 @@ def update_task_state(store: Any, state: dict, task_id: str, status: str, state_
 def create_assessment_draft(store: Any, state: dict, body: dict, source: dict | None = None) -> dict:
     selected = state.get("selectedAsset", {})
     source = source or {}
+    boundary = local_scan_boundary(body, source)
     target = body.get("target") or body.get("target_path") or source.get("target") or selected.get("path") or selected.get("name") or "本机 Agent 配置"
     adapter = body.get("adapter") or source.get("adapter") or selected.get("adapter") or "自动识别"
     draft = {
@@ -5449,10 +5526,19 @@ def create_assessment_draft(store: Any, state: dict, body: dict, source: dict | 
         "state_code": "DRAFT",
         "safe_mode": body.get("safe_mode") or source.get("safe_mode") or "read_only",
         "mcp_policy": body.get("mcp_policy") or source.get("mcp_policy") or "per-server-consent",
-        "remote_analysis": bool(body.get("remote_analysis", source.get("remote_analysis", False))),
+        "remote_analysis": False,
+        "remote_analysis_requested": boundary["remote_analysis_requested"],
+        "cloud_analysis_status": boundary["cloud_analysis_status"],
+        "scan_skills": boundary["scan_skills"],
+        "include_skills": boundary["include_skills"],
+        "run_local_analyzers": boundary["run_local_analyzers"],
+        "use_existing_sca": boundary["use_existing_sca"],
+        "external_sca_executed": False,
+        "scan_options": boundary["scan_options"],
+        "mutates_installed_agents": False,
         "business_note": body.get("business_note") or source.get("business_note", ""),
         "additional_paths": body.get("additional_paths") or source.get("additional_paths", ""),
-        "plan": body.get("plan") or body,
+        "plan": {**(body.get("plan") if isinstance(body.get("plan"), dict) else body), "scan_options": boundary["scan_options"], "remote_analysis": False, "remote_analysis_requested": boundary["remote_analysis_requested"]},
         "created_at": utc_now(),
     }
     if source.get("id"):
@@ -5465,6 +5551,7 @@ def create_assessment_draft(store: Any, state: dict, body: dict, source: dict | 
 
 def clone_task_as_draft(store: Any, state: dict, task_id: str, body: dict) -> dict:
     source = store.get_record("assessment", task_id) or store.get_record("task", task_id) or find_item(state.get("tasks", []), task_id) or {"id": task_id}
+    boundary = local_scan_boundary(body, source)
     payload = {
         "name": body.get("name") or f"{source.get('name', task_id)} · 复制",
         "target": body.get("target") or source.get("target"),
@@ -5474,14 +5561,17 @@ def clone_task_as_draft(store: Any, state: dict, task_id: str, body: dict) -> di
         "profile_id": body.get("profile_id") or source.get("profile"),
         "safe_mode": body.get("safe_mode") or source.get("safe_mode"),
         "mcp_policy": body.get("mcp_policy") or source.get("mcp_policy"),
-        "remote_analysis": body.get("remote_analysis", source.get("remote_analysis", False)),
-        "plan": {"cloned_from": task_id, "source_stage": source.get("stage"), "source_profile": source.get("profile")},
+        "remote_analysis": False,
+        "remote_analysis_requested": boundary["remote_analysis_requested"],
+        "scan_options": boundary["scan_options"],
+        "plan": {"cloned_from": task_id, "source_stage": source.get("stage"), "source_profile": source.get("profile"), "scan_options": boundary["scan_options"]},
     }
     return create_assessment_draft(store, state, payload, source=source)
 
 
 def retry_task(store: Any, state: dict, task_id: str, body: dict) -> dict:
     source = store.get_record("assessment", task_id) or store.get_record("task", task_id) or find_item(state.get("tasks", []), task_id) or {"id": task_id}
+    boundary = local_scan_boundary(body, source)
     plan = dict(source.get("plan") if isinstance(source.get("plan"), dict) else {})
     plan.update(
         {
@@ -5490,6 +5580,7 @@ def retry_task(store: Any, state: dict, task_id: str, body: dict) -> dict:
             "source_status": source.get("status"),
             "queued_by": "local-user",
             "queued_at": utc_now(),
+            "scan_options": boundary["scan_options"],
         }
     )
     retry = dict(source)
@@ -5513,7 +5604,15 @@ def retry_task(store: Any, state: dict, task_id: str, body: dict) -> dict:
             "state_code": "QUEUED",
             "safe_mode": body.get("safe_mode") or source.get("safe_mode") or "read_only",
             "mcp_policy": body.get("mcp_policy") or source.get("mcp_policy") or "per-server-consent",
-            "remote_analysis": bool(body.get("remote_analysis", source.get("remote_analysis", False))),
+            "remote_analysis": False,
+            "remote_analysis_requested": boundary["remote_analysis_requested"],
+            "cloud_analysis_status": boundary["cloud_analysis_status"],
+            "scan_skills": boundary["scan_skills"],
+            "include_skills": boundary["include_skills"],
+            "run_local_analyzers": boundary["run_local_analyzers"],
+            "use_existing_sca": boundary["use_existing_sca"],
+            "external_sca_executed": False,
+            "scan_options": boundary["scan_options"],
             "plan": plan,
             "mutates_installed_agents": False,
             "created_at": utc_now(),
@@ -5543,13 +5642,18 @@ def retry_task(store: Any, state: dict, task_id: str, body: dict) -> dict:
 
 
 def build_assessment_plan(body: dict, state: dict) -> dict:
+    boundary = local_scan_boundary(body)
     return {
         "id": new_id("plan"),
         "target": body.get("target") or body.get("target_path") or state.get("selectedAsset", {}).get("name") or "local",
         "profile_id": body.get("profile_id", "standard-complete@4.1.0"),
         "safe_mode": body.get("safe_mode", "read_only"),
         "mcp_policy": body.get("mcp_policy", "per-server-consent"),
-        "remote_analysis": bool(body.get("remote_analysis", False)),
+        "remote_analysis": False,
+        "remote_analysis_requested": boundary["remote_analysis_requested"],
+        "cloud_analysis_status": boundary["cloud_analysis_status"],
+        "scan_options": boundary["scan_options"],
+        "mutates_installed_agents": False,
         "stages": ["DISCOVERY", "LOCAL_STATIC", "MCP_CONSENT", "REPORT"],
         "created_at": utc_now(),
     }
@@ -8489,6 +8593,9 @@ def default_runtime_plan(state: dict) -> dict:
         "profile": "standard-complete@4.1.0",
         "safe_mode": "local-readonly",
         "remote_analysis": False,
+        "remote_analysis_requested": False,
+        "cloud_analysis_status": "DISABLED",
+        "scan_options": local_scan_boundary({})["scan_options"],
         "mutates_installed_agents": False,
         "stages": ["DISCOVERY", "LOCAL_STATIC", "MCP_CONSENT", "REPORT"],
         "rules": ["baseline@4.1.0", "local-agent-scan@4.1.0"],
@@ -8540,6 +8647,7 @@ def combine_items(real_items: list[dict], seed_items: list[dict]) -> list[dict]:
 
 
 def scan_payload(scan: Any) -> dict:
+    boundary = local_scan_boundary(scan.assessment)
     return {
         "assessment": scan.assessment,
         "findings": scan.findings,
@@ -8557,6 +8665,11 @@ def scan_payload(scan: Any) -> dict:
         "files_scanned": scan.files_scanned,
         "files_skipped": scan.files_skipped,
         "events": scan.events,
+        "scan_options": scan.assessment.get("scan_options") or boundary["scan_options"],
+        "remote_analysis": False,
+        "remote_analysis_requested": boundary["remote_analysis_requested"],
+        "cloud_analysis_status": boundary["cloud_analysis_status"],
+        "mutates_installed_agents": False,
     }
 
 

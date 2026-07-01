@@ -570,6 +570,105 @@ def test_write_api_updates_state_and_audit():
     assert payload["audit_event"]["action"] == "post.quick-scans"
 
 
+def test_quick_scan_options_are_persisted_without_cloud_execution(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "quick-scan-options.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.post(
+        "/api/v1/quick-scans",
+        json={
+            "mode": "path",
+            "target_path": "tests/fixtures/sample_agent_project",
+            "max_files": 50,
+            "scan_skills": False,
+            "run_local_analyzers": False,
+            "use_existing_sca": True,
+            "remote_analysis": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assessment = payload["assessment"]
+    options = payload["scan_options"]
+    assert assessment["remote_analysis"] is False
+    assert assessment["remote_analysis_requested"] is True
+    assert assessment["cloud_analysis_status"] == "OPTIONAL_DISABLED"
+    assert assessment["scan_skills"] is False
+    assert assessment["run_local_analyzers"] is False
+    assert assessment["use_existing_sca"] is True
+    assert assessment["external_sca_executed"] is False
+    assert assessment["mutates_installed_agents"] is False
+    assert options["remote_analysis"] is False
+    assert options["remote_analysis_requested"] is True
+    assert options["scan_skills"] is False
+    assert options["run_local_analyzers"] is False
+    assert payload["files_scanned"] == 0
+    assert payload["findings"] == []
+    event_types = {event["type"] for event in payload["events"]}
+    assert "local_static.skipped" in event_types
+    assert "external_sca.skipped" in event_types
+    assert "cloud_analysis.disabled" in event_types
+
+    recent = client.get("/api/v1/quick-scans/recent?page_size=10").json()
+    row = next(item for item in recent["items"] if item["id"] == assessment["id"])
+    assert row["remote_analysis"] is False
+    assert row["remote_analysis_requested"] is True
+    assert row["cloud_analysis_status"] == "OPTIONAL_DISABLED"
+    assert row["scan_options"]["run_local_analyzers"] is False
+    assert row["mutates_installed_agents"] is False
+
+    with store.connect() as conn:
+        audit = conn.execute(
+            "SELECT payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (assessment["id"],),
+        ).fetchone()
+    audit_body = json.loads(audit["payload_json"])["body"]
+    assert audit_body["remote_analysis"] is False
+    assert audit_body["remote_analysis_requested"] is True
+    assert audit_body["mutates_installed_agents"] is False
+
+
+def test_assessment_draft_and_plan_force_local_scan_boundary(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "assessment-options.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    draft_response = client.post(
+        "/api/v1/assessments/drafts",
+        json={
+            "name": "boundary draft",
+            "target_path": "tests/fixtures/sample_agent_project",
+            "scan_skills": False,
+            "run_local_analyzers": False,
+            "use_existing_sca": True,
+            "remote_analysis": True,
+        },
+    )
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["draft"]
+    assert draft["remote_analysis"] is False
+    assert draft["remote_analysis_requested"] is True
+    assert draft["cloud_analysis_status"] == "OPTIONAL_DISABLED"
+    assert draft["scan_options"]["scan_skills"] is False
+    assert draft["scan_options"]["run_local_analyzers"] is False
+    assert draft["scan_options"]["use_existing_sca"] is True
+    assert draft["mutates_installed_agents"] is False
+
+    plan_response = client.post(
+        "/api/v1/assessments/plan",
+        json={"target_path": "tests/fixtures/sample_agent_project", "remote_analysis_requested": True},
+    )
+    assert plan_response.status_code == 200
+    plan = plan_response.json()["plan"]
+    assert plan["remote_analysis"] is False
+    assert plan["remote_analysis_requested"] is True
+    assert plan["cloud_analysis_status"] == "OPTIONAL_DISABLED"
+    assert plan["scan_options"]["remote_analysis"] is False
+    assert plan["mutates_installed_agents"] is False
+
+
 def test_quick_scan_recent_history_is_real_and_exportable(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "quick-history.db")
     store.initialize()

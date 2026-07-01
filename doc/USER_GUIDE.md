@@ -93,10 +93,10 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 | 扫描模式 | 本机发现、指定目录/文件、单个 MCP Server |
 | Agent 类型提示 | 可选择 Claude Code、Codex、OpenClaw、Hermes 或自动识别 |
 | 路径 / URL | 留空时扫描当前服务目录；建议填写明确目录或配置文件 |
-| 扫描 Skills | 开启后分析 `SKILL.md`、脚本和资源 |
-| 运行本地分析器 | 开启后使用内置规则生成 Finding |
-| 调用已有 Skill/SCA | 预留集成项，当前本地模式不强依赖 |
-| 允许远程 Snyk 分析 | 默认关闭；本地核心测评不需要 |
+| 扫描 Skills | 对应 `scan_skills/include_skills`，关闭后发现结果、扫描文件和报告中不纳入 Skill 文件 |
+| 运行本地分析器 | 对应 `run_local_analyzers`，开启后使用内置规则生成 Finding；关闭时只保留发现、报告和审计事件 |
+| 调用已有 Skill/SCA | 对应 `use_existing_sca`，当前本地企业模式只记录请求意图，不会自动执行外部扫描器 |
+| 允许远程 Snyk 分析 | 对应 `remote_analysis_requested`；即使勾选，实际执行仍返回 `remote_analysis=false` 且不连接云端 |
 
 点击“开始快速扫描”后，系统会同步完成一次本地只读扫描，并返回：
 
@@ -120,6 +120,13 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile quick
 `quick-scans/recent` 会从当前 SQLite 的 `assessment`、`report`、`finding`、`evidence` 和 `scan_event` 聚合最近扫描，不使用原型样例。`quick-scans/recent/export` 会生成 `quick-scan-history` JSON artifact，用于客户评审时留存扫描 ID、报告下载地址、风险/证据计数、事件数量和只读安全边界；导出不会重新扫描客户目录，不启动或修改已安装 Agent。
 
 页面下方“最近快速扫描”表直接读取 `/api/v1/quick-scans/recent`，显示文件数、P0/P1、证据/事件和报告下载入口；“导出历史”按钮会生成同一份 `quick-scan-history` artifact。
+
+本地边界字段会随 Assessment 和历史记录返回：
+
+- `scan_options.scan_skills`、`scan_options.run_local_analyzers`、`scan_options.use_existing_sca`：本次扫描实际采用的选项。
+- `remote_analysis_requested`：用户或 API 是否请求了可选云分析。
+- `remote_analysis=false`、`cloud_analysis_status=OPTIONAL_DISABLED|DISABLED`：本地交付实际未调用远程 Snyk 分析。
+- `external_sca_executed=false`、`mutates_installed_agents=false`：不会启动或修改 Codex、Hermes、Claude Code、Cursor 等已安装 Agent。
 
 ## 3.1 测评模板
 
@@ -725,6 +732,10 @@ $body = @{
   mode = "machine"
   adapter = "自动识别"
   max_files = 500
+  scan_skills = $true
+  run_local_analyzers = $true
+  use_existing_sca = $false
+  remote_analysis_requested = $false
 } | ConvertTo-Json
 
 Invoke-RestMethod `

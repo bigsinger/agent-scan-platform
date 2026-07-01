@@ -189,6 +189,19 @@ def test_quick_scan_ui_requires_api_assessment_record():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "mode:this.quickMode" in app_js
+    assert 'v-model="form.scanSkills"' in html
+    assert 'v-model="form.runLocalAnalyzers"' in html
+    assert 'v-model="form.useExistingSca"' in html
+    assert 'v-model="form.remoteAnalysis"' in html
+    assert 'v-model="form.assessmentRemoteAnalysis"' in html
+    assert '<input type="checkbox" checked> 扫描 Skills' not in html
+    assert '<input type="checkbox" checked> 运行本地分析器' not in html
+    assert "scanOptionPayload(scope)" in app_js
+    assert "assessmentPayload(extra)" in app_js
+    assert "this.form=Object.assign({}, defaultFormState, this.form || {})" in app_js
+    assert "remote_analysis_requested:remoteRequested" in app_js
+    assert "remote_analysis:false" in app_js
+    assert "run_local_analyzers:!!this.form.runLocalAnalyzers" in app_js
     assert "asm_quick_" not in app_js
     assert "快速扫描未返回真实任务记录" in app_js
     assert "v-for=\"t in quickHistory\"" in html

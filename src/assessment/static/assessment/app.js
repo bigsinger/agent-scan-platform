@@ -22,7 +22,22 @@
     'selectedFinding','selectedEvidence','selectedAttackPath','selectedPolicyDraft','selectedReport','selectedRetest','selectedRule',
     'selectedProcess','selectedJob'
   ];
-  const defaultFormState = {adapter:'自动识别', targetPath:'', discoveryPaths:'', snapshotContent:'', assessmentName:'', businessNote:'', redteamTarget:'local-agent-dry-run', redteamCaseId:'', redteamMode:'dry-run'};
+  const defaultFormState = {
+    adapter:'自动识别',
+    targetPath:'',
+    discoveryPaths:'',
+    snapshotContent:'',
+    assessmentName:'',
+    businessNote:'',
+    redteamTarget:'local-agent-dry-run',
+    redteamCaseId:'',
+    redteamMode:'dry-run',
+    scanSkills:true,
+    runLocalAnalyzers:true,
+    useExistingSca:false,
+    remoteAnalysis:false,
+    assessmentRemoteAnalysis:false
+  };
   function resetRuntimeCollections(state) {
     runtimeListKeys.forEach(key => { state[key] = []; });
     runtimeObjectKeys.forEach(key => { state[key] = {}; });
@@ -1094,6 +1109,7 @@ data(){
         const payload=await this.apiGet('/api/v1/bootstrap');
         if(payload && payload.state){
           Object.assign(this, payload.state);
+          this.form=Object.assign({}, defaultFormState, this.form || {});
           this.quickModes=(this.quickModes || []).filter(mode => mode.id !== 'fixture');
           if(this.quickMode==='fixture') this.quickMode='machine';
           if(!this.selectedCase || !(this.selectedCase.id || this.selectedCase.name)) this.selectedCase=(this.redCases && this.redCases[0]) || (this.caseLibrary && this.caseLibrary[0]) || {};
@@ -1425,7 +1441,32 @@ data(){
       const payload={mode:this.quickMode, adapter:this.form.adapter || '自动识别'};
       const target=(this.form.targetPath || '').trim();
       if(target) payload.target_path=target;
+      Object.assign(payload, this.scanOptionPayload('quick'));
       return payload;
+    },
+    scanOptionPayload(scope){
+      const remoteRequested=scope==='assessment' ? !!this.form.assessmentRemoteAnalysis : !!this.form.remoteAnalysis;
+      return {
+        scan_skills:!!this.form.scanSkills,
+        include_skills:!!this.form.scanSkills,
+        run_local_analyzers:!!this.form.runLocalAnalyzers,
+        use_existing_sca:!!this.form.useExistingSca,
+        external_sca_executed:false,
+        remote_analysis_requested:remoteRequested,
+        remote_analysis:false,
+        mutates_installed_agents:false
+      };
+    },
+    assessmentPayload(extra){
+      return Object.assign({
+        name:this.form.assessmentName,
+        business_note:this.form.businessNote,
+        target_id:this.selectedAsset&&this.selectedAsset.id,
+        target_path:this.form.targetPath,
+        additional_paths:this.form.discoveryPaths,
+        adapter:this.form.adapter,
+        profile_id:'standard-complete@4.1.0'
+      }, this.scanOptionPayload('assessment'), extra || {});
     },
     quickAgent(a){
       this.form.adapter=a.adapter || a.name || '自动识别';
@@ -2587,7 +2628,7 @@ data(){
     async saveAssessmentDraft(){
       this.opsBusy=true; this.apiError='';
       try {
-        const res=await this.apiPost('/api/v1/assessments/drafts', {name:this.form.assessmentName, business_note:this.form.businessNote, target_id:this.selectedAsset&&this.selectedAsset.id, target_path:this.form.targetPath, additional_paths:this.form.discoveryPaths, adapter:this.form.adapter, profile_id:'standard-complete@4.1.0', wizard:this.wizard, plan_confirmed:this.planConfirmed});
+        const res=await this.apiPost('/api/v1/assessments/drafts', this.assessmentPayload({wizard:this.wizard, plan_confirmed:this.planConfirmed}));
         if(res.draft){ this.mergeRecords('tasks', [res.draft]); this.selectedTask=res.draft; }
         this.toastMsg('测评草稿已保存：'+(res.draft&&res.draft.id || 'DRAFT'));
       } catch (err) { this.apiError=this.describeError(err); }
@@ -2643,7 +2684,7 @@ data(){
     async submitAssessment(){
       this.opsBusy=true; this.apiError='';
       try {
-        const res = await this.apiPost('/api/v1/assessments', {name:this.form.assessmentName, business_note:this.form.businessNote, target_id:this.selectedAsset&&this.selectedAsset.id, target_path:this.form.targetPath, additional_paths:this.form.discoveryPaths, adapter:this.form.adapter, profile_id:'standard-complete@4.1.0'});
+        const res = await this.apiPost('/api/v1/assessments', this.assessmentPayload());
         this.mergeScanResponse(res);
         const t = res.assessment || {id:'asm_local_'+Date.now(), name:this.form.assessmentName||'本机 Agent 安全测评', target:this.form.targetPath||'local-machine', progress:0, status:'QUEUED', stage:'PRECHECK'};
         this.mergeRecords('tasks', [t]);this.selectedTask=t;this.wizard=1;this.planConfirmed=false;this.go('task-detail');this.toastMsg('Assessment Plan 已固化并完成本地扫描');

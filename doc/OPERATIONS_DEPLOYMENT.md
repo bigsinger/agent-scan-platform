@@ -485,6 +485,10 @@ $body = @{
   mode = "machine"
   adapter = "自动识别"
   max_files = 500
+  scan_skills = $true
+  run_local_analyzers = $true
+  use_existing_sca = $false
+  remote_analysis_requested = $false
 } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
 $history = Invoke-RestMethod http://127.0.0.1:8000/api/v1/quick-scans/recent?page_size=20
@@ -494,6 +498,28 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile quick
 
 快速扫描历史只读取本系统 SQLite 中的 assessment/report/finding/evidence/scan_event 记录，并生成 `quick-scan-history` artifact；它用于复盘和验收留档，不会重新扫描客户目录、不启动 MCP、不修改 Codex/Hermes。
 前端快速扫描页的“最近快速扫描”表也调用该接口，不再从原型 seed 或当前会话任务数组拼接历史。
+
+扫描选项验收：
+
+```powershell
+$boundary = @{
+  mode = "path"
+  target_path = "tests/fixtures/sample_agent_project"
+  max_files = 50
+  scan_skills = $false
+  run_local_analyzers = $false
+  use_existing_sca = $true
+  remote_analysis = $true
+} | ConvertTo-Json
+$scan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $boundary -ContentType "application/json"
+$scan.assessment.remote_analysis             # False
+$scan.assessment.remote_analysis_requested   # True
+$scan.assessment.cloud_analysis_status       # OPTIONAL_DISABLED
+$scan.assessment.external_sca_executed       # False
+$scan.assessment.mutates_installed_agents    # False
+```
+
+`remote_analysis=true` 会被归一化为 `remote_analysis_requested=true` 和 `remote_analysis=false`，用于审计客户请求但不触发 Snyk 云端访问。`run_local_analyzers=false` 会跳过本地规则分析器，仅保留发现、报告和事件闭环；这适合验证发现范围或演示只读边界。
 
 上传快照扫描：
 
