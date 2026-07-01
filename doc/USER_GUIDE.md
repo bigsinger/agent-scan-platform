@@ -187,6 +187,7 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 - 发现 MCP Server 配置。
 - 发现 Skill 根目录。
 - 导入轻量 Agent 资产。
+- 按 Agent 配置、Skills、MCP 配置和“仅显示变化”过滤本次发现视图。
 
 安全边界：
 
@@ -201,6 +202,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 2. “Agent 资产”：归一化后的 Agent。
 3. “MCP / Tool 检测”：Server、传输方式、配置来源、风险。
 4. “MCP 启动审批”：所有 stdio Server 默认待审批。
+
+发现范围复选框会进入 `POST /api/v1/discovery-runs`：`include_agent_configs`、`include_skills`、`include_mcp` 和 `changes_only`。变化状态由本系统上一轮 `discovery_hit.path_hash + sha256` 对比得出：`NEW` 表示新路径，`CHANGED` 表示同一路径内容变化，`UNCHANGED` 表示未变化。勾选“仅显示变化”只影响本次返回视图和证据包，不删除 SQLite 中已有发现记录。
 
 发现命中支持真实状态操作：
 
@@ -772,6 +775,10 @@ Invoke-RestMethod `
 ```powershell
 $body = @{
   scope = "current-user"
+  include_agent_configs = $true
+  include_skills = $true
+  include_mcp = $true
+  changes_only = $false
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -793,6 +800,8 @@ $discovery = Invoke-RestMethod `
 $discovery.safe_mode
 $discovery.mutates_installed_agents
 $discovery.stdio_mcp_started
+$discovery.discovery_options
+$discovery.change_summary
 Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($discovery.download)" `
   -OutFile ".\discovery-run-evidence.json"

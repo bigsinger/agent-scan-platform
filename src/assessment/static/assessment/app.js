@@ -36,7 +36,11 @@
     runLocalAnalyzers:true,
     useExistingSca:false,
     remoteAnalysis:false,
-    assessmentRemoteAnalysis:false
+    assessmentRemoteAnalysis:false,
+    discoveryAgentConfigs:true,
+    discoverySkills:true,
+    discoveryMcp:true,
+    discoveryChangesOnly:false
   };
   function resetRuntimeCollections(state) {
     runtimeListKeys.forEach(key => { state[key] = []; });
@@ -1722,21 +1726,32 @@ data(){
       try {
         const extra=(this.form.discoveryPaths || '').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
         const target=(this.form.targetPath || '').trim();
-        const payload={scope:'current-user'};
+        const payload={
+          scope:'current-user',
+          include_agent_configs:!!this.form.discoveryAgentConfigs,
+          include_skills:!!this.form.discoverySkills,
+          include_mcp:!!this.form.discoveryMcp,
+          changes_only:!!this.form.discoveryChangesOnly,
+          mutates_installed_agents:false
+        };
         if(extra.length) payload.paths=extra;
         else if(target) payload.path=target;
         const res=await this.apiPost('/api/v1/discovery-runs', payload);
-        this.mergeRecords('discoveryHits', res.hits);
-        this.mergeRecords('agentAssets', res.agents);
-        this.mergeRecords('mcpServers', res.mcp_servers);
-        this.mergeRecords('consents', res.consents);
-        this.mergeRecords('skills', res.skills);
-        this.mergeRecords('discoveryErrors', res.errors);
+        this.discoveryHits=res.hits || [];
+        this.agentAssets=res.agents || [];
+        this.mcpServers=res.mcp_servers || [];
+        this.consents=res.consents || [];
+        this.skills=res.skills || [];
+        this.discoveryErrors=res.errors || [];
         if(res.run) this.mergeRecords('discoveryRuns', [res.run]);
         this.discoveryRunEvidence=res.download || (res.run&&res.run.download) || '';
+        const changes=res.change_summary || (res.run&&res.run.change_summary) || {};
+        const options=res.discovery_options || (res.run&&res.run.discovery_options) || {};
         this.discoveryLog=[
           'discovery.completed run='+res.run.id,
           'agents='+(res.agents||[]).length+' hits='+(res.hits||[]).length+' mcp='+(res.mcp_servers||[]).length+' skills='+(res.skills||[]).length,
+          'filters=configs:'+String(Boolean(options.include_agent_configs))+' skills:'+String(Boolean(options.include_skills))+' mcp:'+String(Boolean(options.include_mcp))+' changes_only:'+String(Boolean(options.changes_only)),
+          'changes=new:'+(changes.new||0)+' changed:'+(changes.changed||0)+' unchanged:'+(changes.unchanged||0)+' returned:'+(changes.returned||0),
           'safe_mode='+(res.safe_mode||'local-readonly')+' mutates_installed_agents='+String(Boolean(res.mutates_installed_agents)),
           this.discoveryRunEvidence ? 'evidence='+this.discoveryRunEvidence : 'evidence=not-generated',
           ...((res.hits||[]).slice(0,8).map(x=>'hit '+x.type+' '+x.agent+' '+x.path))

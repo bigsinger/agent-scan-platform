@@ -909,6 +909,8 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["errors"] = discovery.errors
         result["artifact"] = artifact
         result["download"] = discovery.run["download"]
+        result["discovery_options"] = discovery.run.get("discovery_options") or {}
+        result["change_summary"] = discovery.run.get("change_summary") or {}
         result["safe_mode"] = "local-readonly"
         result["mutates_installed_agents"] = False
         result["stdio_mcp_started"] = False
@@ -920,6 +922,8 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
                 "body": redacted_body_summary(body),
                 "artifact_id": artifact["id"],
                 "counts": discovery_counts(discovery),
+                "discovery_options": discovery.run.get("discovery_options") or {},
+                "change_summary": discovery.run.get("change_summary") or {},
                 "safe_mode": "local-readonly",
                 "mutates_installed_agents": False,
                 "stdio_mcp_started": False,
@@ -4336,6 +4340,8 @@ def discovery_run_evidence_payload(discovery: Any, body: dict) -> dict:
         "boundary": "本机发现只读取常见 Agent 配置、MCP 与 Skill 路径，并写入本系统 SQLite/artifact；不启动 stdio MCP，不修改已安装 Agent。",
         "request": redacted_body_summary(body),
         "counts": discovery_counts(discovery),
+        "discovery_options": discovery.run.get("discovery_options") or {},
+        "change_summary": discovery.run.get("change_summary") or {},
         "run": discovery.run,
         "hits": discovery.hits[:500],
         "agents": discovery.agents[:200],

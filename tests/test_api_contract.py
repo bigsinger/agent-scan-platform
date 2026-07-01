@@ -1653,6 +1653,61 @@ def test_discovery_run_writes_readonly_evidence_artifact(monkeypatch, tmp_path):
     assert audit_payload["mutates_installed_agents"] is False
 
 
+def test_discovery_run_applies_scope_filters_and_records_options(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "discovery-filter.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.post(
+        "/api/v1/discovery-runs",
+        json={
+            "path": "tests/fixtures/sample_agent_project",
+            "scope": "regression-sample",
+            "include_skills": False,
+            "include_mcp": False,
+            "include_agent_configs": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["discovery_options"]["include_skills"] is False
+    assert payload["discovery_options"]["include_mcp"] is False
+    assert payload["discovery_options"]["include_agent_configs"] is True
+    assert payload["skills"] == []
+    assert payload["mcp_servers"] == []
+    assert payload["consents"] == []
+    assert {hit["type"] for hit in payload["hits"]}.isdisjoint({"Skill", "MCP"})
+    assert all(hit["change_status"] == "NEW" for hit in payload["hits"])
+    assert payload["change_summary"]["returned"] == len(payload["hits"])
+
+    downloaded = client.get(payload["download"])
+    assert downloaded.status_code == 200
+    evidence = json.loads(downloaded.text)
+    assert evidence["discovery_options"]["include_skills"] is False
+    assert evidence["discovery_options"]["include_mcp"] is False
+    assert evidence["change_summary"]["returned"] == len(payload["hits"])
+
+
+def test_discovery_run_changes_only_returns_current_delta(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "discovery-changes.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    body = {"path": "tests/fixtures/sample_agent_project", "scope": "regression-sample"}
+
+    first = client.post("/api/v1/discovery-runs", json=body).json()
+    assert first["hits"]
+    assert all(hit["change_status"] == "NEW" for hit in first["hits"])
+
+    second = client.post("/api/v1/discovery-runs", json={**body, "changes_only": True}).json()
+    assert second["discovery_options"]["changes_only"] is True
+    assert second["hits"] == []
+    assert second["agents"] == []
+    assert second["change_summary"]["returned"] == 0
+    assert second["change_summary"]["unchanged"] >= len(first["hits"])
+    assert second["mutates_installed_agents"] is False
+
+
 def test_discovery_hit_asset_actions_are_persisted():
     discovery = client.post(
         "/api/v1/discovery-runs",

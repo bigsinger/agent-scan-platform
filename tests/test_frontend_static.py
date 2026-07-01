@@ -250,6 +250,18 @@ def test_discovery_run_ui_exposes_current_evidence_download():
     assert "this.discoveryRunEvidence=res.download || (res.run&&res.run.download) || ''" in app_js
     assert "this.mergeRecords('discoveryRuns', [res.run])" in app_js
     assert "evidence='+this.discoveryRunEvidence" in app_js
+    assert 'v-model="form.discoveryAgentConfigs"' in html
+    assert 'v-model="form.discoverySkills"' in html
+    assert 'v-model="form.discoveryMcp"' in html
+    assert 'v-model="form.discoveryChangesOnly"' in html
+    assert '<input type="checkbox" checked> Agent 配置' not in html
+    assert '<input type="checkbox" checked> Skills' not in html
+    assert '<input type="checkbox" checked> MCP 配置' not in html
+    assert "include_agent_configs:!!this.form.discoveryAgentConfigs" in app_js
+    assert "include_skills:!!this.form.discoverySkills" in app_js
+    assert "include_mcp:!!this.form.discoveryMcp" in app_js
+    assert "changes_only:!!this.form.discoveryChangesOnly" in app_js
+    assert "x.change_status||'UNKNOWN'" in html
 
 
 def test_mcp_toxic_flow_ui_uses_persisted_flows():

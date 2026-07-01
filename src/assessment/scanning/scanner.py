@@ -8,7 +8,7 @@ from typing import Any
 from ..reports import ReportRenderer
 from ..store import AssessmentStore, REPO_ROOT, new_id, utc_now
 from .discovery import DiscoveryEngine
-from .models import DiscoveryResult, RuleMatch, ScanRequest, ScanResult
+from .models import DiscoveryResult, RuleMatch, ScanRequest, ScanResult, flag
 from .redaction import file_digest, redact_text, safe_display_path, stable_hash
 from .rules import analyze_text, rule_catalog
 
@@ -320,7 +320,11 @@ class LocalScanEngine:
         probe_installed = payload.get("probe_installed")
         if probe_installed is not None:
             probe_installed = bool(probe_installed)
+        previous_hits = self.store.list_records("discovery_hit", limit=10000)
+        previous_by_path_hash = {str(hit.get("path_hash")): hit for hit in previous_hits if hit.get("path_hash")}
+        options = discovery_options(payload)
         result = self.discovery.discover(paths or None, scope=str(payload.get("scope") or "current-user"), probe_installed=probe_installed)
+        self._apply_discovery_options(result, options, previous_by_path_hash)
         self._persist_discovery(result)
         state = self.store.get_state()
         merge_front(state, "discoveryRuns", [result.run])
@@ -337,6 +341,94 @@ class LocalScanEngine:
             state["selectedSkill"] = result.skills[0]
         self.store.save_state(state)
         return result
+
+    def _apply_discovery_options(self, result: DiscoveryResult, options: dict[str, Any], previous_by_path_hash: dict[str, dict]) -> None:
+        for hit in result.hits:
+            previous = previous_by_path_hash.get(str(hit.get("path_hash") or ""))
+            if not previous:
+                change_status = "NEW"
+            elif str(previous.get("sha256") or "") != str(hit.get("sha256") or ""):
+                change_status = "CHANGED"
+            else:
+                change_status = "UNCHANGED"
+            hit["change_status"] = change_status
+            hit["changed"] = change_status in {"NEW", "CHANGED"}
+
+        change_summary = {
+            "new": len([hit for hit in result.hits if hit.get("change_status") == "NEW"]),
+            "changed": len([hit for hit in result.hits if hit.get("change_status") == "CHANGED"]),
+            "unchanged": len([hit for hit in result.hits if hit.get("change_status") == "UNCHANGED"]),
+        }
+
+        def keep_hit(hit: dict) -> bool:
+            kind = str(hit.get("type") or "")
+            if kind == "Config" and not options["include_agent_configs"]:
+                return False
+            if kind == "Skill" and not options["include_skills"]:
+                return False
+            if kind == "MCP" and not options["include_mcp"]:
+                return False
+            if options["changes_only"] and hit.get("change_status") == "UNCHANGED":
+                return False
+            return True
+
+        result.hits = [hit for hit in result.hits if keep_hit(hit)]
+        kept_hit_paths = {str(hit.get("path") or "") for hit in result.hits}
+        kept_hit_hashes = {str(hit.get("path_hash") or "") for hit in result.hits}
+        kept_products = {str(hit.get("agent") or "") for hit in result.hits}
+
+        if not options["include_skills"]:
+            result.skills = []
+        elif options["changes_only"]:
+            result.skills = [skill for skill in result.skills if skill_selected_by_hits(skill, kept_hit_paths)]
+
+        if not options["include_mcp"]:
+            result.mcp_servers = []
+            result.consents = []
+        elif options["changes_only"]:
+            result.mcp_servers = [server for server in result.mcp_servers if str(server.get("config") or "") in kept_hit_paths]
+            kept_mcp_ids = {str(server.get("id") or "") for server in result.mcp_servers}
+            kept_mcp_names = {str(server.get("name") or "") for server in result.mcp_servers}
+            result.consents = [
+                consent
+                for consent in result.consents
+                if str(consent.get("mcp_server_id") or "") in kept_mcp_ids or str(consent.get("server") or "") in kept_mcp_names
+            ]
+
+        result.components = [
+            component
+            for component in result.components
+            if component_selected_by_options(component, options, kept_hit_paths)
+        ]
+        result.scan_paths = [path for path in result.scan_paths if stable_hash(str(path.resolve())) in kept_hit_hashes]
+
+        kept_products.update(str(server.get("agent") or "") for server in result.mcp_servers)
+        kept_products.update(str(skill.get("agent") or "") for skill in result.skills)
+        filtered_agents = []
+        for agent in result.agents:
+            product = str(agent.get("adapter") or agent.get("name") or "")
+            if product not in kept_products:
+                continue
+            agent["configs"] = len([hit for hit in result.hits if hit.get("agent") == product and hit.get("type") in {"Config", "MCP"}])
+            agent["mcp"] = len([server for server in result.mcp_servers if server.get("agent") == product])
+            agent["skills"] = len([skill for skill in result.skills if skill.get("agent") == product])
+            filtered_agents.append(agent)
+        result.agents = filtered_agents
+
+        change_summary["returned"] = len(result.hits)
+        result.run.update(
+            {
+                "discovery_options": options,
+                "change_summary": change_summary,
+                "hit_count": len(result.hits),
+                "agent_count": len(result.agents),
+                "mcp_count": len(result.mcp_servers),
+                "skill_count": len(result.skills),
+                "scan_file_count": len(result.scan_paths),
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+            }
+        )
 
     def _persist_discovery(self, result: DiscoveryResult) -> None:
         self.store.upsert_record("discovery_run", result.run, status=result.run.get("status", "COMPLETED"))
@@ -510,6 +602,40 @@ def should_scan_file(path: Path) -> bool:
 def looks_like_skill_path(path: Path) -> bool:
     parts = {part.lower() for part in path.parts}
     return path.name.lower() == "skill.md" or "skills" in parts
+
+
+def discovery_options(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "include_agent_configs": flag(payload, ("include_agent_configs", "include_configs", "discovery_agent_configs", "discoveryAgentConfigs"), True),
+        "include_skills": flag(payload, ("include_skills", "discovery_skills", "discoverySkills"), True),
+        "include_mcp": flag(payload, ("include_mcp", "discovery_mcp", "discoveryMcp"), True),
+        "changes_only": flag(payload, ("changes_only", "changed_only", "discovery_changes_only", "discoveryChangesOnly"), False),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "stdio_mcp_started": False,
+        "agent_runtime_started": False,
+    }
+
+
+def skill_selected_by_hits(skill: dict[str, Any], kept_hit_paths: set[str]) -> bool:
+    skill_path = str(skill.get("path") or "")
+    if not skill_path:
+        return False
+    return any(path == skill_path or path.startswith(skill_path.rstrip("/\\") + "/") or path.startswith(skill_path.rstrip("/\\") + "\\") for path in kept_hit_paths)
+
+
+def component_selected_by_options(component: dict[str, Any], options: dict[str, Any], kept_hit_paths: set[str]) -> bool:
+    kind = str(component.get("type") or "")
+    if kind == "Config" and not options["include_agent_configs"]:
+        return False
+    if kind == "Skill" and not options["include_skills"]:
+        return False
+    if kind == "MCP" and not options["include_mcp"]:
+        return False
+    if options["changes_only"]:
+        source = str(component.get("source") or "")
+        return source in kept_hit_paths
+    return True
 
 
 def read_text(path: Path) -> str | None:
