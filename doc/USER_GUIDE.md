@@ -1117,7 +1117,7 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($licenses.download)" -OutFile thi
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/third-party/third_party_vue/notice
 ```
 
-许可证导出会读取当前仓库的 `pyproject.toml`、`THIRD_PARTY_NOTICES.md`、`src/assessment/static/vendor/vendor-manifest.json` 和 agent-scan 本地兼容桥接哈希，写入 `third_party_component`，并生成 `third-party-notices` JSON artifact。该操作只读取本仓库文件并写入本系统 SQLite/artifact，不扫描或修改已安装 Codex/Hermes。
+许可证页“刷新清单”和 `GET /api/v1/licenses` 会读取当前仓库的 `pyproject.toml`、`THIRD_PARTY_NOTICES.md`、`src/assessment/static/vendor/vendor-manifest.json` 和 agent-scan 本地兼容桥接哈希，写入/更新 `third_party_component`。页面中的 agent-scan 归属、补丁漂移、自动升级和许可证差异来自 `third_party_component` 与 `/api/v1/agent-scan/compat`，不使用固定原型行。`/api/v1/licenses/export` 会额外生成 `third-party-notices` JSON artifact。以上操作只读取本仓库文件并写入本系统 SQLite/artifact，不扫描或修改已安装 Codex/Hermes。
 
 扫描器自测：
 

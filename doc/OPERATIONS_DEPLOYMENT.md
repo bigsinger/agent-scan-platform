@@ -889,9 +889,13 @@ python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8765
 验收命令：
 
 ```powershell
+$list = Invoke-RestMethod http://127.0.0.1:8000/api/v1/licenses
+$compat = Invoke-RestMethod http://127.0.0.1:8000/api/v1/agent-scan/compat
 $licenses = Invoke-RestMethod http://127.0.0.1:8000/api/v1/licenses/export
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($licenses.download)" -OutFile third-party-notices.json
 ```
+
+验收时 `$list.items` 必须包含 `snyk/agent-scan compatible bridge`，`$compat.upstream_status` 与 `$compat.auto_upgrade_enabled` 必须进入页面“更新检查”表；不得用固定“人工检查/禁用/需人工复核”原型行作为验收证据。
 
 ## 14. 与外部项目的参考关系
 

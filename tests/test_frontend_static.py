@@ -152,6 +152,24 @@ def test_agent_scan_compat_ui_is_api_backed():
     assert "/api/v1/agent-scan/self-test" in app_js
 
 
+def test_license_update_check_ui_is_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "github.com/snyk/agent-scan</div><div>Version" not in html
+    assert "<span class=\"badge blue\">人工检查</span>" not in html
+    assert "<span class=\"badge gray\">禁用</span>" not in html
+    assert "升级前必须通过本地兼容自测" not in html
+    assert "需人工复核上游许可证" not in html
+    assert "agentScanOwnershipRows()" in app_js
+    assert "licenseUpdateCheckRows()" in app_js
+    assert "async refreshLicenseContext" in app_js
+    assert "/api/v1/licenses?page_size=200" in app_js
+    assert "/api/v1/agent-scan/compat" in app_js
+    assert "@click=\"refreshLicenseContext()\"" in html
+    assert "v-for=\"row in agentScanOwnershipRows\"" in html
+    assert "v-for=\"row in licenseUpdateCheckRows\"" in html
+
+
 def test_quick_scan_ui_requires_api_assessment_record():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

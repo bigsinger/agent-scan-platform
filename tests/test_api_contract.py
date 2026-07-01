@@ -1446,6 +1446,15 @@ def test_licenses_export_builds_real_local_notice_artifact(monkeypatch, tmp_path
     assert "snyk/agent-scan compatible bridge" in names
     assert all(item["mutates_installed_agents"] is False for item in payload["items"])
     assert store.list_records("third_party_component")
+    bridge = next(item for item in payload["items"] if item["id"] == "third_party_snyk_agent_scan_bridge")
+    assert bridge["repository"] == "github.com/snyk/agent-scan"
+    assert bridge["upstream_status"] == "MANUAL_REVIEW_REQUIRED"
+    assert bridge["auto_upgrade_enabled"] is False
+
+    listed = client.get("/api/v1/licenses")
+    assert listed.status_code == 200
+    listed_names = {item["name"].lower() for item in listed.json()["items"]}
+    assert "snyk/agent-scan compatible bridge" in listed_names
 
     downloaded = client.get(payload["download"])
     assert downloaded.status_code == 200
@@ -1456,6 +1465,11 @@ def test_licenses_export_builds_real_local_notice_artifact(monkeypatch, tmp_path
     assert notice.status_code == 200
     assert notice.json()["mutates_installed_agents"] is False
     assert notice.json()["component"]["license"] == "MIT"
+
+    compat = client.get("/api/v1/agent-scan/compat")
+    assert compat.status_code == 200
+    assert compat.json()["upstream_status"] == "MANUAL_REVIEW_REQUIRED"
+    assert compat.json()["auto_upgrade_enabled"] is False
 
 
 def test_diagnostic_scenario_is_readonly_and_persisted(monkeypatch, tmp_path):

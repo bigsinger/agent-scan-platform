@@ -865,6 +865,57 @@ data(){
         }
       ];
     },
+    agentScanLicenseComponent(){
+      return (this.licenses || []).find(item => {
+        const id=String(item.id || '').toLowerCase();
+        const name=String(item.name || '').toLowerCase();
+        return id==='third_party_snyk_agent_scan_bridge' || name.includes('agent-scan compatible bridge') || name.includes('snyk/agent-scan');
+      }) || {};
+    },
+    agentScanOwnershipRows(){
+      const compat=this.agentScanCompat || {};
+      const component=this.agentScanLicenseComponent || {};
+      return [
+        {name:'Repository', value:component.repository || component.source || compat.upstream_repository || '未登记'},
+        {name:'Version', value:compat.version || component.version || '未登记'},
+        {name:'Source', value:compat.source_state || component.source_state || 'LOCAL_BRIDGE_ONLY', mono:true},
+        {name:'License', value:component.license || 'UNKNOWN'},
+        {name:'Vendored', value:compat.vendored_source_present ? '是' : '否，本地桥接'},
+        {name:'本地桥接哈希', value:compat.local_bridge_sha256 || component.hash || '待验证', mono:true}
+      ];
+    },
+    licenseUpdateCheckRows(){
+      const compat=this.agentScanCompat || {};
+      const component=this.agentScanLicenseComponent || {};
+      const selfTest=compat.last_self_test_status || (compat.compatibility && compat.compatibility.status) || 'NOT_RUN';
+      return [
+        {
+          name:'上游新 Commit',
+          status:component.upstream_status || compat.upstream_status || 'MANUAL_REVIEW_REQUIRED',
+          detail:component.source || compat.upstream_repository || '本地清单未声明源码地址'
+        },
+        {
+          name:'自动升级',
+          status:compat.auto_upgrade_enabled || component.auto_upgrade_enabled ? 'ENABLED' : 'DISABLED',
+          detail:compat.auto_upgrade_enabled || component.auto_upgrade_enabled ? '按配置执行' : '禁用'
+        },
+        {
+          name:'兼容测试',
+          status:selfTest,
+          detail:compat.last_self_test_at || compat.last_self_test_artifact_id || '未运行'
+        },
+        {
+          name:'补丁漂移',
+          status:compat.local_bridge_sha256 || component.hash ? 'PINNED' : 'NEEDS_VERIFICATION',
+          detail:compat.local_bridge_sha256 || component.hash || '待验证'
+        },
+        {
+          name:'许可证差异',
+          status:component.license && component.license!=='UNKNOWN' ? 'REVIEW_READY' : 'NEEDS_REVIEW',
+          detail:component.license || 'UNKNOWN'
+        }
+      ];
+    },
     selectedAgentComponents(){
       return (this.agentDetail && this.agentDetail.components) || (this.components || []).filter(c=>this.recordMatchesAgent(c, this.selectedAsset));
     },
@@ -992,6 +1043,9 @@ data(){
       }
       if(this.current==='agent-scan'){
         this.refreshAgentScanCompat({silent:true});
+      }
+      if(this.current==='licenses'){
+        this.refreshLicenseContext({silent:true});
       }
       if(this.current==='quick-scan'){
         this.refreshQuickHistory({silent:true});
@@ -1130,7 +1184,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -1147,12 +1201,12 @@ data(){
       if(raw.includes('P2') || raw.includes('中危') || raw.includes('需关注')) return 'medium';
       if(['ok','safe_mode','idle','disabled'].includes(lower)) return 'low';
       if(s==='已完成'||s==='已记录'||s==='已验证') return 'low';
-      if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS'||s==='OBSERVED'||s==='VERIFIED') return 'low';
+      if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS'||s==='OBSERVED'||s==='VERIFIED'||s==='PINNED'||s==='REVIEW_READY') return 'low';
       if(s==='已发布'||s==='PUBLISHED') return 'low';
       if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED'||s==='READONLY_GENERIC') return 'blue';
       if(s==='等待审批'||s==='部分完成'||s==='误报待复核'||s==='WARN'||s==='NOT_RUN'||s==='未运行'||s==='NO_MATCH'||s==='DRAFT'||s==='草稿') return 'medium';
-      if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE'||s==='REQUIRES_CONFIG'||s==='NEEDS_SELF_TEST'||s==='NOT_ASSERTED'||s==='待验证') return 'medium';
+      if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE'||s==='REQUIRES_CONFIG'||s==='NEEDS_SELF_TEST'||s==='NEEDS_VERIFICATION'||s==='NOT_ASSERTED'||s==='MANUAL_REVIEW_REQUIRED'||s==='待验证') return 'medium';
       if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED'||s==='MISSING'||s==='NOT_FOUND'||s==='MISSING_DOC'||s==='MISSING_API') return 'critical';
       return 'gray';
     },
@@ -2423,9 +2477,27 @@ data(){
       if(list.includes(format)) this.settingsState.report_formats=list.filter(x=>x!==format);
       else this.settingsState.report_formats=list.concat([format]);
     },
+    async refreshLicenseContext(options){
+      const silent=options && options.silent;
+      if(!silent) { this.opsBusy=true; this.apiError=''; }
+      try {
+        const [licensePayload, compatPayload]=await Promise.all([
+          this.apiGet('/api/v1/licenses?page_size=200'),
+          this.apiGet('/api/v1/agent-scan/compat')
+        ]);
+        this.licenses=licensePayload.items || [];
+        this.agentScanCompat=compatPayload || this.agentScanCompat || {};
+        if(!silent) this.toastMsg('第三方清单已刷新：'+(licensePayload.total || this.licenses.length)+' 项');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
     async exportLicenses(){
       try {
         const res=await this.apiGet('/api/v1/licenses/export');
+        if(res.items) this.licenses=res.items;
         this.downloadJson(res, 'agent-scan-platform-notices.json');
         this.toastMsg('许可证清单已导出');
       } catch (err) { this.apiError=this.describeError(err); }

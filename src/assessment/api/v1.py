@@ -529,10 +529,13 @@ def license_inventory(store: Any, state: dict) -> list[dict]:
             "modified": "本仓库实现本地兼容桥接；不复制上游源码，不启用云 API",
             "hash": bridge_hash.get("sha256", ""),
             "source": "https://github.com/snyk/agent-scan",
+            "repository": "github.com/snyk/agent-scan",
             "source_file": "src/assessment/api/v1.py; src/assessment/scanning/*",
             "notice": "仅作为 Apache-2.0 项目兼容参考和 Issue Code 映射；当前交付以本地规则实现为准。",
             "notice_sha256": notice_sha,
             "status": "合规",
+            "upstream_status": "MANUAL_REVIEW_REQUIRED",
+            "auto_upgrade_enabled": False,
             "safe_mode": "local-readonly",
             "mutates_installed_agents": False,
         }
@@ -1776,6 +1779,9 @@ def agent_scan_compat() -> dict:
         "mode": "offline-local",
         "cloud_required": False,
         "cloud_analysis": "optional-disabled",
+        "upstream_repository": "https://github.com/snyk/agent-scan",
+        "upstream_status": "MANUAL_REVIEW_REQUIRED",
+        "auto_upgrade_enabled": False,
         "vendored_source_present": (REPO_ROOT / "third_party" / "snyk_agent_scan").exists(),
         "vendored_source_path": "third_party/snyk_agent_scan",
         "source_state": "LOCAL_BRIDGE_ONLY",
@@ -8488,6 +8494,9 @@ def real_items_for_path(path: str) -> list[dict]:
         return combine_items(get_store().list_records("scanner_plugin"), get_store().list_records("scanner"))
     if path == "/integrations":
         return combine_items(get_store().list_records("integration"), get_store().list_records("integration_config"))
+    if path in {"/licenses", "/third-party"}:
+        store = get_store()
+        return license_inventory(store, store.get_state())
     if path == "/redteam-runs":
         return get_store().list_records("redteam_run")
     if path in {"/backups", "/database/backups"}:
