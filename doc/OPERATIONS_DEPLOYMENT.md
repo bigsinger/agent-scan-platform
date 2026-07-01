@@ -349,6 +349,7 @@ data/
 
 ```powershell
 $backup = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/backup
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($backup.download)" -OutFile sqlite-backup-manifest.json
 ```
 
 备份使用 SQLite Online Backup API，不直接复制运行中的数据库文件。备份文件写入：
@@ -356,6 +357,8 @@ $backup = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/bac
 ```text
 data/backups/app-YYYYMMDDHHMMSS.db
 ```
+
+备份接口会额外生成 `sqlite-backup-manifest` JSON artifact，记录备份 ID、相对路径、大小、SHA-256、恢复演练接口和 `database_file_download_exposed=false` 边界。平台不把 `data/backups/*.db` 当作普通 artifact 暴露下载；企业备份介质同步应由运维侧按文件系统策略执行。
 
 完整性检查：
 

@@ -615,7 +615,30 @@ def test_database_maintenance_endpoints(monkeypatch, tmp_path):
 
     backup = client.post("/api/v1/database/backup")
     assert backup.status_code == 200
-    assert backup.json()["backup"]["sha256"]
+    backup_body = backup.json()
+    assert backup_body["backup"]["sha256"]
+    assert backup_body["manifest"]["schema"] == "agent-security-sqlite-backup-manifest@4.1"
+    assert backup_body["manifest"]["database_file_download_exposed"] is False
+    assert backup_body["backup"]["manifest_artifact_id"] == backup_body["artifact"]["id"]
+    assert backup_body["download"].startswith("/api/v1/artifacts/")
+    backup_manifest = client.get(backup_body["download"])
+    assert backup_manifest.status_code == 200
+    assert "agent-security-sqlite-backup-manifest@4.1" in backup_manifest.text
+    assert '"database_file_download_exposed": false' in backup_manifest.text
+    assert f"/api/v1/backups/{backup_body['backup']['id']}/restore-drill" in backup_manifest.text
+    assert store.get_record("backup_record", backup_body["backup"]["id"])["manifest_artifact_id"] == backup_body["artifact"]["id"]
+
+    sqlite_backup = client.post("/api/v1/sqlite/backup").json()
+    assert sqlite_backup["manifest"]["operation"] == "sqlite.backup"
+    assert sqlite_backup["artifact"]["kind"] == "sqlite-backup-manifest"
+
+    with store.connect() as conn:
+        backup_event = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (backup_body["backup"]["id"],),
+        ).fetchone()
+    assert backup_event["action"] == "post.database.backup"
+    assert json.loads(backup_event["payload_json"])["database_file_download_exposed"] is False
     backups = client.get("/api/v1/backups")
     assert backups.status_code == 200
     assert backups.json()["total"] >= 1

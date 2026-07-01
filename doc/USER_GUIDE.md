@@ -1011,12 +1011,15 @@ Invoke-WebRequest `
 $integrity = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/integrity-check
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($integrity.download)" -OutFile sqlite-integrity-maintenance.json
 $backup = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/backup
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($backup.download)" -OutFile sqlite-backup-manifest.json
 $checkpoint = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sqlite/checkpoint
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($checkpoint.download)" -OutFile sqlite-checkpoint-maintenance.json
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/backups
 $drill = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/backups/$($backup.backup.id)/restore-drill"
 $drill.drill.status
 ```
+
+`sqlite/backup` 和 `database/backup` 使用 SQLite Online Backup API 创建 `data/backups/app-*.db`，并生成 `sqlite-backup-manifest` JSON artifact。清单只包含备份 ID、相对路径、大小、SHA-256、恢复演练接口和安全边界；系统不会把 SQLite 数据库文件作为普通 artifact 暴露下载。
 
 `integrity-check`、`checkpoint`、`vacuum` 会执行真实 SQLite 运维动作，并额外生成 `sqlite-maintenance` JSON artifact，记录操作结果、数据库大小、WAL/checkpoint 状态、表清单、审计事件和本地安全边界。该证据包只涉及本系统 `data/db/app.db` 与 `data/artifacts`，不会读取、启动或修改 Codex/Hermes 等已安装 Agent。
 

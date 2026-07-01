@@ -186,12 +186,12 @@ async def sqlite_status() -> dict:
 
 @router.post("/database/backup")
 async def database_backup() -> dict:
-    return {"ok": True, "backup": get_store().backup_database()}
+    return sqlite_backup_response(get_store(), "database.backup")
 
 
 @router.post("/sqlite/backup")
 async def sqlite_backup() -> dict:
-    return {"ok": True, "backup": get_store().backup_database()}
+    return sqlite_backup_response(get_store(), "sqlite.backup")
 
 
 @router.post("/database/integrity-check")
@@ -228,6 +228,77 @@ async def database_vacuum() -> dict:
 async def sqlite_vacuum() -> dict:
     store = get_store()
     return sqlite_maintenance_response(store, "sqlite.vacuum", "vacuum", store.vacuum())
+
+
+def sqlite_backup_response(store: Any, operation: str) -> dict:
+    backup = store.backup_database()
+    created_at = utc_now()
+    manifest_payload = {
+        "schema": "agent-security-sqlite-backup-manifest@4.1",
+        "operation": operation,
+        "backup": {
+            "id": backup["id"],
+            "relative_path": backup.get("relative_path"),
+            "sha256": backup.get("sha256"),
+            "size": backup.get("size"),
+            "schema_version": backup.get("schema_version"),
+            "created_at": backup.get("created_at"),
+        },
+        "restore_drill": {
+            "method": "POST",
+            "endpoint": f"/api/v1/backups/{backup['id']}/restore-drill",
+            "required_before_customer_acceptance": True,
+        },
+        "safe_mode": "local-maintenance",
+        "mutates_installed_agents": False,
+        "database_file_download_exposed": False,
+        "boundary": "SQLite 备份只通过 SQLite Online Backup 复制本系统 data/db/app.db，并写入备份记录与清单 artifact；不会读取、启动或修改已安装 Agent。",
+        "created_at": created_at,
+    }
+    artifact = store.write_artifact(
+        "sqlite-backup-manifest",
+        json.dumps(manifest_payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"operation": operation, "backup_id": backup["id"], "safe_mode": "local-maintenance"},
+    )
+    backup.update(
+        {
+            "manifest_artifact_id": artifact["id"],
+            "manifest_path": artifact["relative_path"],
+            "manifest_sha256": artifact["sha256"],
+            "manifest_download": f"/api/v1/artifacts/{artifact['id']}/download",
+            "database_file_download_exposed": False,
+        }
+    )
+    updated_backup = store.upsert_record("backup_record", backup, status="VERIFIED")
+    audit_event = store.audit_event(
+        "post." + operation,
+        "backup_record",
+        backup["id"],
+        {
+            "artifact_id": artifact["id"],
+            "backup_sha256": backup.get("sha256"),
+            "backup_size": backup.get("size"),
+            "database_file_download_exposed": False,
+            "mutates_installed_agents": False,
+        },
+    )
+    return {
+        "ok": True,
+        "backup": updated_backup,
+        "manifest": {
+            "schema": manifest_payload["schema"],
+            "operation": operation,
+            "backup_id": backup["id"],
+            "safe_mode": manifest_payload["safe_mode"],
+            "mutates_installed_agents": False,
+            "database_file_download_exposed": False,
+            "created_at": created_at,
+        },
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "audit_event": audit_event,
+    }
 
 
 def sqlite_maintenance_response(store: Any, operation: str, result_key: str, result: dict) -> dict:
