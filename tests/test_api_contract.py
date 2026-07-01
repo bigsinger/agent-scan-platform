@@ -919,6 +919,72 @@ def test_report_evidence_and_risk_closure_actions():
     assert "agent-security-evidence-package@4.1" in package_download.text
 
 
+def test_report_sync_packages_local_report_artifacts(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "report-sync.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    scan = client.post(
+        "/api/v1/quick-scans",
+        json={"mode": "path", "target_path": "tests/fixtures/sample_agent_project", "max_files": 50},
+    ).json()
+    report = client.post("/api/v1/reports", json={"assessment_id": scan["assessment"]["id"], "type": "Standard"}).json()["report"]
+    configured = client.post(
+        "/api/v1/integrations",
+        json={
+            "id": "runtime-platform",
+            "name": "Runtime Platform",
+            "endpoint": "/api/v1/integrations/runtime-platform/events",
+            "direction": "bidirectional",
+            "status": "ACTIVE",
+        },
+    )
+    assert configured.status_code == 200
+
+    response = client.post("/api/v1/integrations/runtime-platform/sync", json={"report_id": report["id"]})
+
+    assert response.status_code == 200
+    payload = response.json()["sync"]
+    assert payload["status"] == "PACKAGED"
+    assert payload["subject_type"] == "report"
+    assert payload["report_id"] == report["id"]
+    assert payload["artifact"]["kind"] == "report-sync-package"
+    assert payload["delivered"] is False
+    assert payload["network_probe"] == "disabled-by-default"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["report"]["last_sync_artifact_id"] == payload["artifact"]["id"]
+    assert store.get_record("report", report["id"])["last_sync_artifact_id"] == payload["artifact"]["id"]
+
+    downloaded = client.get(payload["download"])
+    assert downloaded.status_code == 200
+    package = json.loads(downloaded.text)
+    assert package["schema"] == "agent-security-report-sync-package@4.1"
+    assert package["requested_report_id"] == report["id"]
+    assert package["artifacts"]["html"]["exists"] is True
+    assert package["artifacts"]["html"]["sha256"]
+    assert package["artifacts"]["json"]["exists"] is True
+    assert package["artifacts"]["json"]["sha256"]
+    assert package["delivery"]["delivered"] is False
+    assert package["safe_mode"] == "local-readonly"
+    assert package["mutates_installed_agents"] is False
+
+    event = store.get_record("integration_event", payload["id"])
+    assert event["event_type"] == "report_sync_package"
+    assert event["subject_type"] == "report"
+    assert event["subject_id"] == report["id"]
+    with store.connect() as conn:
+        audit = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (report["id"],),
+        ).fetchone()
+    assert audit["action"] == "post.integrations.report-sync"
+    assert json.loads(audit["payload_json"])["mutates_installed_agents"] is False
+
+    missing = client.post("/api/v1/integrations/runtime-platform/sync", json={"report_id": "missing-report"})
+    assert missing.status_code == 404
+    assert missing.json()["error"]["details"]["mutates_installed_agents"] is False
+
+
 def test_attack_path_policy_drafts_are_review_only_artifacts():
     scan = client.post(
         "/api/v1/quick-scans",

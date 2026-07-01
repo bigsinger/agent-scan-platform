@@ -615,6 +615,19 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 
 报告中心的“章节完整性”和“渲染能力”来自 `GET /api/v1/reports/{report_id}` 的 `preview.readiness`、`preview.rendering` 和 artifact 状态。系统只展示本地已生成 HTML/JSON 制品的真实存在性、大小和模板版本；当前本地版本未配置 PDF 渲染器时会显示 `UNAVAILABLE`，不会伪造 Chromium 或 PDF 可用状态。
 
+报告回写包：
+
+```powershell
+$sync = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync `
+  -Body (@{ report_id = "<report_id>" } | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($sync.sync.download)" -OutFile report-sync-package.json
+```
+
+传入 `report_id` 时，同步接口会生成 `report-sync-package` artifact，记录报告 HTML/JSON artifact 的存在性、大小、`sha256`、报告 readiness 和渲染状态，并把 `integration_event.subject_type` 写为 `report`。该接口仍是本地打包，不访问外部平台、不发送网络请求、不修改已安装 Agent。
+
 报告内容：
 
 - 执行边界。
@@ -1094,7 +1107,8 @@ $integration = Invoke-RestMethod `
   -ContentType "application/json"
 
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync
+$sync = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($sync.sync.download)" -OutFile integration-sync-package.json
 
 $settings = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings
 $settings.settings.mcp_stdio_policy = "per-server-consent"

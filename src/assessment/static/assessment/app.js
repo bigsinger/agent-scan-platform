@@ -32,6 +32,7 @@
     state.skillScanResult = null;
     state.mcpInspection = null;
     state.scheduleLastRun = null;
+    state.reportSyncLastDownload = '';
     state.retestDiff = null;
     state.completenessSummary = {};
     state.executionLog = null;
@@ -101,6 +102,7 @@ data(){
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
     initial.reportPreviewData = initial.reportPreviewData || null;
+    initial.reportSyncLastDownload = '';
     initial.selectedRetest = initial.selectedRetest || ((initial.retests || [])[0]) || {};
     initial.retestDiff = initial.retestDiff || null;
     initial.agentDetail = null;
@@ -1496,8 +1498,13 @@ data(){
       if(!report || !report.id) return;
       this.opsBusy=true; this.apiError='';
       try {
-        await this.apiPost('/api/v1/integrations/runtime-platform/sync', {report_id:report.id});
-        this.toastMsg('报告回写事件已写入本地审计');
+        const res=await this.apiPost('/api/v1/integrations/runtime-platform/sync', {report_id:report.id});
+        if(res.report){
+          this.mergeRecords('reports', [res.report]);
+          this.selectedReport=Object.assign({}, this.selectedReport || {}, res.report);
+        }
+        this.reportSyncLastDownload=res.download || '';
+        this.toastMsg('报告回写包已生成：'+(res.artifact&&res.artifact.id || res.id || 'PACKAGED'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },

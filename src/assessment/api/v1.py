@@ -6660,6 +6660,10 @@ def integration_sync(store: Any, state: dict, integration_id: str, body: dict | 
         }
 
     record = resolve_integration_record(store, state, integration_id) or {"id": integration_id}
+    requested_report_id = str(body.get("report_id") or "").strip()
+    if requested_report_id:
+        return report_integration_sync(store, state, integration_id, record, readiness, requested_report_id, body)
+
     package = build_integration_sync_package(store, state, integration_id, record, body)
     artifact = store.write_artifact(
         "integration-sync-package",
@@ -6712,6 +6716,114 @@ def integration_sync(store: Any, state: dict, integration_id: str, body: dict | 
         status=status,
     )
     store.audit_event("post.integrations.sync", "integration", integration_id, {"status": status, "artifact_id": artifact["id"], "counts": package["counts"]})
+    return result
+
+
+def report_integration_sync(
+    store: Any,
+    state: dict,
+    integration_id: str,
+    record: dict,
+    readiness: dict,
+    report_id: str,
+    body: dict,
+) -> dict:
+    report = store.get_record("report", report_id) or find_item(state.get("reports", []), report_id)
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "REPORT_NOT_FOUND",
+                "message": "指定报告不存在，未生成回写包。",
+                "report_id": report_id,
+                "mutates_installed_agents": False,
+            },
+        )
+
+    package = build_report_sync_package(store, integration_id, record, report, body)
+    artifact = store.write_artifact(
+        "report-sync-package",
+        json.dumps(package, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "integration_id": integration_id,
+            "report_id": report_id,
+            "safe_mode": "local-readonly",
+            "delivered": False,
+        },
+    )
+    status = "PACKAGED"
+    report_update = {
+        **report,
+        "last_sync": package["created_at"],
+        "last_sync_status": status,
+        "last_sync_artifact_id": artifact["id"],
+        "last_sync_download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "sync_delivery": "LOCAL_PACKAGE_ONLY",
+        "updated_at": package["created_at"],
+    }
+    updated_report = store.upsert_record("report", report_update, status=str(report.get("status") or "READY"))
+    merge_state_record(state, "reports", updated_report)
+    updated_integration = update_structured_record(
+        store,
+        state,
+        "integration",
+        "integrations",
+        integration_id,
+        {
+            **record,
+            "last_sync": package["created_at"],
+            "last_sync_status": status,
+            "last_sync_artifact_id": artifact["id"],
+            "last_report_id": report_id,
+            "pending": 1,
+            "status": "本地已打包" if readiness["status"] == "PASS" else "待联调",
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+        },
+    )
+    result = {
+        "id": package["id"],
+        "status": status,
+        "integration_id": integration_id,
+        "report_id": report_id,
+        "subject_type": "report",
+        "subject_id": report_id,
+        "cursor": package["cursor"],
+        "counts": package["counts"],
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "report": updated_report,
+        "record": sanitize_integration_record(updated_integration),
+        "precheck_status": readiness["status"],
+        "delivered": False,
+        "network_probe": "disabled-by-default",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+    store.upsert_record(
+        "integration_event",
+        {
+            **result,
+            "event_type": "report_sync_package",
+            "subject_type": "report",
+            "subject_id": report_id,
+            "created_at": package["created_at"],
+        },
+        status=status,
+    )
+    store.audit_event(
+        "post.integrations.report-sync",
+        "report",
+        report_id,
+        {
+            "integration_id": integration_id,
+            "artifact_id": artifact["id"],
+            "status": status,
+            "delivered": False,
+            "mutates_installed_agents": False,
+        },
+    )
     return result
 
 
@@ -6854,6 +6966,68 @@ def build_integration_sync_package(store: Any, state: dict, integration_id: str,
         },
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
+    }
+
+
+def build_report_sync_package(store: Any, integration_id: str, record: dict, report: dict, body: dict) -> dict:
+    preview = report_preview(report, store)
+    html_state = preview["artifacts"]["html"]
+    json_state = preview["artifacts"]["json"]
+    report_summary = integration_report_summary(report)
+    report_summary.update(
+        {
+            "name": report.get("name"),
+            "template": report.get("template"),
+            "formats": report.get("formats"),
+            "finding_count": report.get("finding_count", 0),
+            "summary": report.get("summary") or preview.get("summary", {}),
+            "download": f"/api/v1/reports/{report.get('id')}/download",
+        }
+    )
+    counts = {
+        "reports": 1,
+        "artifacts": int(bool(html_state.get("exists"))) + int(bool(json_state.get("exists"))),
+        "findings": int(preview.get("counts", {}).get("findings", 0)),
+        "evidence": int(preview.get("counts", {}).get("evidence", 0)),
+    }
+    counts["total"] = 1 + counts["artifacts"] + counts["findings"] + counts["evidence"]
+    return {
+        "schema": "agent-security-report-sync-package@4.1",
+        "id": new_id("rsync"),
+        "integration_id": integration_id,
+        "endpoint": str(record.get("endpoint") or record.get("url") or record.get("callback") or ""),
+        "cursor": new_id("cursor"),
+        "created_at": utc_now(),
+        "requested_report_id": report.get("id"),
+        "requested_by": str(body.get("requested_by") or body.get("operator") or "local-ui"),
+        "counts": counts,
+        "report": report_summary,
+        "artifacts": {
+            "html": report_sync_artifact_summary(html_state),
+            "json": report_sync_artifact_summary(json_state),
+        },
+        "readiness": preview.get("readiness", []),
+        "rendering": preview.get("rendering", {}),
+        "delivery": {
+            "status": "LOCAL_PACKAGE_ONLY",
+            "delivered": False,
+            "network_probe": "disabled-by-default",
+            "reason": "报告回写当前只生成本地可下载包；外部平台投递必须显式配置连接器、凭据和网络授权。",
+        },
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "boundary": "报告回写包只读取本系统已生成报告和 artifact 元数据，并写入本系统 artifact/audit；不会访问外部平台或修改已安装 Agent。",
+    }
+
+
+def report_sync_artifact_summary(state: dict) -> dict:
+    return {
+        "artifact_id": state.get("artifact_id") or "",
+        "relative_path": state.get("relative_path") or "",
+        "exists": bool(state.get("exists")),
+        "size": int(state.get("size") or 0),
+        "sha256": state.get("sha256") or "",
+        "content_type": state.get("content_type") or "",
     }
 
 

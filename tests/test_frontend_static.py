@@ -364,6 +364,10 @@ def test_report_readiness_ui_is_api_backed():
     assert "reportReadinessRows()" in app_js
     assert "reportRenderingStatus()" in app_js
     assert "async refreshReportPreview" in app_js
+    assert "async syncReport" in app_js
+    assert "reportSyncLastDownload" in app_js
+    assert "this.mergeRecords('reports', [res.report])" in app_js
+    assert "报告回写包已生成" in app_js
 
 
 def test_rule_management_ui_uses_real_rule_state():

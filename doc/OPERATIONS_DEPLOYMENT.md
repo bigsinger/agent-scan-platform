@@ -683,7 +683,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/scanners/scanner.loc
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/rules/SECRET-KEY-001/test -Body (@{ sample = "sk-test-value" } | ConvertTo-Json) -ContentType "application/json"
 $integration = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/integrations -Body (@{ id = "runtime-platform"; name = "Runtime Platform"; endpoint = "/api/v1/integrations/runtime-platform/events"; direction = "bidirectional"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync
+$sync = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($sync.sync.download)" -OutFile integration-sync-package.json
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/settings/test
 $settings = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings
 $settings.settings.mcp_stdio_policy = "per-server-consent"
@@ -692,7 +693,18 @@ $export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings/export
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile module-settings.json
 ```
 
-集成测试必须基于已保存的 `integration.endpoint`，未配置时返回 `NOT_CONFIGURED`，不得验收为连接成功。外部 endpoint 默认不发起网络探测；同步接口只生成本地 `integration-sync-package` artifact，`delivered=false`，并写入 `integration_event`，由企业已有 Connector 或人工流程负责外部投递。
+集成测试必须基于已保存的 `integration.endpoint`，未配置时返回 `NOT_CONFIGURED`，不得验收为连接成功。外部 endpoint 默认不发起网络探测；同步接口不做真实外网投递。未传 `report_id` 时只生成本地 `integration-sync-package` artifact，`delivered=false`，并写入 `integration_event`。传入 `report_id` 时生成 `report-sync-package` artifact，包内包含报告 HTML/JSON artifact 的存在性、大小、`sha256`、readiness 和渲染状态，并将 `integration_event.subject_type=report`；由企业已有 Connector 或人工流程负责外部投递。
+
+报告级回写包验收：
+
+```powershell
+$reportSync = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync `
+  -Body (@{ report_id = "<report_id>" } | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($reportSync.sync.download)" -OutFile report-sync-package.json
+```
 
 规则库运维验收：
 
