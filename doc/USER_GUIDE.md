@@ -718,11 +718,26 @@ $discovery = Invoke-RestMethod `
 $hit = $discovery.hits[0]
 $asset = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/import"
 Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/agents/$($asset.agent.id)/probe"
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agents `
+  -Body (@{ name = "手工登记 Agent"; adapter = "Codex"; path = "$env:USERPROFILE\.codex\config.toml" } | ConvertTo-Json) `
+  -ContentType "application/json"
 Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/ignore" `
   -Body (@{ reason = "本地忽略" } | ConvertTo-Json) `
   -ContentType "application/json"
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
 ```
+
+`POST /api/v1/agents` 是手工登记资产，不会探测或修改安装目录；它会写入 `agent_instance`，生成 `manual-agent-registration` artifact，并标记 `probe=待探测`。后续需要点击“探测”或调用 `/agents/{id}/probe` 执行只读重探测。
+
+批量审批会持久化到 `mcp_consent` 与 `consent_request`：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/consents/bulk-decision `
+  -Body (@{ decision = "DENIED"; reason = "本轮任务拒绝全部待审批 stdio MCP" } | ConvertTo-Json) `
+  -ContentType "application/json"
+```
+
+该操作只更新本系统审批记录，不启动、不停止、不修改任何 MCP Server 或已安装 Agent。
 
 ### 查询风险
 

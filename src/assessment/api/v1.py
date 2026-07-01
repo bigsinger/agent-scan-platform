@@ -483,9 +483,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["draft"] = clone_task_as_draft(store, state, task_id, body)
         result["status"] = "DRAFT"
     elif path == "/agents":
-        asset = {"id": new_id("agt"), **body, "probe": "手工创建"}
-        state.setdefault("agentAssets", []).insert(0, asset)
-        result["agent"] = asset
+        result["agent"] = create_manual_agent_asset(store, state, body)
     elif path.startswith("/agents/") and path.endswith("/probe"):
         agent_id = path.split("/")[-2]
         result.update(probe_agent_asset(store, state, agent_id, body))
@@ -517,11 +515,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
             record["status"] = "已拒绝" if decision == "DENIED" else decision
             result["consent"] = store.upsert_record("consent_request", record, status=str(record["status"]))
     elif path == "/consents/bulk-decision":
-        decision = body.get("decision", "DENIED")
-        for consent in state.get("consents", []):
-            if consent.get("status") == "待审批":
-                consent["status"] = "已拒绝" if decision == "DENIED" else "本任务允许"
-        result["updated"] = True
+        result.update(bulk_decide_consents(store, state, body))
     elif path.startswith("/findings/") and path.endswith("/accept"):
         finding_id = path.split("/")[-2]
         result["finding"] = update_finding_status(store, state, finding_id, "已接受风险", body)
@@ -4300,6 +4294,73 @@ def probe_agent_asset(store: Any, state: dict, agent_id: str, body: dict) -> dic
     return {"status": updates["probe"], "probe": updates, "agent": updated, "discovery_run": discovery.run}
 
 
+def create_manual_agent_asset(store: Any, state: dict, body: dict) -> dict:
+    created_at = utc_now()
+    agent_id = str(body.get("id") or body.get("agent_id") or new_id("agt"))
+    raw_path = str(body.get("path") or body.get("target_path") or "").strip()
+    safe_path = safe_agent_asset_path(raw_path)
+    adapter = str(body.get("adapter") or body.get("type") or "Manual").strip() or "Manual"
+    agent = {
+        "id": agent_id,
+        "name": str(body.get("name") or f"{adapter} · 手工登记"),
+        "adapter": adapter,
+        "coverage": str(body.get("coverage") or "手工登记"),
+        "path": safe_path,
+        "path_hash": stable_hash(raw_path, 24) if raw_path else "",
+        "configs": coerce_int(body.get("configs"), 0),
+        "mcp": coerce_int(body.get("mcp"), 0),
+        "skills": coerce_int(body.get("skills"), 0),
+        "score": coerce_int(body.get("score"), 0),
+        "p0": coerce_int(body.get("p0"), 0),
+        "p1": coerce_int(body.get("p1"), 0),
+        "probe": "待探测",
+        "caps": body.get("caps") if isinstance(body.get("caps"), list) else ["Manual Registration", "Local Probe"],
+        "install_status": str(body.get("install_status") or "手工登记"),
+        "source": "manual-registration",
+        "status": str(body.get("status") or "ACTIVE"),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+    updated = store.upsert_record("agent_instance", agent, status=str(agent["status"]))
+    artifact_payload = {
+        "schema": "agent-security-manual-agent-registration@4.1",
+        "agent": sanitize_agent(updated),
+        "source": "manual-registration",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "boundary": "手工登记只写本系统 SQLite 和 artifact；不会探测、启动或修改已安装 Agent。后续需要通过 probe 执行只读重探测。",
+        "created_at": created_at,
+    }
+    artifact = store.write_artifact(
+        "manual-agent-registration",
+        json.dumps(artifact_payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"agent_id": updated["id"], "safe_mode": "local-readonly"},
+    )
+    updated["registration_artifact_id"] = artifact["id"]
+    updated["registration_artifact_path"] = artifact["relative_path"]
+    updated = store.upsert_record("agent_instance", updated, status=str(updated.get("status") or "ACTIVE"))
+    merge_state_record(state, "agentAssets", updated)
+    state["selectedAsset"] = updated
+    store.audit_event("post.agents.manual", "agent_instance", updated["id"], {"artifact_id": artifact["id"], "safe_mode": "local-readonly", "mutates_installed_agents": False})
+    return updated
+
+
+def safe_agent_asset_path(raw_path: str) -> str:
+    if not raw_path:
+        return ""
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", raw_path):
+        parsed = urlparse(raw_path)
+        host = parsed.hostname or "remote"
+        return f"{parsed.scheme}://{host}{parsed.path or ''}"
+    try:
+        return safe_display_path(Path(raw_path).expanduser())
+    except (OSError, RuntimeError, ValueError):
+        return redact_text(raw_path, max_len=300)
+
+
 def agent_from_discovery_hit(hit: dict, body: dict) -> dict:
     kind = str(hit.get("type") or "Config")
     product = str(body.get("adapter") or hit.get("agent") or "Generic")
@@ -4339,6 +4400,45 @@ def update_consent(store: Any, state: dict, consent_id: str, status: str, body: 
     store.upsert_record("consent_request", updated, status=status)
     merge_state_record(state, "consents", updated)
     return updated
+
+
+def bulk_decide_consents(store: Any, state: dict, body: dict) -> dict:
+    decision = str(body.get("decision") or "DENIED")
+    status = "已拒绝" if decision.upper() in {"DENIED", "DECLINED", "拒绝"} else "本任务允许"
+    reason = str(body.get("reason") or "bulk decision")
+    records = combine_items(
+        combine_items(store.list_records("mcp_consent", limit=2000), store.list_records("consent_request", limit=2000)),
+        state.get("consents", []),
+    )
+    pending_statuses = {"待审批", "PENDING", "OPEN", "WAITING", "WAITING_CONSENT"}
+    targets = [
+        record
+        for record in records
+        if str(record.get("status") or "待审批") in pending_statuses
+    ]
+    updated_records: list[dict] = []
+    for record in targets:
+        consent_id = str(record.get("id") or record.get("server") or new_id("consent"))
+        record["id"] = consent_id
+        record.update({"status": status, "decision": status, "decision_reason": reason, "decided_at": utc_now(), "safe_mode": "local-readonly", "mutates_installed_agents": False})
+        updated = store.upsert_record("mcp_consent", record, status=status)
+        store.upsert_record("consent_request", updated, status=status)
+        merge_state_record(state, "consents", updated)
+        updated_records.append(updated)
+    store.audit_event(
+        "post.consents.bulk_decision",
+        "mcp_consent",
+        "bulk",
+        {"decision": decision, "status": status, "updated": len(updated_records), "safe_mode": "local-readonly", "mutates_installed_agents": False},
+    )
+    return {
+        "status": "UPDATED" if updated_records else "NO_PENDING_CONSENTS",
+        "updated": len(updated_records),
+        "decision": status,
+        "items": updated_records,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
 
 
 def update_task_state(store: Any, state: dict, task_id: str, status: str, state_code: str) -> dict:

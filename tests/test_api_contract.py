@@ -1127,6 +1127,43 @@ def test_discovery_hit_asset_actions_are_persisted():
     assert exported.json()["counts"]["hits"] >= 1
 
 
+def test_manual_agent_and_bulk_consent_actions_are_persisted(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "assets-consents.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    created = client.post(
+        "/api/v1/agents",
+        json={"name": "Manual Codex Review", "adapter": "Codex", "path": "C:/Users/example/.codex/config.toml"},
+    )
+
+    assert created.status_code == 200
+    agent = created.json()["agent"]
+    assert agent["source"] == "manual-registration"
+    assert agent["safe_mode"] == "local-readonly"
+    assert agent["mutates_installed_agents"] is False
+    assert agent["probe"] == "待探测"
+    assert store.get_record("agent_instance", agent["id"]) is not None
+    artifact = store.get_record("artifact", agent["registration_artifact_id"])
+    assert artifact is not None
+    assert artifact["kind"] == "manual-agent-registration"
+
+    store.upsert_record(
+        "mcp_consent",
+        {"id": "consent_contract", "server": "danger-mcp", "status": "待审批", "command": "node server.js"},
+        status="PENDING",
+    )
+    decided = client.post("/api/v1/consents/bulk-decision", json={"decision": "DENIED", "reason": "contract test"})
+
+    assert decided.status_code == 200
+    body = decided.json()
+    assert body["status"] == "UPDATED"
+    assert body["updated"] == 1
+    assert body["mutates_installed_agents"] is False
+    assert store.get_record("mcp_consent", "consent_contract")["status"] == "已拒绝"
+    assert store.get_record("consent_request", "consent_contract")["decision_reason"] == "contract test"
+
+
 def test_task_lifecycle_actions_are_persisted():
     draft = client.post(
         "/api/v1/assessments/drafts",
