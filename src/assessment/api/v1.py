@@ -3731,7 +3731,23 @@ def adapter_product_specific_check(canonical: str, installed_hits: list[dict], p
 
 
 def sanitize_adapter_agents(agents: list[dict]) -> list[dict]:
-    allowed = {"id", "name", "adapter", "coverage", "path", "configs", "mcp", "skills", "probe", "version", "install_status", "status"}
+    allowed = {
+        "id",
+        "name",
+        "adapter",
+        "coverage",
+        "path",
+        "configs",
+        "mcp",
+        "skills",
+        "probe",
+        "version",
+        "probe_method",
+        "probe_source",
+        "command_started",
+        "install_status",
+        "status",
+    }
     result = []
     for agent in agents[:12]:
         result.append({key: agent.get(key) for key in allowed if key in agent})
@@ -4891,7 +4907,28 @@ def dedupe_relations(relations: list[dict]) -> list[dict]:
 
 
 def sanitize_agent(agent: dict) -> dict:
-    allowed = {"id", "name", "adapter", "coverage", "path", "configs", "mcp", "skills", "score", "p0", "p1", "probe", "version", "install_status", "status", "safe_mode", "mutates_installed_agents"}
+    allowed = {
+        "id",
+        "name",
+        "adapter",
+        "coverage",
+        "path",
+        "configs",
+        "mcp",
+        "skills",
+        "score",
+        "p0",
+        "p1",
+        "probe",
+        "version",
+        "probe_method",
+        "probe_source",
+        "command_started",
+        "install_status",
+        "status",
+        "safe_mode",
+        "mutates_installed_agents",
+    }
     return {key: value for key, value in agent.items() if key in allowed}
 
 

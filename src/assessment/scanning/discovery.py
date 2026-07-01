@@ -300,6 +300,9 @@ class DiscoveryEngine:
             installed_hits = [h for h in hits if h.get("type") == "Agent"]
             version = next((h.get("version") for h in installed_hits if h.get("version")), "")
             install_path = next((h.get("path") for h in installed_hits if h.get("path")), hits[0]["path"])
+            probe_source = next((h.get("probe_source") for h in installed_hits if h.get("probe_source")), "")
+            probe_method = next((h.get("probe_method") for h in installed_hits if h.get("probe_method")), "config-path")
+            command_started = any(bool(h.get("command_started")) for h in installed_hits)
             result.agents.append(
                 {
                     "id": "agt_" + stable_hash(product + "".join(h["path_hash"] for h in hits)),
@@ -316,6 +319,9 @@ class DiscoveryEngine:
                     "probe": "正常",
                     "caps": ["Discovery", "MCP", "Skill", "Local Rules"],
                     "version": version,
+                    "probe_source": probe_source,
+                    "probe_method": probe_method,
+                    "command_started": command_started,
                     "install_status": "已安装" if installed_hits else "配置命中",
                     "status": "ACTIVE",
                     "created_at": utc_now(),
@@ -333,18 +339,34 @@ class DiscoveryEngine:
                 path,
                 version=parse_first_version_line(hermes.get("stdout", "")),
                 source="hermes --version",
-                details={"python": parse_line_value(hermes.get("stdout", ""), "Python")},
+                details={
+                    "python": parse_line_value(hermes.get("stdout", ""), "Python"),
+                    "openai_sdk": parse_line_value(hermes.get("stdout", ""), "OpenAI SDK"),
+                    "update": parse_line_value(hermes.get("stdout", ""), "Update available"),
+                    "probe_method": "version-command",
+                    "command_started": True,
+                    "executable": display_installed_path(Path(str(hermes.get("executable") or "hermes"))),
+                    "returncode": hermes.get("returncode", 0),
+                },
             )
 
         codex_path = first_existing_codex_path()
         if codex_path:
+            codex_version = parse_codex_package_version(codex_path)
             self._add_agent_probe(
                 result,
                 "Codex",
                 codex_path,
-                version=parse_codex_package_version(codex_path),
+                version=codex_version,
                 source="WindowsApps package",
-                details={"file": "Codex.exe"},
+                details={
+                    "file": codex_path.name,
+                    "probe_method": "package-metadata",
+                    "command_started": False,
+                    "executable": display_installed_path(codex_path),
+                    "package_version": codex_version,
+                    "note": "Codex WindowsApps executable is not required to run for discovery.",
+                },
             )
 
         for product, command in [("Claude Code", "claude"), ("OpenClaw", "openclaw"), ("Gemini", "gemini")]:
@@ -394,6 +416,10 @@ class DiscoveryEngine:
             "status": "已安装",
             "version": version,
             "details": details or {},
+            "probe_source": source,
+            "probe_method": str((details or {}).get("probe_method") or ("version-command" if "--version" in source else "package-metadata")),
+            "command_started": bool((details or {}).get("command_started") or "--version" in source),
+            "mutates_installed_agents": False,
             "created_at": utc_now(),
         }
         result.hits.append(hit)
@@ -407,6 +433,8 @@ class DiscoveryEngine:
                 "risk": "待扫描",
                 "riskClass": "low",
                 "version": version,
+                "probe_method": hit["probe_method"],
+                "command_started": hit["command_started"],
             }
         )
 
@@ -497,7 +525,7 @@ def probe_command_version(product: str, command: str, args: list[str], timeout: 
     output = (completed.stdout or "").strip()
     if completed.returncode != 0 and not output:
         return None
-    return {"product": product, "executable": executable, "stdout": output}
+    return {"product": product, "executable": executable, "stdout": output, "returncode": completed.returncode}
 
 
 def first_existing_codex_path() -> Path | None:

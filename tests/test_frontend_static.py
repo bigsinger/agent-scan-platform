@@ -262,6 +262,11 @@ def test_discovery_run_ui_exposes_current_evidence_download():
     assert "include_mcp:!!this.form.discoveryMcp" in app_js
     assert "changes_only:!!this.form.discoveryChangesOnly" in app_js
     assert "x.change_status||'UNKNOWN'" in html
+    assert "版本 / 方法" in html
+    assert "x.version||'-'" in html
+    assert "x.probe_method||'-'" in html
+    assert "a.probe_source||a.install_status" in html
+    assert "selectedAsset.probe_method||'-'" in html
 
 
 def test_sandbox_policy_ui_has_editable_controls_and_runtime_decisions():

@@ -848,6 +848,7 @@ $discovery.mutates_installed_agents
 $discovery.stdio_mcp_started
 $discovery.discovery_options
 $discovery.change_summary
+$discovery.agents | Select-Object adapter,version,probe_method,command_started,probe_source
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($discovery.download)" -OutFile ".\discovery-run-evidence.json"
 $hit = $discovery.hits[0]
 $asset = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/import"
@@ -857,6 +858,8 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
 ```
 
 `$discovery.download` 指向本次发现证据包，schema 为 `agent-security-discovery-run@4.1`。验收时应检查 `safe_mode=local-readonly`、`mutates_installed_agents=false`、`stdio_mcp_started=false`、命中统计、权限跳过、`discovery_options`、`change_summary` 和 `boundary` 说明；这能证明发现动作只写本系统 SQLite 与 `data/artifacts`。
+
+版本探测验收：Hermes 应记录 `probe_method=version-command`、`probe_source=hermes --version`；Codex 应记录 `probe_method=package-metadata` 或等价只读来源，`command_started=false`。WindowsApps 下 Codex exe 不可直接执行时不得把它判定为失败，应通过 PATH 别名或包目录名解析版本。
 
 过滤和变化视图验收：
 

@@ -247,8 +247,16 @@ def test_discovery_probes_installed_hermes_and_codex(monkeypatch, tmp_path):
 
     agents = {agent["adapter"]: agent for agent in result.agents}
     assert agents["Hermes"]["version"] == "Hermes Agent v0.17.0"
+    assert agents["Hermes"]["probe_method"] == "version-command"
+    assert agents["Hermes"]["command_started"] is True
     assert agents["Codex"]["version"] == "26.616.10790.0"
+    assert agents["Codex"]["probe_method"] == "package-metadata"
+    assert agents["Codex"]["command_started"] is False
     assert agents["Codex"]["install_status"] == "已安装"
+    hits = {hit["agent"]: hit for hit in result.hits if hit.get("type") == "Agent"}
+    assert hits["Hermes"]["details"]["python"] == "3.11.15"
+    assert hits["Codex"]["details"]["package_version"] == "26.616.10790.0"
+    assert hits["Codex"]["mutates_installed_agents"] is False
 
 
 def test_passive_guard_baselines_and_detects_hash_changes(tmp_path):

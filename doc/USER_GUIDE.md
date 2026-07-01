@@ -188,6 +188,7 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 - 发现 Skill 根目录。
 - 导入轻量 Agent 资产。
 - 按 Agent 配置、Skills、MCP 配置和“仅显示变化”过滤本次发现视图。
+- 展示本机 Agent 版本和探测方法：Hermes 通过 `hermes --version` 只读读取版本；Codex 通过 WindowsApps 包名或 PATH 别名解析版本，不要求执行 Codex 交互程序。
 
 安全边界：
 
@@ -204,6 +205,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 4. “MCP 启动审批”：所有 stdio Server 默认待审批。
 
 发现范围复选框会进入 `POST /api/v1/discovery-runs`：`include_agent_configs`、`include_skills`、`include_mcp` 和 `changes_only`。变化状态由本系统上一轮 `discovery_hit.path_hash + sha256` 对比得出：`NEW` 表示新路径，`CHANGED` 表示同一路径内容变化，`UNCHANGED` 表示未变化。勾选“仅显示变化”只影响本次返回视图和证据包，不删除 SQLite 中已有发现记录。
+
+发现命中和 Agent 资产中的“版本 / 方法”用于区分命令探测和只读解析。`command_started=false` 表示只从包名、别名或配置路径推断，适用于 WindowsApps 下无法直接执行的 Codex；`command_started=true` 只用于类似 `hermes --version` 这种短命令版本探测，不启动 stdio MCP 或交互式 Agent 会话。
 
 发现命中支持真实状态操作：
 
