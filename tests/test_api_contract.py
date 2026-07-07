@@ -2217,6 +2217,24 @@ def test_capability_management_actions_are_persisted():
     assert due_event["action"] == "post.schedules.run-due"
     assert json.loads(due_event["payload_json"])["mutates_installed_agents"] is False
 
+    schedule_export = client.get("/api/v1/schedules/export")
+    assert schedule_export.status_code == 200
+    export_body = schedule_export.json()
+    assert export_body["schema"] == "agent-security-schedule-operations-export@4.1"
+    assert export_body["counts"]["schedules"] >= 3
+    assert export_body["counts"]["schedule_runs"] >= 2
+    assert export_body["safe_mode"] == "local-readonly"
+    assert export_body["mutates_installed_agents"] is False
+    assert export_body["agent_runtime_started"] is False
+    assert export_body["stdio_mcp_started"] is False
+    export_download = client.get(export_body["download"])
+    assert export_download.status_code == 200
+    export_package = export_download.json()
+    assert export_package["schema"] == "agent-security-schedule-operations-export@4.1"
+    assert export_package["mutates_installed_agents"] is False
+    assert export_package["stdio_mcp_started"] is False
+    assert any(item["id"] == schedule["id"] for item in export_package["schedules"])
+
     unsafe_schedule = client.post(
         "/api/v1/schedules",
         json={"name": "Bad Schedule", "type": "本机发现", "target_path": "Z:/definitely/not/here", "trigger": "bad"},

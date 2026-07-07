@@ -180,6 +180,8 @@ POST /api/v1/scanners
 GET /api/v1/schedules
 POST /api/v1/schedules
 POST /api/v1/schedules/{id}/run-now
+POST /api/v1/schedules/run-due
+GET /api/v1/schedules/export
 GET /api/v1/integrations
 POST /api/v1/integrations/{id}/test
 POST /api/v1/integrations/{id}/sync
@@ -256,7 +258,7 @@ PAGE_API_MAP = {
     "P26": ["GET /api/v1/retests", "POST /api/v1/retests", "GET /api/v1/retests/{id}/diff"],
     "P27": ["GET /api/v1/rules", "POST /api/v1/rules", "POST /api/v1/rules/{id}/test"],
     "P28": ["GET /api/v1/scanners", "POST /api/v1/scanners", "POST /api/v1/scanners/{id}/self-test"],
-    "P29": ["GET /api/v1/schedules", "POST /api/v1/schedules", "POST /api/v1/schedules/{id}/run-now"],
+    "P29": ["GET /api/v1/schedules", "POST /api/v1/schedules", "POST /api/v1/schedules/{id}/run-now", "POST /api/v1/schedules/run-due", "GET /api/v1/schedules/export"],
     "P30": ["GET /api/v1/integrations", "POST /api/v1/integrations/{id}/test", "POST /api/v1/integrations/{id}/sync"],
     "P31": ["GET /api/v1/settings", "PUT /api/v1/settings", "POST /api/v1/settings/test", "GET /api/v1/settings/export", "POST /api/v1/settings/import"],
     "P32": ["GET /api/v1/sqlite/status", "POST /api/v1/sqlite/backup", "POST /api/v1/backups/{id}/restore-drill", "POST /api/v1/sqlite/vacuum"],

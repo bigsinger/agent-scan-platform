@@ -89,6 +89,8 @@
 - `GET /api/v1/schedules`
 - `POST /api/v1/schedules`
 - `POST /api/v1/schedules/{id}/run-now`
+- `POST /api/v1/schedules/run-due`
+- `GET /api/v1/schedules/export`
 - `GET /api/v1/integrations`
 - `POST /api/v1/integrations/{id}/test`
 - `POST /api/v1/integrations/{id}/sync`

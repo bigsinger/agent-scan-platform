@@ -817,11 +817,29 @@ def test_schedule_due_runner_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "@click=\"runDueSchedules\"" in html
+    assert "@click=\"refreshSchedules()\"" in html
+    assert "@click=\"exportSchedules\"" in html
+    assert "@click=\"downloadScheduleLastRun\"" in html
+    assert "@click=\"downloadScheduleExport\"" in html
     assert "执行到期计划" in html
+    assert "导出调度证据" in html
     assert "scheduleDueRun" in html
+    assert "scheduleExport" in html
+    assert "scheduleLastRunDownload" in app_js
+    assert "scheduleExportDownload" in app_js
     assert "到期批次：{{scheduleDueRun.counts&&scheduleDueRun.counts.executed}}" in html
+    assert "下载 run-now 证据" in html
+    assert "下载调度证据" in html
+    assert "async refreshSchedules" in app_js
+    assert "async exportSchedules" in app_js
+    assert "downloadScheduleLastRun()" in app_js
+    assert "downloadScheduleExport()" in app_js
     assert "async runDueSchedules" in app_js
+    assert "/api/v1/schedules?page_size=200" in app_js
+    assert "/api/v1/schedules/export" in app_js
     assert "/api/v1/schedules/run-due" in app_js
+    assert "if(key==='schedules') this.refreshSchedules({silent:true})" in app_js
+    assert "if(this.current==='schedules')" in app_js
     assert "到期计划执行完成" in app_js
     assert "max_runs:10" in app_js
 

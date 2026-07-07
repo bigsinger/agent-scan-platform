@@ -884,6 +884,8 @@ async def generic_get(resource: str, request: Request) -> dict:
         return export_sandbox_policy(get_store(), state)
     if path == "/sandbox-policy":
         return sandbox_policy_response(get_store(), state)
+    if path == "/schedules/export":
+        return export_schedule_operations(get_store(), state)
     if path == "/settings/export":
         return export_settings(get_store(), state)
     if path == "/settings":
@@ -10161,6 +10163,92 @@ def redacted_schedule_payload(schedule: dict) -> dict:
     payload["safe_mode"] = "local-readonly"
     payload["mutates_installed_agents"] = False
     return payload
+
+
+def export_schedule_operations(store: Any, state: dict) -> dict:
+    schedules = [redacted_schedule_payload(item) for item in store.list_records("schedule", limit=1000)]
+    tasks = [
+        {
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "schedule_id": item.get("schedule_id"),
+            "schedule_type": item.get("schedule_type"),
+            "status": item.get("status"),
+            "state_code": item.get("state_code"),
+            "stage": item.get("stage"),
+            "created_at": item.get("created_at"),
+            "started_at": item.get("started_at"),
+            "finished_at": item.get("finished_at"),
+            "artifact_id": item.get("artifact_id"),
+            "download": item.get("download"),
+            "safe_mode": item.get("safe_mode") or "local-readonly",
+            "mutates_installed_agents": item.get("mutates_installed_agents") is True,
+        }
+        for item in store.list_records("task", limit=1000)
+        if item.get("schedule_id")
+    ]
+    artifacts = [
+        {
+            "id": item.get("id"),
+            "kind": item.get("kind"),
+            "relative_path": item.get("relative_path"),
+            "size": item.get("size"),
+            "sha256": item.get("sha256"),
+            "created_at": item.get("created_at"),
+        }
+        for item in store.list_records("artifact", limit=1000)
+        if str(item.get("kind") or "").startswith("schedule") or str(item.get("kind") or "") == "retention-dry-run"
+    ]
+    payload = {
+        "schema": "agent-security-schedule-operations-export@4.1",
+        "created_at": utc_now(),
+        "counts": {
+            "schedules": len(schedules),
+            "active": len([item for item in schedules if item.get("status") == "ACTIVE"]),
+            "paused": len([item for item in schedules if item.get("status") == "PAUSED"]),
+            "disabled": len([item for item in schedules if item.get("status") == "DISABLED"]),
+            "schedule_runs": len(tasks),
+            "artifacts": len(artifacts),
+        },
+        "schedules": schedules,
+        "schedule_runs": tasks,
+        "artifacts": artifacts,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "boundary": "调度导出只读取本系统 SQLite schedule/task/artifact 记录并生成本地 JSON 证据；不注册系统服务、不启动或修改已安装 Agent。",
+    }
+    artifact = store.write_artifact(
+        "schedule-operations-export",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"safe_mode": "local-readonly", "schedules": len(schedules), "schedule_runs": len(tasks)},
+    )
+    store.audit_event(
+        "get.schedules.export",
+        "artifact",
+        artifact["id"],
+        {
+            "counts": payload["counts"],
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+        },
+    )
+    return {
+        "schema": payload["schema"],
+        "counts": payload["counts"],
+        "items": schedules,
+        "schedule_runs": tasks,
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+    }
 
 
 def integration_test(store: Any, state: dict, integration_id: str) -> dict:

@@ -65,7 +65,10 @@
     state.toolDetailSimilar = [];
     state.toolDetailFlows = [];
     state.scheduleLastRun = null;
+    state.scheduleLastRunDownload = '';
     state.scheduleDueRun = null;
+    state.scheduleExport = null;
+    state.scheduleExportDownload = '';
     state.integrationSyncResult = null;
     state.integrationSyncLastDownload = '';
     state.reportSyncLastDownload = '';
@@ -171,7 +174,10 @@ data(){
     initial.policyDraftPreflight = null;
     initial.scheduleDraft = Object.assign({name:'本机变化扫描', type:'变化扫描', target:'已登记配置快照', target_path:'', trigger:'0 2 * * *', misfire:'跳过', status:'ACTIVE', profile:'quick-experience', max_backlog:1, max_files:100}, initial.scheduleDraft || {});
     initial.scheduleLastRun = null;
+    initial.scheduleLastRunDownload = '';
     initial.scheduleDueRun = null;
+    initial.scheduleExport = null;
+    initial.scheduleExportDownload = '';
     initial.integrationSyncResult = null;
     initial.integrationSyncLastDownload = '';
     initial.apiDebugOpenapi = null;
@@ -1345,6 +1351,9 @@ data(){
       if(this.current==='platform-embed'){
         this.refreshPlatformEmbedContext({silent:true});
       }
+      if(this.current==='schedules'){
+        this.refreshSchedules({silent:true});
+      }
     },
     async loadBootstrap(){
       try {
@@ -1477,7 +1486,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});if(key==='case-detail') this.loadRedteamCaseDetail(this.selectedCase, {silent:true});if(key==='report-preview') this.refreshReportPreview(this.selectedReport, {silent:true});if(key==='profile-detail') this.loadProfileDetail(this.selectedProfile, {silent:true});if(key==='rule-detail') this.loadRuleDetail(this.selectedRule, {silent:true});if(key==='scanner-detail') this.loadScannerDetail(this.selectedScanner, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='agent-scan-issues') this.refreshAgentScanIssueMappings({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});if(key==='case-detail') this.loadRedteamCaseDetail(this.selectedCase, {silent:true});if(key==='report-preview') this.refreshReportPreview(this.selectedReport, {silent:true});if(key==='profile-detail') this.loadProfileDetail(this.selectedProfile, {silent:true});if(key==='rule-detail') this.loadRuleDetail(this.selectedRule, {silent:true});if(key==='scanner-detail') this.loadScannerDetail(this.selectedScanner, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='agent-scan-issues') this.refreshAgentScanIssueMappings({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='schedules') this.refreshSchedules({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -2994,6 +3003,37 @@ data(){
     downloadSandboxTest(){
       if(this.sandboxTestResult && this.sandboxTestResult.download) window.open(this.sandboxTestResult.download, '_blank', 'noopener');
     },
+    async refreshSchedules(options){
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/schedules?page_size=200');
+        this.schedules=res.items || [];
+        if(!silent) this.toastMsg('周期计划已刷新：'+(res.total || this.schedules.length)+' 条');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async exportSchedules(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/schedules/export');
+        this.scheduleExport=res || null;
+        this.scheduleExportDownload=res.download || '';
+        if(res.items) this.schedules=res.items;
+        if(this.scheduleExportDownload) window.open(this.scheduleExportDownload, '_blank', 'noopener');
+        this.toastMsg('调度证据已导出：'+((res.counts&&res.counts.schedules)||0)+' 个计划');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    downloadScheduleExport(){
+      if(this.scheduleExportDownload) window.open(this.scheduleExportDownload, '_blank', 'noopener');
+    },
+    downloadScheduleLastRun(){
+      if(this.scheduleLastRunDownload) window.open(this.scheduleLastRunDownload, '_blank', 'noopener');
+    },
     async runScheduleNow(schedule){
       if(!schedule || !schedule.id) return;
       this.opsBusy=true; this.apiError='';
@@ -3004,6 +3044,8 @@ data(){
         if(res.result && res.result.backup_id){ this.mergeRecords('backupRecords', [{id:res.result.backup_id, relative_path:res.result.relative_path, sha256:res.result.sha256, size:res.result.size, status:'VERIFIED'}]); }
         if(res.result && res.result.assessment_id){ await this.loadBootstrap(); }
         this.scheduleLastRun=res;
+        this.scheduleLastRunDownload=(res.run&&res.run.download) || (res.result&&res.result.download) || (res.artifact&&res.artifact.id?'/api/v1/artifacts/'+res.artifact.id+'/download':'');
+        await this.refreshSchedules({silent:true});
         this.toastMsg('计划立即执行完成：'+(res.result&&res.result.action || 'run-now')+' · '+(res.run&&res.run.state_code || res.run&&res.run.status));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -3016,7 +3058,7 @@ data(){
         for(const item of res.runs || []){
           if(item.run_id){ this.mergeRecords('tasks', [{id:item.run_id, schedule_id:item.schedule_id, name:'到期计划执行 · '+(item.schedule_name||''), state_code:item.state_code, status:item.state_code, safe_mode:'local-readonly', mutates_installed_agents:false}]); }
         }
-        await this.loadBootstrap();
+        await this.refreshSchedules({silent:true});
         this.toastMsg('到期计划执行完成：'+((res.counts&&res.counts.executed)||0)+' / '+((res.counts&&res.counts.due)||0));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -3138,6 +3180,7 @@ data(){
         const payload=Object.assign({}, this.scheduleDraft || {});
         const res=await this.apiPost('/api/v1/schedules', payload);
         if(res.schedule){ this.mergeRecords('schedules', [res.schedule]); }
+        await this.refreshSchedules({silent:true});
         this.toastMsg('计划已保存：'+(res.schedule&&res.schedule.id));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -3150,6 +3193,7 @@ data(){
         const res=await this.apiPatch('/api/v1/schedules/'+encodeURIComponent(schedule.id), {status:next});
         if(res.schedule){ this.mergeRecords('schedules', [res.schedule]); }
         schedule.status=next;
+        await this.refreshSchedules({silent:true});
         this.toastMsg('计划状态已更新：'+next);
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }

@@ -1335,11 +1335,16 @@ $backup = Invoke-RestMethod `
   -ContentType "application/json"
 
 Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($backup.schedule.id)/run-now"
+
+$export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/schedules/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile schedule-operations-export.json
 ```
 
 `run-now` 当前支持五类本地动作：本机发现、变化扫描（Guard）、全量测评、SQLite 备份、数据清理 dry-run。所有计划运行都会写入 `task` 记录和 `schedule-run` JSON artifact；数据清理只生成候选清单，不删除 artifact、报告或证据。
 
 `schedules/run-due` 会扫描本系统 SQLite 中 `status=ACTIVE` 且 `next_run_at<=now` 的计划，最多执行 `max_runs` 条，并生成 `schedule-due-run` 批次证据。该接口适合由页面按钮、PowerShell 或 Windows 任务计划器周期调用；它不注册系统服务、不启动或修改 Codex/Hermes/MCP，也不会删除文件。
+
+周期扫描页进入时会读取 `/api/v1/schedules?page_size=200`，页面“刷新计划”只刷新调度列表，“导出调度证据”调用 `/api/v1/schedules/export` 并下载 `schedule-operations-export` artifact。该导出只读取本系统 `schedule`、调度 `task` 和调度 artifact 摘要，不注册系统服务、不启动 Agent/MCP、不修改已安装 Agent。
 
 集成与设置：
 

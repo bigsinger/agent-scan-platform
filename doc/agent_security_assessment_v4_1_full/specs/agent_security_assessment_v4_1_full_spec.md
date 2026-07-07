@@ -4592,6 +4592,8 @@ AI 编码代理实现本页时不得：
 - `GET /api/v1/schedules`
 - `POST /api/v1/schedules`
 - `POST /api/v1/schedules/{id}/run-now`
+- `POST /api/v1/schedules/run-due`
+- `GET /api/v1/schedules/export`
 
 接口返回必须统一包装：
 
