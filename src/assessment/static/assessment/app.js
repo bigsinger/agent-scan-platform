@@ -20,7 +20,7 @@
   const runtimeObjectKeys = [
     'selectedAsset','selectedTask','selectedMcp','selectedTool','selectedConsent','selectedSkill','selectedCase','selectedRedteamRun',
     'selectedFinding','selectedEvidence','selectedAttackPath','selectedPolicyDraft','selectedReport','selectedRetest','selectedRule',
-    'selectedAdapter','selectedProcess','selectedJob'
+    'selectedAdapter','selectedScanner','selectedProcess','selectedJob'
   ];
   const defaultFormState = {
     adapter:'自动识别',
@@ -70,6 +70,7 @@
     state.integrationSyncLastDownload = '';
     state.reportSyncLastDownload = '';
     state.reportPackageExport = null;
+    state.redteamCaseDetail = null;
     state.apiDebugOpenapi = null;
     state.apiDebugSummary = {};
     state.apiDebugScenario = 'empty';
@@ -202,6 +203,7 @@ data(){
     initial.ruleTestResult = null;
     initial.selectedRule = initial.selectedRule || ((initial.ruleRows || [])[0]) || {};
     initial.scannerTestResult = null;
+    initial.selectedScanner = initial.selectedScanner || ((initial.scanners || [])[0]) || {};
     initial.adapterSelfTestResult = null;
     initial.agentScanCompat = initial.agentScanCompat || {version:'0.5.12-compatible', source_state:'LOCAL_BRIDGE_ONLY', compatibility:{status:'NOT_RUN', passed:0, warnings:0, failed:0, total:0}};
     initial.agentScanSelfTestResult = null;
@@ -225,7 +227,7 @@ data(){
       const all=this.navGroups.flatMap(g=>g.items);
       const found=all.find(x=>x.key===this.current);
       if(found) return found.name;
-      const extra={'agent-detail':'Agent 详情','task-detail':'任务详情','skill-detail':'Skill 详情','finding-detail':'风险详情'};
+      const extra={'agent-detail':'Agent 详情','task-detail':'任务详情','skill-detail':'Skill 详情','finding-detail':'风险详情','case-detail':'红队用例详情','report-preview':'报告预览','profile-detail':'测评模板详情','rule-detail':'规则详情','scanner-detail':'扫描器详情'};
       return extra[this.current]||'Agent 安全测评';
     },
     pendingConsentCount(){
@@ -1155,7 +1157,12 @@ data(){
       const adapterDetailPath=this.selectedAdapter&&this.selectedAdapter.id?'/assessment/adapters/'+this.selectedAdapter.id:'/assessment/adapters';
       const mcpDetailPath=this.selectedMcp&&this.selectedMcp.id?'/assessment/mcp/'+this.selectedMcp.id:'/assessment/mcp';
       const toolDetailPath=this.selectedTool&&this.selectedTool.id?'/assessment/tools/'+this.selectedTool.id:'/assessment/mcp';
-      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp','mcp-detail':mcpDetailPath,'tool-detail':toolDetailPath,consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
+      const caseDetailPath=this.selectedCase&&(this.selectedCase.id||this.selectedCase.name)?'/assessment/redteam-cases/'+encodeURIComponent(this.selectedCase.id||this.selectedCase.name):'/assessment/redteam-cases';
+      const reportPreviewPath=this.selectedReport&&this.selectedReport.id?'/assessment/reports/'+encodeURIComponent(this.selectedReport.id)+'/preview':'/assessment/reports';
+      const profileDetailPath=this.selectedProfile&&(this.selectedProfile.id||this.selectedProfile.name)?'/assessment/profiles/'+encodeURIComponent(this.selectedProfile.id||this.selectedProfile.name):'/assessment/profiles';
+      const ruleDetailPath=this.selectedRule&&this.selectedRule.id?'/assessment/rules/'+encodeURIComponent(this.selectedRule.id):'/assessment/rules';
+      const scannerDetailPath=this.selectedScanner&&this.selectedScanner.id?'/assessment/scanners/'+encodeURIComponent(this.selectedScanner.id):'/assessment/scanners';
+      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','profile-detail':profileDetailPath,'agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp','mcp-detail':mcpDetailPath,'tool-detail':toolDetailPath,consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases','case-detail':caseDetailPath,execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports','report-preview':reportPreviewPath,retests:'/assessment/retests',rules:'/assessment/rules','rule-detail':ruleDetailPath,scanners:'/assessment/scanners','scanner-detail':scannerDetailPath,schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
       return map[key]||'/assessment';
     },
     keyForPath(path){
@@ -1170,11 +1177,12 @@ data(){
       if(path.startsWith('/assessment/agent-scan/issues')) return 'agent-scan';
       if(path.startsWith('/assessment/mcp/')) return 'mcp-detail';
       if(path.startsWith('/assessment/tools/')) return 'tool-detail';
-      if(path.startsWith('/assessment/redteam-cases/')) return 'cases';
-      if(path.startsWith('/assessment/reports/')) return 'reports';
-      if(path.startsWith('/assessment/profiles/')) return 'profiles';
-      if(path.startsWith('/assessment/rules/')) return 'rules';
-      if(path.startsWith('/assessment/scanners/')) return 'scanners';
+      if(path.startsWith('/assessment/redteam-cases/')) return 'case-detail';
+      if(path.match(/^\/assessment\/reports\/[^/]+\/preview$/)) return 'report-preview';
+      if(path.startsWith('/assessment/reports/')) return 'report-preview';
+      if(path.startsWith('/assessment/profiles/')) return 'profile-detail';
+      if(path.startsWith('/assessment/rules/')) return 'rule-detail';
+      if(path.startsWith('/assessment/scanners/')) return 'scanner-detail';
       return 'dashboard';
     },
     pushRoute(key){
@@ -1235,6 +1243,41 @@ data(){
         const found=(this.mcpServers || []).find(m=>String(m.id)===mcpId || String(m.name)===mcpId || String(m.server)===mcpId);
         this.selectedMcp=found || {id:mcpId, name:mcpId};
         if(this.current==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});
+      }
+      const caseMatch=path.match(/^\/assessment\/redteam-cases\/([^/]+)/);
+      if(caseMatch){
+        const caseId=decodeURIComponent(caseMatch[1]);
+        const found=(this.caseLibrary || []).find(c=>String(c.id)===caseId || String(c.name)===caseId) || (this.redCases || []).find(c=>String(c.id)===caseId || String(c.name)===caseId);
+        this.selectedCase=found || {id:caseId, name:caseId};
+        if(this.current==='case-detail') this.loadRedteamCaseDetail(this.selectedCase, {silent:true});
+      }
+      const reportMatch=path.match(/^\/assessment\/reports\/([^/]+)(?:\/preview)?$/);
+      if(reportMatch){
+        const reportId=decodeURIComponent(reportMatch[1]);
+        const found=(this.reports || []).find(r=>String(r.id)===reportId || String(r.name)===reportId);
+        this.selectedReport=found || {id:reportId, name:reportId};
+        if(this.current==='report-preview') this.refreshReportPreview(this.selectedReport, {silent:true});
+      }
+      const profileMatch=path.match(/^\/assessment\/profiles\/([^/]+)/);
+      if(profileMatch){
+        const profileId=decodeURIComponent(profileMatch[1]);
+        const found=(this.profiles || []).find(p=>String(p.id)===profileId || String(p.name)===profileId);
+        this.selectedProfile=found || {id:profileId, name:profileId};
+        if(this.current==='profile-detail') this.loadProfileDetail(this.selectedProfile, {silent:true});
+      }
+      const ruleMatch=path.match(/^\/assessment\/rules\/([^/]+)/);
+      if(ruleMatch){
+        const ruleId=decodeURIComponent(ruleMatch[1]);
+        const found=(this.ruleRows || []).find(r=>String(r.id)===ruleId || String(r.name)===ruleId);
+        this.selectedRule=found || {id:ruleId, name:ruleId};
+        if(this.current==='rule-detail') this.loadRuleDetail(this.selectedRule, {silent:true});
+      }
+      const scannerMatch=path.match(/^\/assessment\/scanners\/([^/]+)/);
+      if(scannerMatch){
+        const scannerId=decodeURIComponent(scannerMatch[1]);
+        const found=(this.scanners || []).find(s=>String(s.id)===scannerId || String(s.name)===scannerId);
+        this.selectedScanner=found || {id:scannerId, name:scannerId};
+        if(this.current==='scanner-detail') this.loadScannerDetail(this.selectedScanner, {silent:true});
       }
       if(this.current==='abom' && this.selectedAsset && this.selectedAsset.id){
         this.loadAgentAbom(this.selectedAsset);
@@ -1392,7 +1435,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});if(key==='case-detail') this.loadRedteamCaseDetail(this.selectedCase, {silent:true});if(key==='report-preview') this.refreshReportPreview(this.selectedReport, {silent:true});if(key==='profile-detail') this.loadProfileDetail(this.selectedProfile, {silent:true});if(key==='rule-detail') this.loadRuleDetail(this.selectedRule, {silent:true});if(key==='scanner-detail') this.loadScannerDetail(this.selectedScanner, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -1480,6 +1523,40 @@ data(){
     selectRedteamCase(c){
       this.selectedCase=c || {};
       if(c && c.id) this.form.redteamCaseId=c.id;
+    },
+    redteamCaseId(c){
+      return c && (c.id || c.name);
+    },
+    async openRedteamCaseDetail(c){
+      const target=c || this.selectedCase;
+      if(!this.redteamCaseId(target)) return;
+      this.selectedCase=target;
+      this.current='case-detail';
+      this.pushRoute('case-detail');
+      window.scrollTo({top:0,behavior:'smooth'});
+      await this.loadRedteamCaseDetail(target);
+    },
+    async loadRedteamCaseDetail(c, options){
+      const target=c || this.selectedCase || {};
+      const id=this.redteamCaseId(target);
+      if(!id) return null;
+      const silent=options && options.silent;
+      if(!silent){ this.redteamBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/redteam-cases/'+encodeURIComponent(id));
+        const detail=res.item || target;
+        this.selectedCase=detail;
+        this.redteamCaseDetail=detail;
+        this.mergeRecords('caseLibrary', [detail]);
+        this.mergeRecords('redCases', [detail]);
+        if(!silent) this.toastMsg('红队用例详情已读取：'+(detail.id || detail.name || id));
+        return detail;
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+        return null;
+      } finally {
+        if(!silent) this.redteamBusy=false;
+      }
     },
     async startRedteamRun(){
       this.redteamBusy=true; this.apiError='';
@@ -1599,7 +1676,7 @@ data(){
         const id=target.id || target.name;
         const res=await this.apiPost('/api/v1/redteam-cases/'+encodeURIComponent(id)+'/dry-run', {});
         if(res.run){ this.mergeRecords('redteamRuns', [res.run]); await this.loadRedteamRun(res.run.id); }
-        this.current='redteam';
+        if(this.current!=='case-detail') this.current='redteam';
         this.toastMsg('红队 dry-run 已完成：'+(res.run&&res.run.result || res.status));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.redteamBusy=false; }
@@ -1757,14 +1834,31 @@ data(){
       const target=profile || this.selectedProfile;
       const id=this.profileId(target);
       if(!id) return;
-      this.opsBusy=true; this.apiError='';
+      this.selectedProfile=target;
+      this.current='profile-detail';
+      this.pushRoute('profile-detail');
+      window.scrollTo({top:0,behavior:'smooth'});
+      await this.loadProfileDetail(target);
+    },
+    async loadProfileDetail(profile, options){
+      const target=profile || this.selectedProfile || {};
+      const id=this.profileId(target);
+      if(!id) return null;
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
       try {
         const res=await this.apiGet('/api/v1/profiles/'+encodeURIComponent(id));
         this.selectedProfile=res.item || target;
         this.profileValidation=res.validation || null;
-        this.toastMsg('模板详情已从 SQLite/API 读取');
-      } catch (err) { this.apiError=this.describeError(err); }
-      finally { this.opsBusy=false; }
+        this.mergeRecords('profiles', [this.selectedProfile]);
+        if(!silent) this.toastMsg('模板详情已从 SQLite/API 读取');
+        return this.selectedProfile;
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+        return null;
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
     },
     async validateProfile(profile){
       const target=profile || this.selectedProfile;
@@ -2422,18 +2516,30 @@ data(){
       this.selectedReport=report;
       this.reportPreviewData=null;
     },
-    async refreshReportPreview(report){
+    async refreshReportPreview(report, options){
       if(!report || !report.id) return;
       this.selectedReport=report;
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
       try {
         const res=await this.apiGet('/api/v1/reports/'+encodeURIComponent(report.id));
         this.selectedReport=Object.assign({}, report, res.item || {});
         this.reportPreviewData=res.preview || null;
-      } catch (err) { this.apiError=this.describeError(err); }
+        this.mergeRecords('reports', [this.selectedReport]);
+        if(!silent) this.toastMsg('报告预览状态已读取：'+report.id);
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
     },
     async openReportPreview(report){
       if(!report || !report.id) return;
-      this.reportPreview=true;
+      this.selectedReport=report;
+      this.current='report-preview';
+      this.pushRoute('report-preview');
+      window.scrollTo({top:0,behavior:'smooth'});
+      this.reportPreview=false;
       await this.refreshReportPreview(report);
     },
     downloadReport(report){
@@ -2858,6 +2964,34 @@ data(){
       if(!rule || !rule.id) return;
       this.selectedRule=rule;
     },
+    async openRuleDetail(rule){
+      if(!rule || !rule.id) return;
+      this.selectedRule=rule;
+      this.current='rule-detail';
+      this.pushRoute('rule-detail');
+      window.scrollTo({top:0,behavior:'smooth'});
+      await this.loadRuleDetail(rule);
+    },
+    async loadRuleDetail(rule, options){
+      const target=rule || this.selectedRule || {};
+      const id=target.id;
+      if(!id) return null;
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/rules/'+encodeURIComponent(id));
+        const detail=res.item || target;
+        this.selectedRule=detail;
+        this.mergeRecords('ruleRows', [detail]);
+        if(!silent) this.toastMsg('规则详情已读取：'+(detail.id || id));
+        return detail;
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+        return null;
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
     async testRule(rule){
       if(!rule || !rule.id) return;
       this.selectedRule=rule;
@@ -2883,14 +3017,43 @@ data(){
     },
     async runScannerSelfTest(scanner){
       if(!scanner || !scanner.id) return;
+      this.selectedScanner=scanner;
       this.opsBusy=true; this.apiError='';
       try {
         const res=await this.apiPost('/api/v1/scanners/'+encodeURIComponent(scanner.id)+'/self-test', {});
         this.scannerTestResult=res.self_test;
-        if(res.scanner){ this.mergeRecords('scanners', [res.scanner]); }
+        if(res.scanner){ this.mergeRecords('scanners', [res.scanner]); this.selectedScanner=res.scanner; }
         this.toastMsg(scanner.name+' 自测完成：'+res.self_test.status);
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
+    },
+    async openScannerDetail(scanner){
+      if(!scanner || !scanner.id) return;
+      this.selectedScanner=scanner;
+      this.current='scanner-detail';
+      this.pushRoute('scanner-detail');
+      window.scrollTo({top:0,behavior:'smooth'});
+      await this.loadScannerDetail(scanner);
+    },
+    async loadScannerDetail(scanner, options){
+      const target=scanner || this.selectedScanner || {};
+      const id=target.id;
+      if(!id) return null;
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/scanners/'+encodeURIComponent(id));
+        const detail=res.item || target;
+        this.selectedScanner=detail;
+        this.mergeRecords('scanners', [detail]);
+        if(!silent) this.toastMsg('扫描器详情已读取：'+(detail.id || id));
+        return detail;
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+        return null;
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
     },
     async runAllScannerSelfTests(){
       for(const scanner of (this.scanners||[]).slice(0, 8)){

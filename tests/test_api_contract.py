@@ -1660,6 +1660,10 @@ def test_report_evidence_and_risk_closure_actions():
     assert preview_body["rendering"]["pdf_status"] == "UNAVAILABLE"
     assert any(row["name"] == "HTML/JSON 制品" and row["status"] == "READY" for row in preview_body["readiness"])
     assert preview_body["counts"]["artifacts"] == 2
+    preview_route = client.get(f"/api/v1/reports/{report['id']}/preview")
+    assert preview_route.status_code == 200
+    assert preview_route.json()["preview"]["rendering"]["html_status"] == "READY"
+    assert preview_route.json()["preview"]["mutates_installed_agents"] is False
     download = client.get(f"/api/v1/reports/{report['id']}/download")
     assert download.status_code == 200
     assert "Agent 安全测评能力模块 V4.1" in download.text
@@ -2035,6 +2039,11 @@ def test_redteam_dry_run_creates_local_evidence_without_agent_mutation():
     assert validation.status_code == 200
     assert validation.json()["validation"]["status"] == "PASS"
 
+    case_detail = client.get("/api/v1/redteam-cases/CASE-CONTRACT-LOCAL")
+    assert case_detail.status_code == 200
+    assert case_detail.json()["item"]["id"] == "CASE-CONTRACT-LOCAL"
+    assert case_detail.json()["item"]["safe_mode"] == "dry-run"
+
     dry_run = client.post("/api/v1/redteam-cases/CASE-CONTRACT-LOCAL/dry-run", json={})
     assert dry_run.status_code == 200
     run = dry_run.json()["run"]
@@ -2127,6 +2136,10 @@ def test_capability_management_actions_are_persisted():
     assert api_v1.get_store().get_record("test_run", test_payload["id"]) is not None
     published = client.post("/api/v1/rules/TEST-RULE-LOCAL/publish", json={})
     assert published.json()["rule"]["status"] == "已发布"
+    rule_detail = client.get("/api/v1/rules/TEST-RULE-LOCAL")
+    assert rule_detail.status_code == 200
+    assert rule_detail.json()["item"]["id"] == "TEST-RULE-LOCAL"
+    assert rule_detail.json()["item"]["status"] == "已发布"
 
     scanner = client.post("/api/v1/scanners/scanner.local-analysis/self-test", json={})
     assert scanner.status_code == 200

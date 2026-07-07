@@ -426,6 +426,36 @@ production.write</textarea></div></div></div>
 </div>
 
 
+<!-- D10 PROFILE DETAIL -->
+<div v-if="current==='profile-detail'">
+  <div class="card">
+    <div class="card-head">
+      <div><h2>{{selectedProfile.name||selectedProfile.id||'测评模板详情'}}</h2><div class="desc">详情来自 `/api/v1/profiles/{id}`；校验、发布、复制均只写本系统 SQLite 与 artifact，不启动扫描/MCP/Agent，不修改任何已安装 Agent。</div></div>
+      <div><button class="btn" @click="go('profiles')">返回模板</button><button class="btn" :disabled="opsBusy" @click="loadProfileDetail(selectedProfile)">刷新详情</button><button class="btn" :disabled="opsBusy" @click="validateProfile(selectedProfile)">校验</button><button class="btn primary" :disabled="opsBusy" @click="publishProfile(selectedProfile)">发布模板</button></div>
+    </div>
+    <div v-if="apiError" class="callout critical">{{apiError}}</div>
+    <div v-if="!(selectedProfile&&(selectedProfile.id||selectedProfile.name))" class="empty">正在读取测评模板详情；没有 API 数据时不展示原型样例。</div>
+    <div v-else>
+      <div class="grid g5">
+        <div class="metric"><div class="metric-label">状态</div><div class="metric-value"><span :class="['badge',statusClass(selectedProfile.status)]">{{selectedProfile.status||'DRAFT'}}</span></div></div>
+        <div class="metric"><div class="metric-label">规则</div><div class="metric-value">{{selectedProfile.rules_count||selectedProfile.rules||0}}</div></div>
+        <div class="metric"><div class="metric-label">用例</div><div class="metric-value">{{selectedProfile.cases||0}}</div></div>
+        <div class="metric"><div class="metric-label">安全模式</div><div class="metric-value" style="font-size:16px">{{selectedProfile.safe_mode||selectedProfile.mode||'local-readonly'}}</div></div>
+        <div class="metric"><div class="metric-label">校验</div><div class="metric-value" style="font-size:18px">{{profileValidation&&profileValidation.status||'NOT_RUN'}}</div></div>
+      </div>
+      <div class="grid g2" style="margin-top:14px">
+        <div><h3>模板元数据</h3><div class="kv"><div>Profile ID</div><div class="mono">{{selectedProfile.id||selectedProfile.name}}</div><div>描述</div><div>{{selectedProfile.desc||selectedProfile.description||'-'}}</div><div>版本</div><div>{{selectedProfile.version||'draft'}}</div><div>MCP 策略</div><div>{{selectedProfile.mcp_policy||selectedProfile.stdio_mcp||'per-server-consent'}}</div><div>远程分析</div><div>{{selectedProfile.remote_analysis?'开启':'关闭'}}</div><div>报告格式</div><div>{{(selectedProfile.report_formats||['HTML','JSON']).join(', ')}}</div></div></div>
+        <div><h3>当前模板计划</h3><div class="code">{{selectedProfilePlanYaml}}</div></div>
+      </div>
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h2>校验结果</h2><span :class="['badge',statusClass(profileValidation&&profileValidation.status)]">{{profileValidation&&profileValidation.status||'NOT_RUN'}}</span></div><table class="compact-table"><thead><tr><th>级别</th><th>字段</th><th>说明</th></tr></thead><tbody><tr v-for="e in ((profileValidation&&profileValidation.validation_errors)||[])" :key="'p-err-'+e.field"><td><span class="badge critical">ERROR</span></td><td>{{e.field}}</td><td>{{e.message}}</td></tr><tr v-for="w in ((profileValidation&&profileValidation.warnings)||[])" :key="'p-warn-'+w.field"><td><span class="badge medium">WARN</span></td><td>{{w.field}}</td><td>{{w.message}}</td></tr><tr v-if="!(profileValidation&&((profileValidation.validation_errors||[]).length||(profileValidation.warnings||[]).length))"><td colspan="3" class="muted">尚未发现校验问题；点击“校验”生成真实结果。</td></tr></tbody></table><a v-if="profileValidation&&profileValidation.download" class="btn sm soft" :href="profileValidation.download" target="_blank" rel="noopener">下载校验 artifact</a></div>
+        <div class="card"><h2>安全边界</h2><table class="compact-table"><tbody><tr><td>Agent / MCP 运行时</td><td><span class="badge low">不启动</span></td></tr><tr><td>安装目录</td><td><span class="badge low">不修改</span></td></tr><tr><td>写入范围</td><td>assessment_profile、artifact、audit_event</td></tr><tr><td>云分析</td><td>{{selectedProfile.remote_analysis?'仅记录请求意图':'关闭'}}</td></tr></tbody></table><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn" :disabled="opsBusy" @click="cloneProfile(selectedProfile)">复制模板</button><button class="btn soft" @click="useProfile(selectedProfile)">用于创建测评</button></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
 <!-- P10 AGENT-SCAN -->
 <div v-if="current==='agent-scan'">
   <div class="card">
@@ -647,7 +677,7 @@ status: {{currentConsent.status||'-'}}</div><div class="callout red">stdio MCP �
   <div class="card"><div class="card-head"><div><h2>红队用例库</h2><div class="desc">用例包、变量生成、期望结果、判定器、回归来源和版本化发布。</div></div><div><button class="btn" :disabled="redteamBusy" @click="validateRedteamCase(selectedCase)">校验当前</button><button class="btn primary" :disabled="redteamBusy" @click="createRedteamCaseDraft">＋ 新建用例</button></div></div>
     <div class="grid g4"><div class="metric"><div class="metric-label">用例</div><div class="metric-value">{{caseLibrary.length}}</div></div><div class="metric"><div class="metric-label">队列</div><div class="metric-value">{{redCases.length}}</div></div><div class="metric"><div class="metric-label">生成变体</div><div class="metric-value">{{caseLibrary.reduce((s,c)=>s+(Number(c.variants)||0),0)}}</div></div><div class="metric"><div class="metric-label">最近校验</div><div class="metric-value" style="font-size:18px">{{redteamValidation&&redteamValidation.status||'未运行'}}</div></div></div>
     <div class="table-wrap" style="margin-top:14px"><table><thead><tr><th>用例包 / 用例</th><th>类别</th><th>适配器</th><th>变体</th><th>判定器</th><th>回归</th><th>版本</th><th>状态</th><th>操作</th></tr></thead><tbody>
-      <tr v-for="c in caseLibrary" :key="c.id||c.name" @click="selectRedteamCase(c)"><td>{{c.name}}</td><td>{{c.type}}</td><td>{{c.adapter}}</td><td>{{c.variants}}</td><td>{{c.evaluator}}</td><td>{{c.coverage||c.regression||'local-deterministic'}}</td><td>{{c.version}}</td><td><span :class="['badge',redteamStatusClass(c.status)]">{{c.status}}</span></td><td><button class="btn sm" :disabled="redteamBusy" @click.stop="dryRunRedteamCase(c)">回归</button><button class="btn sm" :disabled="redteamBusy" @click.stop="cloneRedteamCase(c)">复制</button><button class="btn sm" :disabled="redteamBusy" @click.stop="validateRedteamCase(c)">校验</button></td></tr>
+      <tr v-for="c in caseLibrary" :key="c.id||c.name" @click="selectRedteamCase(c)"><td>{{c.name}}</td><td>{{c.type}}</td><td>{{c.adapter}}</td><td>{{c.variants}}</td><td>{{c.evaluator}}</td><td>{{c.coverage||c.regression||'local-deterministic'}}</td><td>{{c.version}}</td><td><span :class="['badge',redteamStatusClass(c.status)]">{{c.status}}</span></td><td><button class="btn sm" :disabled="redteamBusy" @click.stop="openRedteamCaseDetail(c)">详情</button><button class="btn sm" :disabled="redteamBusy" @click.stop="dryRunRedteamCase(c)">回归</button><button class="btn sm" :disabled="redteamBusy" @click.stop="cloneRedteamCase(c)">复制</button><button class="btn sm" :disabled="redteamBusy" @click.stop="validateRedteamCase(c)">校验</button></td></tr>
     </tbody></table></div>
   </div>
   <div class="grid g2"><div class="card"><h2>用例定义</h2><div class="code">id: {{selectedCase.id||selectedCase.name}}
@@ -658,6 +688,36 @@ input:
 evaluator:
   - {{selectedCase.evaluator||'Deterministic Rules'}}
 safe_mode: {{selectedCase.safe_mode||'dry-run'}}</div></div><div class="card"><h2>发布门禁</h2><table><tbody><tr><td>Schema</td><td><span :class="['badge',redteamStatusClass(redteamValidation&&redteamValidation.status||'未运行')]">{{redteamValidation&&redteamValidation.status||'未运行'}}</span></td></tr><tr><td>安全模式</td><td>{{selectedCase.safe_mode||'dry-run'}}</td></tr><tr><td>Validation Errors</td><td>{{redteamValidation&&redteamValidation.validation_errors&&redteamValidation.validation_errors.length||0}}</td></tr><tr><td>Warnings</td><td>{{redteamValidation&&redteamValidation.warnings&&redteamValidation.warnings.length||0}}</td></tr><tr><td>人工评审</td><td><span class="badge medium">按企业流程</span></td></tr></tbody></table></div></div>
+</div>
+
+
+<!-- D08 REDTEAM CASE DETAIL -->
+<div v-if="current==='case-detail'">
+  <div class="card">
+    <div class="card-head">
+      <div><h2>{{selectedCase.name||selectedCase.id||'红队用例详情'}}</h2><div class="desc">详情来自 `/api/v1/redteam-cases/{id}`；校验与 dry-run 只运行本地 deterministic harness，不调用外部模型或真实 Tool。</div></div>
+      <div><button class="btn" @click="go('cases')">返回用例库</button><button class="btn" :disabled="redteamBusy" @click="loadRedteamCaseDetail(selectedCase)">刷新详情</button><button class="btn" :disabled="redteamBusy" @click="validateRedteamCase(selectedCase)">校验</button><button class="btn primary" :disabled="redteamBusy" @click="dryRunRedteamCase(selectedCase)">本地 Dry-run</button></div>
+    </div>
+    <div v-if="apiError" class="callout critical">{{apiError}}</div>
+    <div v-if="!(selectedCase&&redteamCaseId(selectedCase))" class="empty">正在读取红队用例详情；没有 API 数据时不展示原型样例。</div>
+    <div v-else>
+      <div class="grid g5">
+        <div class="metric"><div class="metric-label">状态</div><div class="metric-value"><span :class="['badge',redteamStatusClass(selectedCase.status)]">{{selectedCase.status||'UNKNOWN'}}</span></div></div>
+        <div class="metric"><div class="metric-label">类型</div><div class="metric-value" style="font-size:18px">{{selectedCase.type||'-'}}</div></div>
+        <div class="metric"><div class="metric-label">变量</div><div class="metric-value">{{selectedRedteamCaseVariables.length}}</div></div>
+        <div class="metric"><div class="metric-label">变体</div><div class="metric-value">{{selectedCase.variants||1}}</div></div>
+        <div class="metric"><div class="metric-label">最近校验</div><div class="metric-value" style="font-size:18px">{{redteamValidation&&redteamValidation.status||'未运行'}}</div></div>
+      </div>
+      <div class="grid g2" style="margin-top:14px">
+        <div><h3>用例元数据</h3><div class="kv"><div>Case ID</div><div class="mono">{{selectedCase.id||selectedCase.name}}</div><div>Adapter</div><div>{{selectedCase.adapter||'All'}}</div><div>Evaluator</div><div>{{selectedCase.evaluator||'Deterministic Rules'}}</div><div>Coverage</div><div>{{selectedCase.coverage||selectedCase.regression||'local-deterministic'}}</div><div>Version</div><div>{{selectedCase.version||'draft'}}</div><div>安全模式</div><div>{{selectedCase.safe_mode||'dry-run'}}</div></div></div>
+        <div><h3>攻击输入</h3><div class="code">{{selectedCase.input||selectedCase.prompt||'当前用例未保存输入文本。'}}</div><div class="callout green" style="margin-top:10px">Dry-run 只写入 redteam_run、finding/evidence 和 artifact；不会启动或修改 Codex/Hermes/MCP/Agent，也不会调用外部模型。</div></div>
+      </div>
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h2>变量</h2><span class="badge">{{selectedRedteamCaseVariables.length}}</span></div><table class="compact-table"><thead><tr><th>名称</th><th>取值</th><th>来源</th><th>要求</th></tr></thead><tbody><tr v-for="v in selectedRedteamCaseVariables" :key="v.name"><td class="mono">{{v.name}}</td><td>{{v.value}}</td><td>{{v.source}}</td><td>{{v.required?'required':'optional'}}</td></tr><tr v-if="!selectedRedteamCaseVariables.length"><td colspan="4" class="muted">当前用例未声明变量。</td></tr></tbody></table></div>
+        <div class="card"><div class="card-head"><h2>校验结果</h2><span :class="['badge',statusClass(redteamValidation&&redteamValidation.status)]">{{redteamValidation&&redteamValidation.status||'NOT_RUN'}}</span></div><table class="compact-table"><thead><tr><th>级别</th><th>字段</th><th>说明</th></tr></thead><tbody><tr v-for="e in ((redteamValidation&&redteamValidation.validation_errors)||[])" :key="'err-'+e.field"><td><span class="badge critical">ERROR</span></td><td>{{e.field}}</td><td>{{e.message}}</td></tr><tr v-for="w in ((redteamValidation&&redteamValidation.warnings)||[])" :key="'warn-'+w.field"><td><span class="badge medium">WARN</span></td><td>{{w.field}}</td><td>{{w.message}}</td></tr><tr v-if="!(redteamValidation&&((redteamValidation.validation_errors||[]).length||(redteamValidation.warnings||[]).length))"><td colspan="3" class="muted">尚无校验问题；点击“校验”后展示真实结果。</td></tr></tbody></table></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 
@@ -780,6 +840,36 @@ safe_mode: local-readonly</div></div>
 </div>
 
 
+<!-- D09 REPORT PREVIEW -->
+<div v-if="current==='report-preview'">
+  <div class="card">
+    <div class="card-head">
+      <div><h2>{{selectedReport.name||selectedReport.id||'报告预览'}}</h2><div class="desc">预览来自 `/api/v1/reports/{id}` 和 `/preview`；章节、渲染和制品状态均读取本系统已生成报告，不伪造 PDF 或外部投递。</div></div>
+      <div><button class="btn" @click="go('reports')">返回报告</button><button class="btn" :disabled="opsBusy" @click="refreshReportPreview(selectedReport)">刷新预览</button><button class="btn" :disabled="!(selectedReport&&selectedReport.id)" @click="downloadReport(selectedReport)">下载 HTML</button><button class="btn primary" :disabled="opsBusy||!(selectedReport&&selectedReport.id)" @click="exportReportPackage(selectedReport)">交付包</button></div>
+    </div>
+    <div v-if="apiError" class="callout critical">{{apiError}}</div>
+    <div v-if="!(selectedReport&&selectedReport.id)" class="empty">正在读取报告预览；没有 API 数据时不展示原型样例。</div>
+    <div v-else>
+      <div class="grid g5">
+        <div class="metric"><div class="metric-label">状态</div><div class="metric-value"><span :class="['badge',statusClass(selectedReport.status)]">{{selectedReport.status||'UNKNOWN'}}</span></div></div>
+        <div class="metric"><div class="metric-label">风险</div><div class="metric-value">{{reportPreviewData&&reportPreviewData.summary&&reportPreviewData.summary.finding_count||selectedReport.finding_count||0}}</div></div>
+        <div class="metric"><div class="metric-label">HTML</div><div class="metric-value" style="font-size:18px">{{reportRenderingStatus.html_status}}</div></div>
+        <div class="metric"><div class="metric-label">JSON</div><div class="metric-value" style="font-size:18px">{{reportRenderingStatus.json_status}}</div></div>
+        <div class="metric"><div class="metric-label">PDF</div><div class="metric-value" style="font-size:18px">{{reportRenderingStatus.pdf_status}}</div></div>
+      </div>
+      <div class="grid g2" style="margin-top:14px">
+        <div><h3>报告元数据</h3><div class="kv"><div>Report ID</div><div class="mono">{{selectedReport.id}}</div><div>Assessment</div><div class="mono">{{selectedReport.assessment_id||selectedReport.task||'-'}}</div><div>类型</div><div>{{selectedReport.type||'-'}}</div><div>模板</div><div>{{selectedReport.template||reportRenderingStatus.template}}</div><div>格式</div><div>{{selectedReport.formats||reportRenderingStatus.formats}}</div><div>大小</div><div>{{formatBytes(selectedReport.size||reportRenderingStatus.artifact_bytes)}}</div></div></div>
+        <div><h3>渲染能力</h3><div :class="reportRenderCalloutClass">本页只展示本地 HTML/JSON 制品真实状态；未配置 PDF 渲染器时显示 UNAVAILABLE。</div><div class="kv" style="margin-top:10px"><div>Engine</div><div>{{reportRenderingStatus.engine}}</div><div>HTML</div><div><span :class="['badge',statusClass(reportRenderingStatus.html_status)]">{{reportRenderingStatus.html_status}}</span></div><div>JSON</div><div><span :class="['badge',statusClass(reportRenderingStatus.json_status)]">{{reportRenderingStatus.json_status}}</span></div><div>PDF</div><div><span :class="['badge',statusClass(reportRenderingStatus.pdf_status)]">{{reportRenderingStatus.pdf_status}}</span></div></div></div>
+      </div>
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h2>章节完整性</h2><span class="badge">{{reportReadinessRows.length}}</span></div><table class="compact-table"><thead><tr><th>章节</th><th>状态</th><th>说明</th></tr></thead><tbody><tr v-for="row in reportReadinessRows" :key="row.name"><td>{{row.name}}</td><td><span :class="['badge',statusClass(row.status)]">{{row.status}}</span></td><td>{{row.detail}}</td></tr><tr v-if="!reportReadinessRows.length"><td colspan="3" class="muted">尚未读取章节完整性；点击“刷新预览”。</td></tr></tbody></table></div>
+        <div class="card"><h2>交付边界</h2><table class="compact-table"><tbody><tr><td>外部投递</td><td><span class="badge low">不执行</span></td></tr><tr><td>已安装 Agent</td><td><span class="badge low">不修改</span></td></tr><tr><td>原始敏感证据</td><td>{{reportPackageExport&&reportPackageExport.validation&&reportPackageExport.validation.raw_sensitive_evidence||'not-included'}}</td></tr><tr><td>Artifact</td><td class="mono">{{selectedReport.html_path||selectedReport.json_path||'-'}}</td></tr></tbody></table><div v-if="reportPackageExport" class="callout green" style="margin-top:10px">最近交付包：{{reportPackageExport.schema}} · {{reportPackageExport.validation&&reportPackageExport.validation.status}} · {{reportPackageExport.counts&&reportPackageExport.counts.artifacts||0}} artifacts</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
 <!-- P26 RETESTS -->
 <div v-if="current==='retests'">
   <div class="card"><div class="card-head"><div><h2>复测中心</h2><div class="desc">固化原 Finding 的规则、目标快照、用例和证据要求，比较修复前后结果。</div></div><button class="btn primary" :disabled="opsBusy" @click="retestFinding(selectedFinding)">＋ 创建复测</button></div>
@@ -794,18 +884,78 @@ safe_mode: local-readonly</div></div>
   <div class="card"><div class="card-head"><div><h2>规则库</h2><div class="desc">基于当前 SQLite 规则表和本地 deterministic 规则目录展示，不使用原型固定数量。</div></div><div><button class="btn" :disabled="opsBusy||!(selectedRule&&selectedRule.id)" @click="testRule(selectedRule)">测试当前规则</button><button class="btn primary" :disabled="opsBusy" @click="createRuleDraft">＋ 新建规则</button></div></div>
     <div class="grid g5"><div class="metric"><div class="metric-label">当前规则</div><div class="metric-value">{{ruleStats.total}}</div></div><div class="metric"><div class="metric-label">已发布</div><div class="metric-value">{{ruleStats.published}}</div></div><div class="metric"><div class="metric-label">草稿/评审</div><div class="metric-value">{{ruleStats.draft}}</div></div><div class="metric"><div class="metric-label">高危覆盖</div><div class="metric-value">{{ruleStats.high}}</div></div><div class="metric"><div class="metric-label">最近命中</div><div class="metric-value">{{ruleStats.lastTestMatches}}</div></div></div>
     <div class="toolbar" style="margin-top:14px"><input class="search" placeholder="搜索规则 ID / 名称"><select><option>全部维度</option><option v-for="d in dimensions">{{d}}</option></select><select><option>全部来源</option><option>Baseline</option><option>Local Analyzer</option><option>Adapter</option><option>External SCA</option></select><select><option>全部状态</option><option>已发布</option><option>评审中</option><option>草稿</option><option>禁用</option></select></div>
-    <div class="table-wrap"><table><thead><tr><th>规则</th><th>维度</th><th>来源</th><th>方法</th><th>严重度</th><th>证据 Schema</th><th>测试覆盖</th><th>版本</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="r in ruleRows" :class="{selected:selectedRule&&selectedRule.id===r.id}" @click="selectRule(r)"><td>{{r.id}}<div class="tiny muted">{{r.name}}</div></td><td>{{r.dimension||r.category}}</td><td>{{r.source}}</td><td>{{r.method||r.analyzer}}</td><td><span :class="['badge',r.sevClass||statusClass(r.severity)]">{{r.severity}}</span></td><td>{{r.evidence||r.evidence_schema}}</td><td>{{r.coverage||r.test_coverage||'本地规则引擎'}}</td><td>{{r.version}}</td><td><span :class="['badge',statusClass(r.status)]">{{r.status}}</span></td><td><button class="btn sm" @click.stop="testRule(r)" :disabled="opsBusy">测试</button><button class="btn sm" @click.stop="publishRule(r)" :disabled="opsBusy">发布</button></td></tr><tr v-if="!ruleRows.length"><td colspan="10">尚无规则。请创建规则草稿或检查本地规则目录。</td></tr></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>规则</th><th>维度</th><th>来源</th><th>方法</th><th>严重度</th><th>证据 Schema</th><th>测试覆盖</th><th>版本</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="r in ruleRows" :class="{selected:selectedRule&&selectedRule.id===r.id}" @click="selectRule(r)"><td>{{r.id}}<div class="tiny muted">{{r.name}}</div></td><td>{{r.dimension||r.category}}</td><td>{{r.source}}</td><td>{{r.method||r.analyzer}}</td><td><span :class="['badge',r.sevClass||statusClass(r.severity)]">{{r.severity}}</span></td><td>{{r.evidence||r.evidence_schema}}</td><td>{{r.coverage||r.test_coverage||'本地规则引擎'}}</td><td>{{r.version}}</td><td><span :class="['badge',statusClass(r.status)]">{{r.status}}</span></td><td><button class="btn sm" @click.stop="openRuleDetail(r)" :disabled="opsBusy">详情</button><button class="btn sm" @click.stop="testRule(r)" :disabled="opsBusy">测试</button><button class="btn sm" @click.stop="publishRule(r)" :disabled="opsBusy">发布</button></td></tr><tr v-if="!ruleRows.length"><td colspan="10">尚无规则。请创建规则草稿或检查本地规则目录。</td></tr></tbody></table></div>
   </div>
   <div class="grid g2"><div class="card"><h2>规则定义</h2><div class="code">{{selectedRuleDefinition}}</div><div v-if="ruleTestResult" class="callout green" style="margin-top:10px">最近规则测试：{{ruleTestResult.rule_id}} · {{ruleTestResult.status}} · 命中 {{(ruleTestResult.matches||[]).length}} · <span class="mono">{{ruleTestResult.id}}</span></div></div><div class="card"><h2>发布门禁</h2><table><tbody><tr v-for="row in ruleGateRows"><td>{{row.name}}<div class="tiny muted">{{row.detail}}</div></td><td><span :class="['badge',statusClass(row.status)]">{{row.status}}</span></td></tr></tbody></table></div></div>
+</div>
+
+
+<!-- D11 RULE DETAIL -->
+<div v-if="current==='rule-detail'">
+  <div class="card">
+    <div class="card-head">
+      <div><h2>{{selectedRule.name||selectedRule.id||'规则详情'}}</h2><div class="desc">详情来自 `/api/v1/rules/{id}`；规则测试只运行本地 deterministic analyzer，不启动 Codex/Hermes/MCP。</div></div>
+      <div><button class="btn" @click="go('rules')">返回规则库</button><button class="btn" :disabled="opsBusy" @click="loadRuleDetail(selectedRule)">刷新详情</button><button class="btn" :disabled="opsBusy" @click="testRule(selectedRule)">本地测试</button><button class="btn primary" :disabled="opsBusy" @click="publishRule(selectedRule)">发布</button></div>
+    </div>
+    <div v-if="apiError" class="callout critical">{{apiError}}</div>
+    <div v-if="!(selectedRule&&selectedRule.id)" class="empty">正在读取规则详情；没有 API 数据时不展示原型样例。</div>
+    <div v-else>
+      <div class="grid g5">
+        <div class="metric"><div class="metric-label">状态</div><div class="metric-value"><span :class="['badge',statusClass(selectedRule.status)]">{{selectedRule.status||'DRAFT'}}</span></div></div>
+        <div class="metric"><div class="metric-label">严重度</div><div class="metric-value" style="font-size:18px">{{selectedRule.severity||'-'}}</div></div>
+        <div class="metric"><div class="metric-label">方法</div><div class="metric-value" style="font-size:16px">{{selectedRule.method||selectedRule.analyzer||'deterministic'}}</div></div>
+        <div class="metric"><div class="metric-label">版本</div><div class="metric-value" style="font-size:18px">{{selectedRule.version||'local'}}</div></div>
+        <div class="metric"><div class="metric-label">最近命中</div><div class="metric-value">{{currentRuleTest?(currentRuleTest.matches||[]).length:0}}</div></div>
+      </div>
+      <div class="grid g2" style="margin-top:14px">
+        <div><h3>规则定义</h3><div class="code">{{selectedRuleDefinition}}</div></div>
+        <div><h3>元数据</h3><div class="kv"><div>Rule ID</div><div class="mono">{{selectedRule.id}}</div><div>维度</div><div>{{selectedRule.dimension||selectedRule.category||'-'}}</div><div>来源</div><div>{{selectedRule.source||'local-static'}}</div><div>证据 Schema</div><div>{{selectedRule.evidence||selectedRule.evidence_schema||'structured'}}</div><div>测试覆盖</div><div>{{selectedRule.coverage||selectedRule.test_coverage||'本地规则引擎'}}</div></div></div>
+      </div>
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h2>发布门禁</h2><span class="badge">{{ruleGateRows.length}}</span></div><table class="compact-table"><thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead><tbody><tr v-for="row in ruleGateRows" :key="row.name"><td>{{row.name}}</td><td><span :class="['badge',statusClass(row.status)]">{{row.status}}</span></td><td>{{row.detail}}</td></tr></tbody></table></div>
+        <div class="card"><div class="card-head"><h2>最近测试</h2><span :class="['badge',statusClass(currentRuleTest&&currentRuleTest.status)]">{{currentRuleTest && currentRuleTest.status || 'NOT_RUN'}}</span></div><table class="compact-table"><thead><tr><th>匹配</th><th>严重度</th><th>摘要</th></tr></thead><tbody><tr v-for="m in ((currentRuleTest&&currentRuleTest.matches)||[])" :key="m.rule_id+m.line"><td>{{m.rule_id}}</td><td>{{m.severity}}</td><td>{{m.message||m.summary}}</td></tr><tr v-if="!(currentRuleTest&&currentRuleTest.matches&&currentRuleTest.matches.length)"><td colspan="3" class="muted">尚未运行当前规则测试，或当前样本未命中。</td></tr></tbody></table><div class="callout green" style="margin-top:10px">测试只写 test_run / artifact / audit_event，不修改规则以外的运行态对象。</div></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 
 <!-- P28 SCANNERS -->
 <div v-if="current==='scanners'">
   <div class="card"><div class="card-head"><div><h2>扫描器中心</h2><div class="desc">Python 内置扫描器、外部 CLI 封装、现有 Skill/SCA Connector 和报告渲染器。</div></div><button class="btn" :disabled="opsBusy" @click="runAllScannerSelfTests">全部自测</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Scanner</th><th>Runtime</th><th>能力</th><th>入口</th><th>版本</th><th>依赖</th><th>成功率</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="s in scanners"><td>{{s.name}}<div class="tiny muted mono">{{s.id}}</div></td><td>{{s.runtime}}</td><td>{{s.capability}}</td><td class="mono">{{s.entry}}</td><td>{{s.version}}</td><td>{{s.deps}}</td><td>{{s.success}}</td><td><span :class="['badge',s.status==='健康'?'low':s.status==='降级'?'medium':'critical']">{{s.status}}</span></td><td><button class="btn sm" @click="runScannerSelfTest(s)" :disabled="opsBusy">自测</button><button class="btn sm" @click="go('execution')">日志</button><button class="btn sm" disabled title="禁用扫描器需要变更审批">禁用</button></td></tr></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Scanner</th><th>Runtime</th><th>能力</th><th>入口</th><th>版本</th><th>依赖</th><th>成功率</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="s in scanners"><td>{{s.name}}<div class="tiny muted mono">{{s.id}}</div></td><td>{{s.runtime}}</td><td>{{s.capability}}</td><td class="mono">{{s.entry}}</td><td>{{s.version}}</td><td>{{s.deps}}</td><td>{{s.success}}</td><td><span :class="['badge',s.status==='健康'?'low':s.status==='降级'?'medium':'critical']">{{s.status}}</span></td><td><button class="btn sm" @click="openScannerDetail(s)" :disabled="opsBusy">详情</button><button class="btn sm" @click="runScannerSelfTest(s)" :disabled="opsBusy">自测</button><button class="btn sm" @click="go('execution')">日志</button><button class="btn sm" disabled title="禁用扫描器需要变更审批">禁用</button></td></tr></tbody></table></div>
   </div>
   <div class="grid g2"><div class="card"><h2>统一 Manifest</h2><div class="code">{{scannerManifest}}</div><div v-if="scannerTestResult" class="callout green" style="margin-top:10px">最近自测：{{scannerTestResult.scanner_id}} · {{scannerTestResult.status}} · {{scannerTestResult.mode}} · 检查 {{(scannerTestResult.checks||[]).length}} 项 <a v-if="scannerTestResult.download" :href="scannerTestResult.download" target="_blank" rel="noopener">下载证据</a></div></div><div class="card"><h2>退出码与结果</h2><table><thead><tr><th>Exit</th><th>语义</th><th>Job 处理</th></tr></thead><tbody><tr><td>0</td><td>正常完成，可有风险</td><td>解析 Result</td></tr><tr><td>10</td><td>部分完成</td><td>PARTIAL</td></tr><tr><td>30</td><td>目标不可达</td><td>重试/人工</td></tr><tr><td>50</td><td>超时或资源</td><td>保留部分结果</td></tr><tr><td>70</td><td>取消</td><td>Cleanup</td></tr><tr><td>80</td><td>清理失败</td><td>运维风险</td></tr></tbody></table></div></div>
+</div>
+
+
+<!-- D12 SCANNER DETAIL -->
+<div v-if="current==='scanner-detail'">
+  <div class="card">
+    <div class="card-head">
+      <div><h2>{{selectedScanner.name||selectedScanner.id||'扫描器详情'}}</h2><div class="desc">详情来自 `/api/v1/scanners/{id}`；自测只检查本系统扫描器入口、规则目录、样本扫描和 artifact 写入能力。</div></div>
+      <div><button class="btn" @click="go('scanners')">返回扫描器</button><button class="btn" :disabled="opsBusy" @click="loadScannerDetail(selectedScanner)">刷新详情</button><button class="btn primary" :disabled="opsBusy" @click="runScannerSelfTest(selectedScanner)">运行自测</button></div>
+    </div>
+    <div v-if="apiError" class="callout critical">{{apiError}}</div>
+    <div v-if="!(selectedScanner&&selectedScanner.id)" class="empty">正在读取扫描器详情；没有 API 数据时不展示原型样例。</div>
+    <div v-else>
+      <div class="grid g5">
+        <div class="metric"><div class="metric-label">状态</div><div class="metric-value"><span :class="['badge',statusClass(selectedScanner.status)]">{{selectedScanner.status||'UNKNOWN'}}</span></div></div>
+        <div class="metric"><div class="metric-label">Runtime</div><div class="metric-value" style="font-size:18px">{{selectedScanner.runtime||'-'}}</div></div>
+        <div class="metric"><div class="metric-label">能力</div><div class="metric-value" style="font-size:16px">{{selectedScanner.capability||'-'}}</div></div>
+        <div class="metric"><div class="metric-label">版本</div><div class="metric-value" style="font-size:18px">{{selectedScanner.version||'local'}}</div></div>
+        <div class="metric"><div class="metric-label">最近自测</div><div class="metric-value" style="font-size:18px">{{scannerTestResult&&scannerTestResult.scanner_id===selectedScanner.id?scannerTestResult.status:'NOT_RUN'}}</div></div>
+      </div>
+      <div class="grid g2" style="margin-top:14px">
+        <div><h3>扫描器元数据</h3><div class="kv"><div>Scanner ID</div><div class="mono">{{selectedScanner.id}}</div><div>入口</div><div class="mono">{{selectedScanner.entry||'-'}}</div><div>依赖</div><div>{{selectedScanner.deps||'-'}}</div><div>成功率</div><div>{{selectedScanner.success||'-'}}</div><div>安全模式</div><div>{{selectedScanner.safe_mode||'local-readonly'}}</div><div>修改已安装 Agent</div><div>{{selectedScanner.mutates_installed_agents?'是':'否'}}</div></div></div>
+        <div><h3>Manifest</h3><div class="code">{{scannerManifest}}</div></div>
+      </div>
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h2>自测检查项</h2><span :class="['badge',statusClass(scannerTestResult&&scannerTestResult.status)]">{{scannerTestResult&&scannerTestResult.status||'NOT_RUN'}}</span></div><table class="compact-table"><thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead><tbody><tr v-for="c in ((scannerTestResult&&scannerTestResult.scanner_id===selectedScanner.id&&scannerTestResult.checks)||[])" :key="c.id"><td>{{c.title||c.id}}</td><td><span :class="['badge',statusClass(c.status)]">{{c.status}}</span></td><td>{{c.detail}}</td></tr><tr v-if="!(scannerTestResult&&scannerTestResult.scanner_id===selectedScanner.id&&scannerTestResult.checks&&scannerTestResult.checks.length)"><td colspan="3" class="muted">尚未运行当前扫描器自测。</td></tr></tbody></table><a v-if="scannerTestResult&&scannerTestResult.scanner_id===selectedScanner.id&&scannerTestResult.download" class="btn sm soft" :href="scannerTestResult.download" target="_blank" rel="noopener">下载自测 JSON</a></div>
+        <div class="card"><h2>安全边界</h2><table class="compact-table"><tbody><tr><td>Agent / MCP 运行时</td><td><span class="badge low">不启动</span></td></tr><tr><td>安装目录 / 配置</td><td><span class="badge low">不修改</span></td></tr><tr><td>写入范围</td><td>scanner_health、test_run、artifact、audit_event</td></tr><tr><td>执行日志</td><td><button class="btn sm" @click="go('execution')">打开执行中心</button></td></tr></tbody></table></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 
@@ -860,7 +1010,7 @@ safe_mode: local-readonly</div></div>
     <div v-else-if="settingsTab==='MCP 安全'" class="form-grid"><div class="field"><label>stdio 默认</label><select v-model="settingsState.mcp_stdio_policy"><option value="per-server-consent">逐 Server 审批</option><option value="never-start">永不启动</option></select></div><div class="field"><label>审批超时（分钟）</label><input type="number" min="1" max="1440" v-model.number="settingsState.mcp_approval_timeout_min"></div><div class="field"><label>Remote MCP</label><select v-model="settingsState.remote_mcp_policy"><option value="https-allowlist-required">HTTPS allowlist 后允许</option><option value="deny-all">全部拒绝</option></select></div><div class="field"><label>TLS</label><select v-model="settingsState.tls_policy"><option value="verify">校验证书</option></select></div><div class="field"><label>无人值守 stdio</label><select v-model="settingsState.unattended_stdio"><option value="deny">禁止</option></select></div><div class="field"><label>Server stderr</label><select v-model="settingsState.server_stderr_policy"><option value="redact-10mib">脱敏保存，10 MiB</option><option value="hash-only">仅 Hash</option></select></div></div>
     <div v-else-if="settingsTab==='证据与脱敏'" class="form-grid"><div class="field"><label>脱敏证据保留（天）</label><input type="number" min="1" max="3650" v-model.number="settingsState.evidence_retention_days"></div><div class="field"><label>原始敏感证据</label><select v-model="settingsState.raw_sensitive_evidence"><option value="do-not-store">默认不保存</option><option value="authorized-7-days">授权后 7 天</option></select></div><div class="field"><label>Prompt</label><select v-model="settingsState.prompt_redaction"><option value="structured">结构化脱敏</option><option value="hash-only">仅 Hash</option></select></div><div class="field"><label>绝对路径</label><select v-model="settingsState.absolute_path_policy"><option value="tokenize">Token 化</option><option value="basename-only">仅文件名</option></select></div><div class="field full"><label>扩展敏感模式</label><textarea v-model="settingsState.extra_sensitive_patterns"></textarea></div></div>
     <div v-else-if="settingsTab==='代理与网络'" class="form-grid"><div class="field"><label>代理模式</label><select v-model="settingsState.proxy_mode"><option value="disabled">禁用</option><option value="enabled">启用</option></select></div><div class="field full"><label>代理地址</label><input v-model="settingsState.proxy_url" placeholder="保存时后端脱敏"></div><div class="field"><label>云分析</label><select v-model="settingsState.cloud_analysis" disabled><option :value="false">关闭</option></select></div><div class="field"><label>网络默认</label><select disabled><option>deny-by-default</option></select></div></div>
-    <div v-else-if="settingsTab==='规则更新'" class="form-grid"><div class="field"><label>规则源</label><select v-model="settingsState.rule_update_source"><option value="local-only">本地固定规则</option><option value="signed-mirror">签名内网镜像</option></select></div><div class="field"><label>更新状态</label><input :value="settingsState.rule_update_source==='local-only'?'手动导入':'签名校验后更新'" disabled></div><div class="field full"><label>导入设置 JSON</label><textarea v-model="settingsImportText" placeholder='{"settings":{"default_profile":"standard-complete"}}'></textarea></div><div class="field"><label>导入</label><button class="btn" :disabled="opsBusy" @click="importSettings">导入并校验</button></div></div>
+    <div v-else-if="settingsTab==='规则更新'" class="form-grid"><div class="field"><label>规则源</label><select v-model="settingsState.rule_update_source"><option value="local-only">本地固定规则</option><option value="signed-mirror">签名内网镜像</option></select></div><div class="field"><label>更新状态</label><input :value="settingsState.rule_update_source==='local-only'?'手动导入':'签名校验后更新'" disabled></div><div class="field full"><label>导入设置 JSON</label><textarea v-model="settingsImportText" placeholder="粘贴 settings.default_profile 等 JSON 配置"></textarea></div><div class="field"><label>导入</label><button class="btn" :disabled="opsBusy" @click="importSettings">导入并校验</button></div></div>
     <div v-else-if="settingsTab==='报告'" class="form-grid"><div class="field"><label>HTML</label><input type="checkbox" :checked="(settingsState.report_formats||[]).includes('HTML')" @change="toggleReportFormat('HTML')"></div><div class="field"><label>JSON</label><input type="checkbox" :checked="(settingsState.report_formats||[]).includes('JSON')" @change="toggleReportFormat('JSON')"></div><div class="field"><label>通知</label><select v-model="settingsState.notifications_enabled"><option :value="false">关闭</option><option :value="true">启用</option></select></div><div class="field"><label>状态</label><input :value="settingsState.status||'ACTIVE'" disabled></div></div>
     <div v-else><div class="callout">主平台托管时仍保持本地只读扫描边界。Secret 只允许保存 Reference，不保存明文 Token；全接口监听必须由主平台鉴权保护。</div><div class="form-grid"><div class="field"><label>主平台托管</label><select v-model="settingsState.host_platform_managed"><option :value="false">本地独立</option><option :value="true">主平台托管</option></select></div><div class="field"><label>Secret Reference</label><input v-model="settingsState.secret_reference" placeholder="ref://tenant/security-judge"></div><div class="field"><label>Managed By</label><input :value="settingsState.host_platform_managed?'host-platform':'local'" disabled></div><div class="field"><label>写入范围</label><input value="SQLite module_setting + app_setting.ui_state" disabled></div></div></div>
   </div>

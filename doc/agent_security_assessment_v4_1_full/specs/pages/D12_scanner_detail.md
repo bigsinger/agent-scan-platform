@@ -11,6 +11,8 @@
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
+当前正式应用实现为 `/assessment/scanners/{id}` 深链页面 `scanner-detail`，进入页面后读取 `GET /api/v1/scanners/{id}`，并复用 `POST /api/v1/scanners/{id}/self-test`。自测只检查本系统扫描器入口、规则目录、样本和 artifact 写入能力，默认不执行外部 CLI、不启动 Agent、不启动 stdio MCP、不修改 Codex/Hermes 或其他已安装 Agent。
+
 ## 2. 页面区域
 
 - 基础信息

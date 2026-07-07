@@ -11,6 +11,8 @@
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
+当前正式应用实现为 `/assessment/redteam-cases/{id}` 深链页面 `case-detail`，进入页面后读取 `GET /api/v1/redteam-cases/{id}`，并复用 `POST /api/v1/redteam-cases/{id}/validate` 与 `/dry-run` 完成校验和本地 deterministic dry-run。页面不得展示固定样例变量；dry-run 不调用外部模型、不启动 MCP Server 或真实 Tool，不修改已安装 Agent。
+
 ## 2. 页面区域
 
 - 元信息

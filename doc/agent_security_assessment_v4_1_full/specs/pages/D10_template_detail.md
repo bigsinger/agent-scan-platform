@@ -11,6 +11,8 @@
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
+当前正式应用实现为 `/assessment/profiles/{id}` 深链页面 `profile-detail`，进入页面后读取 `GET /api/v1/profiles/{id}`，并复用 `POST /api/v1/profiles/{id}/validate`、`/clone`、`/publish` 等真实 API。模板计划、规则数、红队用例数和安全策略必须按当前 SQLite/API 状态渲染；校验只写本系统记录与 artifact，不启动扫描、MCP 或已安装 Agent。
+
 ## 2. 页面区域
 
 - 基础信息

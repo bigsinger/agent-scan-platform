@@ -265,6 +265,8 @@ $validation.validation.download
 
 前端“创建完整测评”的检测包和动态用例、任务详情页“计划摘要”、测评模板页“当前模板计划”必须按当前 SQLite/API 状态渲染：规则数来自 `/api/v1/rules` 或本地 `rule_catalog()` 回退，agent-scan 映射来自兼容中心，MCP/Skill 来自发现记录，红队用例来自用例库。运维验收时不得接受固定 `84`、固定产品规则或固定 `dry_run` 字段作为计划证据。
 
+`/assessment/profiles/{id}` 是测评模板独立运行态详情页。运维验收时应确认页面读取 `GET /api/v1/profiles/{id}`，校验/克隆/发布按钮调用真实 API，且返回的 `mutates_installed_agents=false`、`agent_runtime_started=false` 边界没有被前端覆盖为原型文案。
+
 进入“创建完整测评”第 6 步时，前端会调用 `POST /api/v1/assessments/plan` 并显示返回的实时计划 JSON。接口会同步写入 `assessment-plan` artifact，可用以下命令验收本地边界和快照持久化：
 
 ```powershell
@@ -347,6 +349,8 @@ Invoke-WebRequest `
 ```
 
 验收时 `$case.case.variable_count` 和校验结果的 `variable_count` 应大于 0，动态红队页面“变量”表应来自 `redteam_case.variables` 或模板占位符解析；不得接受固定 `language/encoding/turn` 原型表作为功能证据。
+
+`/assessment/redteam-cases/{id}` 是红队用例独立运行态详情页。验收时应确认页面读取 `GET /api/v1/redteam-cases/{id}`，详情页校验和 dry-run 均调用真实 API；dry-run 证据包必须包含不调用外部模型、不启动 MCP/Tool、不修改已安装 Agent 的边界字段。
 
 ## 5. Linux / macOS 本地部署
 
@@ -723,6 +727,8 @@ $preview.preview.artifacts
 
 `preview.readiness` 按当前报告 JSON snapshot、Finding/Evidence 数量和 HTML/JSON artifact 文件存在性生成；`preview.rendering.pdf_status` 在未配置 PDF 渲染器时保持 `UNAVAILABLE`。该接口只读取本系统 `report`、`artifact` 和 `data/reports` 文件，不启动或修改 Codex/Hermes/Claude Code。
 
+`/assessment/reports/{id}/preview` 是报告独立运行态预览页。验收时应确认页面读取 `GET /api/v1/reports/{id}` 与 `GET /api/v1/reports/{id}/preview`，显示真实章节完整性、HTML/JSON artifact 状态和 PDF 不可用状态；不得接受静态 PDF 图标、固定章节勾选或外部回写成功文案作为交付证据。
+
 `report-delivery-package.json` 的 schema 为 `agent-security-report-delivery-package@4.1`。验收时应检查 `validation.status`、`artifacts.html.status=PASS`、`artifacts.json.status=PASS`、`raw_sensitive_evidence=not-included`、`external_delivery_performed=false`、`mutates_installed_agents=false`、`stdio_mcp_started=false` 和 `agent_runtime_started=false`。该包是本地交付材料，不是外部回写；外部投递仍需走企业 Connector 或人工审批流程。
 
 风险闭环：
@@ -978,6 +984,10 @@ $test.test.id
 ```
 
 规则统计应按当前规则记录计算，不能按原型固定数量验收。`rules/{id}/test` 会持久化 `test_run` 并写入审计，只运行本地 deterministic analyzer；不启动已安装 Agent、不启动 stdio MCP Server、不修改 Codex/Hermes/Claude Code 配置。
+
+`/assessment/rules/{id}` 是规则独立运行态详情页。验收时应确认页面读取 `GET /api/v1/rules/{id}`，测试和发布按钮调用 `/test`、`/publish` 真实 API，最近测试结果来自 SQLite `test_run` 或当前响应，而不是固定原型表。
+
+`/assessment/scanners/{id}` 是扫描器独立运行态详情页。验收时应确认页面读取 `GET /api/v1/scanners/{id}`，自测调用 `/self-test` 并生成 `scanner_run`、`scanner_health` 与 `scanner-self-test` artifact；返回必须保持 `external_cli_executed=false`、`stdio_mcp_started=false`、`mutates_installed_agents=false`。
 
 发现资产运维操作只写本系统数据库和制品目录，不会修改 Codex/Hermes/Claude Code 安装目录：
 

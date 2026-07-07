@@ -56,3 +56,5 @@
 实现说明：D01-D04 在正式应用中复用 `adapter-detail` 运行态页面组件，但保留各自独立深链。每个深链都读取对应 `GET /api/v1/adapters/{id}`，并通过 `POST /api/v1/adapters/{id}/self-test` 写入本系统 SQLite 与 `adapter-self-test` artifact；不得回退到 `/assessment/adapters` 列表视图冒充详情页。
 
 实现说明：D06-D07 在正式应用中分别使用 `mcp-detail` 与 `tool-detail` 运行态页面组件，保留 `/assessment/mcp/{id}` 与 `/assessment/tools/{id}` 深链。MCP 详情读取 `GET /api/v1/mcp-servers/{id}` 与 `/tools`，Tool 详情读取 `GET /api/v1/tools/{id}`、`/similar` 与 `/flows`；所有检查保持 `local-readonly`，不得启动 stdio MCP 或连接 Remote MCP。
+
+实现说明：D08-D12 在正式应用中分别使用 `case-detail`、`report-preview`、`profile-detail`、`rule-detail` 与 `scanner-detail` 运行态页面组件，保留 `/assessment/redteam-cases/{id}`、`/assessment/reports/{id}/preview`、`/assessment/profiles/{id}`、`/assessment/rules/{id}` 与 `/assessment/scanners/{id}` 深链。红队详情读取 `GET /api/v1/redteam-cases/{id}` 并只允许 deterministic dry-run；报告预览读取 `GET /api/v1/reports/{id}` 与 `/preview`；模板、规则和扫描器详情分别读取对应详情 API。所有动作保持本系统 SQLite/artifact 写入边界，不启动或修改 Codex/Hermes/Claude Code/Cursor 等已安装 Agent。

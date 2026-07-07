@@ -11,6 +11,8 @@
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
+当前正式应用实现为 `/assessment/rules/{id}` 深链页面 `rule-detail`，进入页面后读取 `GET /api/v1/rules/{id}`，并复用 `POST /api/v1/rules/{id}/test` 与 `/publish`。规则定义、测试结果和发布门禁必须来自本地规则目录、SQLite 和最近测试记录；测试只运行 deterministic analyzer，不启动 Codex/Hermes、stdio MCP 或真实 Agent。
+
 ## 2. 页面区域
 
 - 规则元信息

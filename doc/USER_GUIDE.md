@@ -178,6 +178,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 
 校验会写入 `compatibility_test` 和 `assessment-profile-validation` artifact，只检查本系统模板配置，不启动扫描、不启动 MCP、不修改 Codex/Hermes 或任何已安装 Agent。
 
+点击模板“详情”或访问 `/assessment/profiles/{id}` 会进入独立测评模板详情页。该页读取 `GET /api/v1/profiles/{id}` 展示当前模板计划、规则/用例数量、报告格式和安全边界，并可在详情页直接执行校验、克隆、发布和使用模板；所有动作仍只写本系统 SQLite 与 artifact。
+
 “创建完整测评”的检测包、动态用例和任务详情页“计划摘要”均来自当前运行态：本地规则目录、agent-scan 兼容映射、当前 Adapter、已发现 MCP/Skill、红队用例、选中任务和模板记录共同决定页面内容。页面不会再展示固定 `84` 条规则、固定产品专项或固定 `dry_run` 演示策略；没有运行发现或加载规则时会显示真实空态。
 
 向导进入第 6 步时会调用 `POST /api/v1/assessments/plan` 生成当前 Assessment Plan，并把返回 JSON 显示在页面中，同时写入 `assessment-plan` artifact。计划中会包含 `scan_options`、`remote_analysis=false`、`remote_analysis_requested`、`cloud_analysis_status` 和 `mutates_installed_agents=false` 等本地交付边界字段；这份 artifact 可作为客户评审时的授权范围和禁止动作证据。
@@ -579,6 +581,8 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 - “回归”：在用例库中对单条用例执行 dry-run，并跳转回动态红队控制台。
 - “校验当前”：校验输入、`dry-run` 安全模式、变体预算和变量归一化结果，并记录审计事件。
 
+点击用例“详情”或访问 `/assessment/redteam-cases/{id}` 会进入独立红队用例详情页。该页读取 `GET /api/v1/redteam-cases/{id}` 展示用例变量、输入模板、校验结果和安全边界，并可在详情页执行校验或本地 dry-run；没有 API 数据时显示空态，不回退到原型样例。
+
 ## 7. 风险中心
 
 位置：
@@ -729,6 +733,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($preflight.download)" -OutFile po
 4. 点击“交付包”或访问 `/api/v1/reports/{report_id}/package`，生成包含 HTML/JSON 制品哈希、章节完整性、Finding/Evidence 摘要和只读边界的 JSON artifact。
 
 报告中心的“章节完整性”和“渲染能力”来自 `GET /api/v1/reports/{report_id}` 的 `preview.readiness`、`preview.rendering` 和 artifact 状态。系统只展示本地已生成 HTML/JSON 制品的真实存在性、大小和模板版本；当前本地版本未配置 PDF 渲染器时会显示 `UNAVAILABLE`，不会伪造 Chromium 或 PDF 可用状态。
+
+点击报告“预览”或访问 `/assessment/reports/{report_id}/preview` 会进入独立报告预览页。该页读取 `GET /api/v1/reports/{id}` 与 `GET /api/v1/reports/{id}/preview` 展示章节完整性、渲染能力、制品状态和交付边界；页面不会生成虚假 PDF，也不会向外部平台投递报告。
 
 报告交付包：
 
@@ -1261,6 +1267,8 @@ Invoke-RestMethod `
 
 规则库页面的统计卡和发布门禁来自当前 `/api/v1/rules` 结果、本地 `rule_catalog()` 回退和最近一次 `/api/v1/rules/{id}/test` 响应，不再展示原型固定的 84/31/67/18 数量。规则测试会写入本系统 `test_run`，标记 `safe_mode=local-deterministic` 和 `mutates_installed_agents=false`；测试过程只运行本地 deterministic analyzer，不启动 Codex/Hermes、不启动 stdio MCP，也不修改已安装 Agent。
 
+点击规则“详情”或访问 `/assessment/rules/{id}` 会进入独立规则详情页。该页读取 `GET /api/v1/rules/{id}` 展示规则定义、发布门禁、最近测试和本地安全边界，并可从详情页触发测试或发布；不存在当前规则记录时显示空态，不使用固定 YAML 样例。
+
 实现完整性矩阵页面来自 `/api/v1/completeness` 的实时摘要和行数据：页面/详情数量来自 V4.1 契约行，API 数量来自当前注入的 API 契约，SQLite 表数来自 `/api/v1/sqlite/status`，规则数来自本地 `rule_catalog()`。每行的 `Audit` 会检查 `doc/agent_security_assessment_v4_1_full` 中对应 prototype/spec 文件是否存在，`Contract` 会检查页面声明的 API 是否登记在契约中；没有真实自动化断言的 `E2E` 会显示 `NOT_ASSERTED`，不会再用固定勾选或“0 缺口”冒充验收结论。
 
 完整性导出：
@@ -1292,6 +1300,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($selfTest.self_test.download)" -O
 ```
 
 默认自测不执行外部 CLI、不启动 Agent、不启动 stdio MCP，也不发起云分析；返回和 artifact 中必须包含 `mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`、`external_cli_executed=false`。如需对开发回归样本执行完整扫描链路，必须显式传入 `sample_path`。
+
+点击扫描器“详情”或访问 `/assessment/scanners/{id}` 会进入独立扫描器详情页。该页读取 `GET /api/v1/scanners/{id}` 展示入口、依赖、运行态、最近自测和 manifest，并可触发 `POST /api/v1/scanners/{id}/self-test`；自测仍只验证本系统扫描器能力和 artifact 写入，不影响已安装 Agent。
 
 周期计划：
 

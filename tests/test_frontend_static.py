@@ -376,6 +376,44 @@ def test_mcp_and_tool_detail_deep_links_are_runtime_backed():
     assert "table.compact-table{min-width:0" in style
 
 
+def test_remaining_detail_deep_links_are_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+
+    for current in [
+        "current==='case-detail'",
+        "current==='report-preview'",
+        "current==='profile-detail'",
+        "current==='rule-detail'",
+        "current==='scanner-detail'",
+    ]:
+        assert current in html
+
+    assert "if(path.startsWith('/assessment/redteam-cases/')) return 'case-detail';" in app_js
+    assert "if(path.match(/^\\/assessment\\/reports\\/[^/]+\\/preview$/)) return 'report-preview';" in app_js
+    assert "if(path.startsWith('/assessment/profiles/')) return 'profile-detail';" in app_js
+    assert "if(path.startsWith('/assessment/rules/')) return 'rule-detail';" in app_js
+    assert "if(path.startsWith('/assessment/scanners/')) return 'scanner-detail';" in app_js
+
+    for api in [
+        "/api/v1/redteam-cases/'+encodeURIComponent(id)",
+        "/api/v1/reports/'+encodeURIComponent(report.id)",
+        "/api/v1/profiles/'+encodeURIComponent(id)",
+        "/api/v1/rules/'+encodeURIComponent(id)",
+        "/api/v1/scanners/'+encodeURIComponent(id)",
+    ]:
+        assert api in app_js
+
+    assert "async loadRedteamCaseDetail" in app_js
+    assert "async loadProfileDetail" in app_js
+    assert "async loadRuleDetail" in app_js
+    assert "async loadScannerDetail" in app_js
+    assert "不调用外部模型或真实 Tool" in html
+    assert "不伪造 PDF 或外部投递" in html
+    assert "不启动 Codex/Hermes/MCP" in html
+    assert "不启动 Codex/Hermes" in html
+
+
 def test_attack_path_visualization_uses_runtime_nodes():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
