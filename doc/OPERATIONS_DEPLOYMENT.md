@@ -825,6 +825,16 @@ $drafts = Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:8000/api/v1/attack-paths/$($path.attack_path.id)/policy-drafts"
 
+$preflight = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/policy-drafts/$($drafts.policy_drafts[0].id)/preflight" `
+  -Body (@{ reason = "operation preflight" } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($preflight.download)" `
+  -OutFile policy-draft-preflight.json
+
 Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($drafts.policy_drafts[0].download)" `
   -OutFile policy-draft.json
@@ -836,6 +846,8 @@ Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($package.download)" `
   -OutFile policy-draft-package.json
 ```
+
+策略预检 artifact 的 schema 为 `agent-security-policy-draft-preflight@4.1`，必须包含 `external_policy_published=false`、`external_agent_config_written=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`、`mutates_installed_agents=false` 和 `raw_sensitive_evidence=not-included`。预检只写入本系统 `policy_decision`、`policy_draft`、`audit_event` 和 artifact，不执行发布。
 
 策略包 artifact 的 schema 为 `agent-security-policy-draft-package@4.1`，必须包含 `validation.status`、`deployment.publish_mode=manual-approval-only`、`external_policy_published=false`、`mutates_installed_agents=false` 和 `raw_sensitive_evidence=not-included`。这份包是交付评审材料，不是运行时发布动作。
 
@@ -1104,9 +1116,9 @@ python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8765
 
 - `config_snapshot`：Agent 配置、MCP、Skill 的路径哈希与 SHA-256 基线。
 - `guard_event`：每次只读 Guard 检查和执行前防护判定的统计结果、artifact ID 与下载路径。
-- `policy_decision`：沙箱自测和 `guard/evaluate` 产生的路径、网络、进程、stdio MCP 与环境变量判定记录。
+- `policy_decision`：沙箱自测、`guard/evaluate` 和策略草案预检产生的路径、网络、进程、stdio MCP 与环境变量判定记录。
 - `defense_recommendation`：配置变化、stdio MCP 审批等防御建议。
-- `artifact`：`passive-guard-check` 与 `guard-preflight-decision` JSON 证据快照，可用于企业 POC 留痕。
+- `artifact`：`passive-guard-check`、`guard-preflight-decision` 与 `policy-draft-preflight` JSON 证据快照，可用于企业 POC 留痕。
 
 第三方与许可证导出相关数据落在：
 

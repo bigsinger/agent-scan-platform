@@ -672,10 +672,11 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 - 页面上的链路图、节点表和风险标签来自当前 `attack_path.nodes`、`finding_ids`、`evidence_ids` 和关联 Finding；没有扫描结果时展示空态，不再显示固定演示路径。
 - “确认路径”只记录人工确认状态和审计事件，不执行任何外部策略发布。
 - “生成策略草案”会创建 `policy_draft` 记录、脱敏 JSON artifact 和 `defense_recommendation`，用于交付评审或后续主平台审批。
+- “预检”会对单条策略草案执行本地发布前门禁，生成 `policy-draft-preflight` artifact，并把 `preflight_status`、`preflight_artifact_id`、`preflight_checked_at` 回写到草案。
 - “导出策略包”会将当前攻击路径关联的策略草案、Finding、证据摘要、防御建议和发布门禁打包为 `policy-draft-package` artifact。
 - 策略草案默认 `DRAFT`，`mutates_installed_agents=false`，不会自动修改 Codex、Hermes、Claude Code 或 MCP 配置。
 - 策略草案列表按当前攻击路径过滤；切换路径时只展示该路径关联的草案，避免不同任务的整改建议混在一起。
-- 策略包 `external_policy_published=false`，仅用于企业评审、工单或主平台审批输入，不会自动生效。
+- 预检和策略包都保持 `external_policy_published=false`，仅用于企业评审、工单或主平台审批输入，不会自动生效。
 
 常见策略草案包括：
 
@@ -684,6 +685,19 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 - 工作区路径白名单。
 - 未批准外传 Sink 阻断。
 - 证据与报告强制脱敏。
+
+单条策略草案预检：
+
+```powershell
+$preflight = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/policy-drafts/<policy_draft_id>/preflight" `
+  -Body (@{ reason = "local policy draft preflight" } | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($preflight.download)" -OutFile policy-draft-preflight.json
+```
+
+预检会写入 `policy_decision`、`policy_draft`、`audit_event` 和本地 JSON artifact。常见检查包括外部审批要求、不执行外部发布、不修改已安装 Agent、stdio MCP 逐项审批、敏感路径拒绝、未批准外传拒绝和敏感环境变量脱敏。该动作不会发布策略，不写 Agent 配置，不启动 stdio MCP 或外部进程。
 
 ## 9. 报告中心
 

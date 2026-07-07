@@ -1220,6 +1220,9 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         drafts = create_policy_drafts_for_attack_path(store, state, attack_path_id, body)
         result["policy_drafts"] = drafts
         result["status"] = "DRAFTED"
+    elif path.startswith("/policy-drafts/") and path.endswith("/preflight"):
+        draft_id = path.split("/")[-2]
+        result.update(preflight_policy_draft(store, state, draft_id, body))
     elif path.startswith("/defense-recommendations/") and path.endswith("/acknowledge"):
         recommendation_id = path.split("/")[-2]
         result["recommendation"] = update_defense_recommendation_status(store, state, recommendation_id, "ACKNOWLEDGED", body)
@@ -7970,6 +7973,288 @@ def export_policy_draft_package(store: Any, state: dict, attack_path_id: str | N
     }
 
 
+def preflight_policy_draft(store: Any, state: dict, draft_id: str, body: dict) -> dict:
+    draft = store.get_record("policy_draft", draft_id) or find_item(state.get("policyDrafts", []), draft_id)
+    if not draft:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "policy draft not found",
+                "id": draft_id,
+                "safe_mode": "policy-evaluation-only",
+                "mutates_installed_agents": False,
+            },
+        )
+    policy = load_sandbox_policy(store, state)
+    preflight_id = new_id("ppf")
+    checked_at = utc_now()
+    checks = policy_draft_preflight_checks(policy, draft, preflight_id, checked_at)
+    for check in checks:
+        store.upsert_record("policy_decision", check, status=check["status"])
+    status = "FAIL" if any(check["status"] == "FAIL" for check in checks) else "WARN" if any(check["status"] == "WARN" for check in checks) else "PASS"
+    payload = {
+        "schema": "agent-security-policy-draft-preflight@4.1",
+        "id": preflight_id,
+        "checked_at": checked_at,
+        "status": status,
+        "policy_draft": policy_draft_export_summary(draft),
+        "checks": checks,
+        "summary": policy_draft_preflight_summary(checks),
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "external_policy_published": False,
+        "external_agent_config_written": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "network_request_sent": False,
+        "raw_sensitive_evidence": "not-included",
+        "boundary": "策略草案预检只评估本系统沙箱/Guard 策略并写入 SQLite/artifact；不发布外部策略，不写 Codex/Hermes/MCP/Skill 配置，不启动任何 Agent 或 stdio MCP。",
+        "request": {
+            "requested_by": redact_text(str(body.get("actor") or "local-user"), max_len=120),
+            "reason": redact_text(str(body.get("reason") or "policy draft preflight"), max_len=500),
+        },
+    }
+    artifact = store.write_artifact(
+        "policy-draft-preflight",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "policy_draft_id": draft_id,
+            "preflight_id": preflight_id,
+            "status": status,
+            "safe_mode": "policy-evaluation-only",
+            "mutates_installed_agents": False,
+        },
+    )
+    draft_update = {
+        **draft,
+        "preflight_status": status,
+        "preflight_id": preflight_id,
+        "preflight_artifact_id": artifact["id"],
+        "preflight_artifact_path": artifact.get("relative_path", ""),
+        "preflight_download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "preflight_checked_at": checked_at,
+        "preflight_summary": payload["summary"],
+        "status": "REVIEW_READY" if status == "PASS" else draft.get("status", "DRAFT"),
+        "state_code": "PREFLIGHT_PASS" if status == "PASS" else "PREFLIGHT_REVIEW",
+        "mutates_installed_agents": False,
+        "external_policy_published": False,
+        "updated_at": utc_now(),
+    }
+    updated = store.upsert_record("policy_draft", draft_update, status=str(draft_update.get("status") or "DRAFT"))
+    merge_state_record(state, "policyDrafts", updated)
+    store.audit_event(
+        "policy_draft.preflight",
+        "policy_draft",
+        draft_id,
+        {
+            "preflight_id": preflight_id,
+            "artifact_id": artifact["id"],
+            "status": status,
+            "summary": payload["summary"],
+            "safe_mode": "policy-evaluation-only",
+            "mutates_installed_agents": False,
+            "external_policy_published": False,
+            "external_agent_config_written": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+        },
+    )
+    return {
+        "preflight": {
+            "id": preflight_id,
+            "schema": payload["schema"],
+            "status": status,
+            "checked_at": checked_at,
+            "summary": payload["summary"],
+            "checks": checks,
+            "artifact_id": artifact["id"],
+            "download": f"/api/v1/artifacts/{artifact['id']}/download",
+            "safe_mode": "policy-evaluation-only",
+            "mutates_installed_agents": False,
+            "external_policy_published": False,
+        },
+        "policy_draft": updated,
+        "checks": checks,
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "external_policy_published": False,
+        "external_agent_config_written": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+    }
+
+
+def policy_draft_preflight_checks(policy: dict, draft: dict, preflight_id: str, checked_at: str) -> list[dict]:
+    control = str(draft.get("control") or draft.get("type") or "").lower()
+    checks = [
+        policy_draft_preflight_record(
+            preflight_id,
+            checked_at,
+            draft,
+            "manual_approval_required",
+            "发布门禁",
+            "外部审批要求",
+            "REQUIRED",
+            "REQUIRED" if draft.get("requires_external_approval", True) else "MISSING",
+            "策略草案发布前必须由主平台或人工流程审批",
+            str(draft.get("id") or ""),
+        ),
+        policy_draft_preflight_record(
+            preflight_id,
+            checked_at,
+            draft,
+            "no_external_publish",
+            "发布门禁",
+            "本模块不执行外部发布",
+            "FALSE",
+            "FALSE" if not draft.get("external_policy_published") else "TRUE",
+            "预检不会调用主平台发布接口，也不会写入 Agent 配置",
+            "external_policy_published",
+        ),
+        policy_draft_preflight_record(
+            preflight_id,
+            checked_at,
+            draft,
+            "no_agent_mutation",
+            "安全边界",
+            "不修改已安装 Agent",
+            "FALSE",
+            "FALSE" if draft.get("mutates_installed_agents") is False else "TRUE",
+            "只写本系统 SQLite 和 artifact",
+            "mutates_installed_agents",
+        ),
+    ]
+    if "consent" in control or "tool" in control or "mcp" in control:
+        decision = sandbox_mcp_decision(policy, "stdio")
+        checks.append(
+            policy_draft_preflight_record(
+                preflight_id,
+                checked_at,
+                draft,
+                "stdio_mcp_gate",
+                "MCP 策略",
+                "stdio MCP 不自动启动",
+                "REQUIRE_CONSENT",
+                decision.get("decision", ""),
+                decision.get("detail", ""),
+                decision.get("target", "stdio"),
+            )
+        )
+    if "path" in control or "allowlist" in control or "data_access" in str(draft.get("type") or ""):
+        decision = sandbox_path_decision(policy, "read", Path.home() / ".ssh" / "id_rsa")
+        checks.append(
+            policy_draft_preflight_record(
+                preflight_id,
+                checked_at,
+                draft,
+                "secret_path_denied",
+                "路径策略",
+                "敏感路径读取拒绝",
+                "DENY",
+                decision.get("decision", ""),
+                decision.get("detail", ""),
+                decision.get("target", ""),
+            )
+        )
+    if "egress" in control or "network" in str(draft.get("type") or ""):
+        decision = sandbox_network_decision(policy, "https://unapproved-egress.local/policy-preflight")
+        checks.append(
+            policy_draft_preflight_record(
+                preflight_id,
+                checked_at,
+                draft,
+                "unapproved_egress_denied",
+                "网络策略",
+                "未批准外传默认拒绝",
+                "DENY",
+                decision.get("decision", ""),
+                decision.get("detail", ""),
+                decision.get("target", ""),
+            )
+        )
+    if "redaction" in control or "redact" in str(draft.get("effect") or ""):
+        decision = sandbox_env_decision(policy, {"HERMES_TOKEN": "sk-test-value", "PATH": "safe"})
+        checks.append(
+            policy_draft_preflight_record(
+                preflight_id,
+                checked_at,
+                draft,
+                "sensitive_env_redacted",
+                "脱敏策略",
+                "敏感环境变量脱敏",
+                "REDACT",
+                decision.get("decision", ""),
+                decision.get("detail", ""),
+                decision.get("target", ""),
+            )
+        )
+    if "untrusted" in control or "input" in str(draft.get("type") or ""):
+        checks.append(
+            policy_draft_preflight_record(
+                preflight_id,
+                checked_at,
+                draft,
+                "untrusted_input_review_gate",
+                "输入边界",
+                "外部内容进入人工复核",
+                "REVIEW_REQUIRED",
+                "REVIEW_REQUIRED" if str(draft.get("effect") or "").lower() in {"review", "deny-until-approved"} else "MISSING",
+                "外部内容不得提升为系统/开发者指令",
+                "content_sources",
+            )
+        )
+    return checks
+
+
+def policy_draft_preflight_record(
+    preflight_id: str,
+    checked_at: str,
+    draft: dict,
+    check_id: str,
+    category: str,
+    name: str,
+    expected: str,
+    actual: str,
+    detail: str,
+    target: str,
+) -> dict:
+    status = "PASS" if actual == expected else "FAIL"
+    return {
+        "id": "dec_" + stable_hash(f"{preflight_id}:{draft.get('id')}:{check_id}", 24),
+        "test_run_id": preflight_id,
+        "policy_draft_id": draft.get("id"),
+        "attack_path_id": draft.get("attack_path_id"),
+        "check_id": f"policy_draft.preflight.{check_id}",
+        "category": category,
+        "name": name,
+        "expected": expected,
+        "actual": actual,
+        "status": status,
+        "detail": redact_text(str(detail), max_len=800),
+        "target": redact_text(str(target), max_len=500),
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "external_policy_published": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "network_request_sent": False,
+        "checked_at": checked_at,
+        "created_at": checked_at,
+    }
+
+
+def policy_draft_preflight_summary(checks: list[dict]) -> dict:
+    return {
+        "total": len(checks),
+        "pass": len([check for check in checks if check.get("status") == "PASS"]),
+        "fail": len([check for check in checks if check.get("status") == "FAIL"]),
+        "warn": len([check for check in checks if check.get("status") == "WARN"]),
+    }
+
+
 def validate_policy_draft_package(drafts: list[dict]) -> dict:
     checks = [
         {
@@ -8020,6 +8305,13 @@ def policy_draft_export_summary(draft: dict) -> dict:
         "artifact_id": draft.get("artifact_id"),
         "artifact_path": draft.get("artifact_path"),
         "download": draft.get("download"),
+        "preflight_status": draft.get("preflight_status"),
+        "preflight_id": draft.get("preflight_id"),
+        "preflight_artifact_id": draft.get("preflight_artifact_id"),
+        "preflight_artifact_path": draft.get("preflight_artifact_path"),
+        "preflight_download": draft.get("preflight_download"),
+        "preflight_checked_at": draft.get("preflight_checked_at"),
+        "preflight_summary": draft.get("preflight_summary") or {},
         "safe_mode": draft.get("safe_mode") or "draft-only",
         "mutates_installed_agents": False,
         "requires_external_approval": draft.get("requires_external_approval", True),

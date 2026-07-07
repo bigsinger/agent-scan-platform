@@ -64,6 +64,7 @@
     state.scheduleLastRun = null;
     state.reportSyncLastDownload = '';
     state.reportPackageExport = null;
+    state.policyDraftPreflight = null;
     state.retestDiff = null;
     state.selectedFindingHistory = [];
     state.completenessSummary = {};
@@ -144,6 +145,7 @@ data(){
     initial.attackPaths = initial.attackPaths || [];
     initial.policyDrafts = initial.policyDrafts || [];
     initial.policyDraftExport = null;
+    initial.policyDraftPreflight = null;
     initial.scheduleDraft = Object.assign({name:'本机变化扫描', type:'变化扫描', target:'已登记配置快照', target_path:'', trigger:'0 2 * * *', misfire:'跳过', status:'ACTIVE', profile:'quick-experience', max_backlog:1, max_files:100}, initial.scheduleDraft || {});
     initial.scheduleLastRun = null;
     initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
@@ -2398,6 +2400,19 @@ data(){
       if(!draft) return;
       if(draft.download) window.open(draft.download, '_blank', 'noopener');
       this.toastMsg('已请求下载策略草案 JSON');
+    },
+    async preflightPolicyDraft(draft){
+      const target=draft || this.selectedPolicyDraft;
+      if(!target || !target.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/policy-drafts/'+encodeURIComponent(target.id)+'/preflight', {reason:'local policy draft preflight'});
+        this.policyDraftPreflight=res.preflight || null;
+        if(res.policy_draft){ this.mergeRecords('policyDrafts', [res.policy_draft]); this.selectedPolicyDraft=res.policy_draft; }
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('策略草案预检：'+((res.preflight&&res.preflight.status)||'DONE'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
     },
     async exportPolicyDraftPackage(){
       this.opsBusy=true; this.apiError='';

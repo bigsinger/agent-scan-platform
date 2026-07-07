@@ -1867,6 +1867,39 @@ def test_attack_path_policy_drafts_are_review_only_artifacts():
     assert all(draft["status"] == "DRAFT" for draft in policy_drafts)
     assert all(draft["mutates_installed_agents"] is False for draft in policy_drafts)
     assert all(draft["download"].endswith("/download") for draft in policy_drafts)
+    mcp_draft = next(draft for draft in policy_drafts if draft["control"] == "require_human_consent")
+    preflight = client.post(
+        f"/api/v1/policy-drafts/{mcp_draft['id']}/preflight",
+        json={"reason": "contract preflight"},
+    )
+    assert preflight.status_code == 200
+    preflight_body = preflight.json()
+    assert preflight_body["preflight"]["schema"] == "agent-security-policy-draft-preflight@4.1"
+    assert preflight_body["preflight"]["status"] == "PASS"
+    assert preflight_body["preflight"]["mutates_installed_agents"] is False
+    assert preflight_body["external_policy_published"] is False
+    assert preflight_body["stdio_mcp_started"] is False
+    assert preflight_body["policy_draft"]["preflight_status"] == "PASS"
+    assert preflight_body["policy_draft"]["status"] == "REVIEW_READY"
+    assert {check["check_id"] for check in preflight_body["checks"]} >= {
+        "policy_draft.preflight.manual_approval_required",
+        "policy_draft.preflight.no_external_publish",
+        "policy_draft.preflight.no_agent_mutation",
+        "policy_draft.preflight.stdio_mcp_gate",
+    }
+    assert any(check["actual"] == "REQUIRE_CONSENT" for check in preflight_body["checks"])
+    assert api_v1.get_store().get_record("policy_decision", preflight_body["checks"][0]["id"]) is not None
+    stored_draft = api_v1.get_store().get_record("policy_draft", mcp_draft["id"])
+    assert stored_draft["preflight_artifact_id"] == preflight_body["artifact"]["id"]
+    preflight_download = client.get(preflight_body["download"])
+    assert preflight_download.status_code == 200
+    preflight_package = preflight_download.json()
+    assert preflight_package["schema"] == "agent-security-policy-draft-preflight@4.1"
+    assert preflight_package["external_policy_published"] is False
+    assert preflight_package["external_agent_config_written"] is False
+    assert preflight_package["agent_runtime_started"] is False
+    assert preflight_package["stdio_mcp_started"] is False
+    assert preflight_package["raw_sensitive_evidence"] == "not-included"
 
     listed = client.get("/api/v1/policy-drafts")
     assert listed.status_code == 200
@@ -1909,6 +1942,7 @@ def test_attack_path_policy_drafts_are_review_only_artifacts():
     }
     assert all(item["mutates_installed_agents"] is False for item in package["policy_drafts"])
     assert all(item["requires_external_approval"] is True for item in package["policy_drafts"])
+    assert any(item["preflight_status"] == "PASS" for item in package["policy_drafts"])
     assert "sk-test-value" not in package_download.text
 
     with api_v1.get_store().connect() as conn:
@@ -1918,6 +1952,13 @@ def test_attack_path_policy_drafts_are_review_only_artifacts():
         ).fetchone()
     assert event["action"] == "get.policy-drafts.export"
     assert json.loads(event["payload_json"])["external_policy_published"] is False
+    with api_v1.get_store().connect() as conn:
+        preflight_event = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (mcp_draft["id"],),
+        ).fetchone()
+    assert preflight_event["action"] == "policy_draft.preflight"
+    assert json.loads(preflight_event["payload_json"])["external_policy_published"] is False
 
 
 def test_redteam_dry_run_creates_local_evidence_without_agent_mutation():
