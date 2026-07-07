@@ -702,6 +702,19 @@ def test_scanner_center_surfaces_runtime_self_test_artifact():
     assert "扫描器自测已写入 scanner_health" in app_js
 
 
+def test_schedule_due_runner_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "@click=\"runDueSchedules\"" in html
+    assert "执行到期计划" in html
+    assert "scheduleDueRun" in html
+    assert "到期批次：{{scheduleDueRun.counts&&scheduleDueRun.counts.executed}}" in html
+    assert "async runDueSchedules" in app_js
+    assert "/api/v1/schedules/run-due" in app_js
+    assert "到期计划执行完成" in app_js
+    assert "max_runs:10" in app_js
+
+
 def test_completeness_matrix_ui_uses_runtime_summary():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

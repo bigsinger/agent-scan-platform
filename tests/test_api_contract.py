@@ -2112,6 +2112,44 @@ def test_capability_management_actions_are_persisted():
     backup_run = client.post(f"/api/v1/schedules/{backup_schedule['id']}/run-now", json={})
     assert backup_run.json()["result"]["action"] == "sqlite-backup"
     assert backup_run.json()["result"]["sha256"]
+    due_schedule = client.post(
+        "/api/v1/schedules",
+        json={
+            "name": "Contract Due Discovery",
+            "type": "本机发现",
+            "target_path": "tests/fixtures/sample_agent_project",
+            "trigger": "*/30 * * * *",
+            "next_run_at": "2026-01-01T00:00:00Z",
+            "status": "ACTIVE",
+        },
+    ).json()["schedule"]
+    due_run = client.post("/api/v1/schedules/run-due", json={"now": "2026-01-01T00:01:00Z", "max_runs": 5})
+    assert due_run.status_code == 200
+    due_body = due_run.json()
+    assert due_body["schema"] == "agent-security-schedule-due-run@4.1"
+    assert due_body["counts"]["executed"] >= 1
+    assert any(item["schedule_id"] == due_schedule["id"] for item in due_body["runs"])
+    assert due_body["safe_mode"] == "local-readonly"
+    assert due_body["mutates_installed_agents"] is False
+    assert due_body["agent_runtime_started"] is False
+    assert due_body["stdio_mcp_started"] is False
+    due_download = client.get(due_body["download"])
+    assert due_download.status_code == 200
+    due_package = due_download.json()
+    assert due_package["schema"] == "agent-security-schedule-due-run@4.1"
+    assert due_package["mutates_installed_agents"] is False
+    assert due_package["stdio_mcp_started"] is False
+    assert any(item["schedule_id"] == due_schedule["id"] for item in due_package["runs"])
+    updated_due = api_v1.get_store().get_record("schedule", due_schedule["id"])
+    assert updated_due["last_result"] == "COMPLETED"
+    assert updated_due["run_count"] >= 1
+    with api_v1.get_store().connect() as conn:
+        due_event = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (due_body["artifact"]["id"],),
+        ).fetchone()
+    assert due_event["action"] == "post.schedules.run-due"
+    assert json.loads(due_event["payload_json"])["mutates_installed_agents"] is False
 
     unsafe_schedule = client.post(
         "/api/v1/schedules",

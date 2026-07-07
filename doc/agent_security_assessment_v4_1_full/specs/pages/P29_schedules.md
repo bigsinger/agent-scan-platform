@@ -75,6 +75,7 @@
 - `POST /api/v1/schedules` 会规范化并校验计划，保存到 SQLite `schedule` 表。
 - `PATCH /api/v1/schedules/{id}` 支持暂停/恢复并写审计。
 - `POST /api/v1/schedules/{id}/run-now` 会创建 `task` 运行记录、更新 `schedule.last_run_at/next_run_at/last_result`，并生成 `schedule-run` JSON artifact。
+- `POST /api/v1/schedules/run-due` 会在单 FastAPI 进程边界内读取 ACTIVE 计划，执行 `next_run_at<=now` 的到期计划，并生成 `schedule-due-run` JSON artifact。
 - `run-now` 支持本机发现、变化扫描（Guard）、全量测评、SQLite 备份和数据清理 dry-run。
 - 数据清理计划只生成候选清单，不删除 artifact、报告、证据或数据库记录。
 - 所有计划运行保持 `safe_mode=local-readonly` 和 `mutates_installed_agents=false`，不得启动或修改 Codex、Hermes 或其他已安装 Agent。

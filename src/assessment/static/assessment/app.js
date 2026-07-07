@@ -62,6 +62,7 @@
     state.skillScanResult = null;
     state.mcpInspection = null;
     state.scheduleLastRun = null;
+    state.scheduleDueRun = null;
     state.reportSyncLastDownload = '';
     state.reportPackageExport = null;
     state.policyDraftPreflight = null;
@@ -148,6 +149,7 @@ data(){
     initial.policyDraftPreflight = null;
     initial.scheduleDraft = Object.assign({name:'本机变化扫描', type:'变化扫描', target:'已登记配置快照', target_path:'', trigger:'0 2 * * *', misfire:'跳过', status:'ACTIVE', profile:'quick-experience', max_backlog:1, max_files:100}, initial.scheduleDraft || {});
     initial.scheduleLastRun = null;
+    initial.scheduleDueRun = null;
     initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
@@ -2593,6 +2595,19 @@ data(){
         if(res.result && res.result.assessment_id){ await this.loadBootstrap(); }
         this.scheduleLastRun=res;
         this.toastMsg('计划立即执行完成：'+(res.result&&res.result.action || 'run-now')+' · '+(res.run&&res.run.state_code || res.run&&res.run.status));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async runDueSchedules(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/schedules/run-due', {max_runs:10});
+        this.scheduleDueRun=res;
+        for(const item of res.runs || []){
+          if(item.run_id){ this.mergeRecords('tasks', [{id:item.run_id, schedule_id:item.schedule_id, name:'到期计划执行 · '+(item.schedule_name||''), state_code:item.state_code, status:item.state_code, safe_mode:'local-readonly', mutates_installed_agents:false}]); }
+        }
+        await this.loadBootstrap();
+        this.toastMsg('到期计划执行完成：'+((res.counts&&res.counts.executed)||0)+' / '+((res.counts&&res.counts.due)||0));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },

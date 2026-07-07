@@ -1029,11 +1029,19 @@ $schedule = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sch
 $run = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($schedule.schedule.id)/run-now"
 $run.result
 
+$due = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/schedules/run-due `
+  -Body (@{ max_runs = 10 } | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($due.download)" -OutFile schedule-due-run.json
+
 $backup = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/schedules -Body (@{ name = "SQLite 备份计划"; type = "数据库备份"; trigger = "0 3 * * *"; status = "ACTIVE" } | ConvertTo-Json) -ContentType "application/json"
 Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/schedules/$($backup.schedule.id)/run-now"
 ```
 
 周期计划 `run-now` 会创建 `task` 运行记录、更新 `schedule.last_run_at/next_run_at/last_result`，并生成 `schedule-run` JSON artifact。当前本地动作包括本机发现、Guard 变化扫描、全量测评、SQLite 在线备份和数据清理 dry-run；不会删除文件，也不会修改 Codex/Hermes 等已安装 Agent。
+
+`schedules/run-due` 是单 FastAPI 进程内的到期计划执行器：它只读取 SQLite 中的 ACTIVE 计划，判断 `next_run_at<=now` 后复用本地 `run-now` 动作，生成 `schedule-due-run` artifact 和 `post.schedules.run-due` 审计事件。企业部署可用 Windows 任务计划器或主平台定时调用该 HTTP 接口；多实例部署必须只保留一个调度所有者，避免重复执行。验收时应检查 artifact 中 `mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`。
 
 ## 11. 安全加固建议
 

@@ -1340,6 +1340,8 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["adapter"] = result["self_test"].get("adapter")
     elif path == "/schedules":
         result["schedule"] = save_schedule(store, state, body)
+    elif path == "/schedules/run-due":
+        result.update(schedule_run_due(store, state, body))
     elif path.startswith("/schedules/") and path.endswith("/run-now"):
         schedule_id = path.split("/")[-2]
         result.update(schedule_run_now(store, state, schedule_id))
@@ -9632,7 +9634,13 @@ def next_fire_time(trigger: str) -> str:
     return candidate.isoformat().replace("+00:00", "Z")
 
 
-def schedule_run_now(store: Any, state: dict, schedule_id: str) -> dict:
+def schedule_run_now(
+    store: Any,
+    state: dict,
+    schedule_id: str,
+    execution_mode: str = "manual-run-now",
+    audit_action: str = "post.schedules.run-now",
+) -> dict:
     schedule = store.get_record("schedule", schedule_id) or find_item(state.get("schedules", []), schedule_id)
     if not schedule:
         raise HTTPException(status_code=404, detail=f"Schedule not found: {schedule_id}")
@@ -9641,7 +9649,7 @@ def schedule_run_now(store: Any, state: dict, schedule_id: str) -> dict:
     started_at = utc_now()
     task = {
         "id": run_id,
-        "name": f"计划立即执行 · {schedule.get('name')}",
+        "name": f"{'到期计划执行' if execution_mode == 'scheduled-due' else '计划立即执行'} · {schedule.get('name')}",
         "schedule_id": schedule_id,
         "schedule_type": schedule.get("type"),
         "target": schedule.get("target"),
@@ -9652,7 +9660,7 @@ def schedule_run_now(store: Any, state: dict, schedule_id: str) -> dict:
         "slot": "local",
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
-        "execution_mode": "manual-run-now",
+        "execution_mode": execution_mode,
         "created_at": started_at,
         "started_at": started_at,
     }
@@ -9680,7 +9688,8 @@ def schedule_run_now(store: Any, state: dict, schedule_id: str) -> dict:
         "finished_at": finished_at,
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
-        "boundary": "计划立即执行只调用本系统只读发现、Guard、扫描、备份或清理 dry-run；不修改已安装 Agent。",
+        "execution_mode": execution_mode,
+        "boundary": "计划执行只调用本系统只读发现、Guard、扫描、备份或清理 dry-run；不修改已安装 Agent。",
     }
     artifact = store.write_artifact(
         "schedule-run",
@@ -9717,8 +9726,137 @@ def schedule_run_now(store: Any, state: dict, schedule_id: str) -> dict:
     )
     updated_schedule = store.upsert_record("schedule", schedule, status=str(schedule.get("status") or "ACTIVE"))
     merge_state_record(state, "schedules", updated_schedule)
-    store.audit_event("post.schedules.run-now", "schedule", schedule_id, {"run_id": run_id, "status": run_status, "type": schedule.get("type")})
+    store.audit_event(audit_action, "schedule", schedule_id, {"run_id": run_id, "status": run_status, "type": schedule.get("type"), "execution_mode": execution_mode})
     return {"run": updated_task, "schedule": updated_schedule, "result": result, "artifact": artifact}
+
+
+def schedule_run_due(store: Any, state: dict, body: dict) -> dict:
+    checked_at = utc_now()
+    now = parse_utc_datetime(str(body.get("now") or "")) or datetime.now(timezone.utc)
+    max_runs = max(1, min(coerce_int(body.get("max_runs"), 10), 20))
+    schedules = [normalize_schedule(item) for item in store.list_records("schedule", limit=5000)]
+    due: list[dict] = []
+    skipped: list[dict] = []
+    for schedule in schedules:
+        if str(schedule.get("status") or "") != "ACTIVE":
+            skipped.append(schedule_due_skip(schedule, "not-active", now))
+            continue
+        due_at = parse_utc_datetime(str(schedule.get("next_run_at") or schedule.get("next") or ""))
+        if due_at is None:
+            skipped.append(schedule_due_skip(schedule, "missing-next-run", now))
+            continue
+        if due_at <= now:
+            due.append(schedule)
+        else:
+            skipped.append(schedule_due_skip(schedule, "not-due", now, due_at))
+
+    runs: list[dict] = []
+    for schedule in sorted(due, key=lambda item: str(item.get("next_run_at") or item.get("next") or ""))[:max_runs]:
+        run = schedule_run_now(
+            store,
+            state,
+            str(schedule.get("id")),
+            execution_mode="scheduled-due",
+            audit_action="post.schedules.run-due.item",
+        )
+        runs.append(schedule_due_run_summary(run))
+
+    deferred = due[max_runs:]
+    skipped.extend(schedule_due_skip(schedule, "max-runs-deferred", now) for schedule in deferred)
+    status = "COMPLETED" if not any(run.get("state_code") == "FAILED" for run in runs) else "PARTIAL_FAILED"
+    payload = {
+        "schema": "agent-security-schedule-due-run@4.1",
+        "checked_at": checked_at,
+        "now": now.isoformat().replace("+00:00", "Z"),
+        "status": status,
+        "max_runs": max_runs,
+        "counts": {
+            "active": len([schedule for schedule in schedules if str(schedule.get("status") or "") == "ACTIVE"]),
+            "due": len(due),
+            "executed": len(runs),
+            "skipped": len(skipped),
+            "deferred": len(deferred),
+        },
+        "runs": runs,
+        "skipped": skipped[:200],
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "external_scheduler_required": False,
+        "boundary": "到期计划执行器只读取本系统 SQLite schedule 记录，并复用本系统本地只读 run-now 动作；不注册系统服务、不启动或修改已安装 Agent。",
+    }
+    artifact = store.write_artifact(
+        "schedule-due-run",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "safe_mode": "local-readonly",
+            "status": status,
+            "executed": len(runs),
+            "due": len(due),
+        },
+    )
+    store.audit_event(
+        "post.schedules.run-due",
+        "artifact",
+        artifact["id"],
+        {
+            "counts": payload["counts"],
+            "status": status,
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+        },
+    )
+    return {
+        "schema": payload["schema"],
+        "status": status,
+        "checked_at": checked_at,
+        "counts": payload["counts"],
+        "runs": runs,
+        "skipped": skipped[:50],
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+    }
+
+
+def schedule_due_run_summary(run: dict) -> dict:
+    task = run.get("run") or {}
+    schedule = run.get("schedule") or {}
+    result = run.get("result") or {}
+    artifact = run.get("artifact") or {}
+    return {
+        "schedule_id": schedule.get("id") or task.get("schedule_id"),
+        "schedule_name": schedule.get("name"),
+        "run_id": task.get("id"),
+        "state_code": task.get("state_code"),
+        "action": result.get("action"),
+        "result_status": result.get("status"),
+        "artifact_id": artifact.get("id"),
+        "download": f"/api/v1/artifacts/{artifact['id']}/download" if artifact.get("id") else "",
+        "next_run_at": schedule.get("next_run_at"),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+
+
+def schedule_due_skip(schedule: dict, reason: str, now: datetime, due_at: datetime | None = None) -> dict:
+    return {
+        "schedule_id": schedule.get("id"),
+        "schedule_name": schedule.get("name"),
+        "status": schedule.get("status"),
+        "reason": reason,
+        "next_run_at": schedule.get("next_run_at") or schedule.get("next") or "",
+        "seconds_until_due": int((due_at - now).total_seconds()) if due_at else None,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
 
 
 def execute_schedule_action(store: Any, state: dict, schedule: dict) -> dict:
