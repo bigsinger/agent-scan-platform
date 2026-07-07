@@ -2185,6 +2185,7 @@ def test_capability_management_actions_are_persisted():
     assert integration_test.json()["test"]["status"] == "PASS"
     assert integration_test.json()["test"]["network_probe"] == "disabled-by-default"
     integration_sync = client.post(f"/api/v1/integrations/{integration_id}/sync", json={})
+    assert integration_sync.json()["sync"]["schema"] == "agent-security-integration-sync-package@4.1"
     assert integration_sync.json()["sync"]["status"] == "PACKAGED"
     assert integration_sync.json()["sync"]["delivered"] is False
     assert integration_sync.json()["sync"]["artifact"]["relative_path"].endswith(".json")
@@ -2193,10 +2194,40 @@ def test_capability_management_actions_are_persisted():
     assert "agent-security-integration-sync-package@4.1" in sync_package.text
     assert '"delivered": false' in sync_package.text
     assert api_v1.get_store().get_record("integration_event", integration_sync.json()["sync"]["id"]) is not None
-    platform_event = client.post("/api/v1/integrations/runtime-platform/events", json={"direction": "push"})
-    assert platform_event.json()["event"]["status"] == "RECORDED"
-    assert platform_event.json()["event"]["mutates_installed_agents"] is False
-    assert api_v1.get_store().get_record("integration_event", platform_event.json()["event"]["id"]) is not None
+    platform_event = client.post(
+        "/api/v1/integrations/runtime-platform/events",
+        json={
+            "direction": "push",
+            "event_type": "risk.status.updated",
+            "subject_type": "finding",
+            "subject_id": "finding-contract",
+            "api_key": "sk-contractruntimeeventsecret123456",
+        },
+    )
+    event = platform_event.json()["event"]
+    assert event["status"] == "RECORDED"
+    assert event["mutates_installed_agents"] is False
+    assert event["network_request_sent"] is False
+    assert event["raw_payload_persisted"] is False
+    assert event["download"].endswith("/download")
+    assert api_v1.get_store().get_record("integration_event", event["id"]) is not None
+    event_artifact = client.get(event["download"])
+    assert event_artifact.status_code == 200
+    event_package = event_artifact.json()
+    assert event_package["schema"] == "agent-security-runtime-platform-event@4.1"
+    assert event_package["raw_payload_persisted"] is False
+    assert event_package["network_request_sent"] is False
+    assert event_package["mutates_installed_agents"] is False
+    assert "sk-contractruntimeeventsecret" not in event_artifact.text
+    with api_v1.get_store().connect() as conn:
+        audit = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (event["id"],),
+        ).fetchone()
+    assert audit["action"] == "post.integrations.runtime-platform.events"
+    audit_payload = json.loads(audit["payload_json"])
+    assert audit_payload["raw_payload_persisted"] is False
+    assert audit_payload["network_request_sent"] is False
 
     settings = client.put("/api/v1/settings", json={"default_profile": "standard-complete", "timezone": "Asia/Shanghai"})
     assert settings.json()["settings"]["default_profile"] == "standard-complete"

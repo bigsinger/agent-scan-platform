@@ -10217,6 +10217,7 @@ def integration_sync(store: Any, state: dict, integration_id: str, body: dict | 
     )
     result = {
         "id": package["id"],
+        "schema": package["schema"],
         "status": status,
         "integration_id": integration_id,
         "cursor": package["cursor"],
@@ -10310,6 +10311,7 @@ def report_integration_sync(
     )
     result = {
         "id": package["id"],
+        "schema": package["schema"],
         "status": status,
         "integration_id": integration_id,
         "report_id": report_id,
@@ -10602,16 +10604,71 @@ def integration_evidence_summary(evidence: dict) -> dict:
 
 
 def runtime_platform_event(store: Any, state: dict, body: dict) -> dict:
+    received_at = utc_now()
+    payload_summary = redacted_body_summary(body)
     event = {
         "id": new_id("sync"),
         "direction": body.get("direction", "push"),
+        "event_type": str(body.get("event_type") or body.get("type") or "runtime-platform-event"),
+        "subject_type": str(body.get("subject_type") or body.get("entity") or "platform_context"),
+        "subject_id": str(body.get("subject_id") or body.get("id") or ""),
         "status": "RECORDED",
+        "payload_sha256_16": payload_summary["sha256_16"],
+        "payload_keys": payload_summary["keys"],
+        "raw_payload_persisted": False,
+        "external_delivery_performed": False,
+        "network_request_sent": False,
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
-        "created_at": utc_now(),
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "created_at": received_at,
     }
+    artifact_payload = {
+        "schema": "agent-security-runtime-platform-event@4.1",
+        "event": event,
+        "payload_redacted": payload_summary,
+        "delivery": {
+            "status": "LOCAL_RECORD_ONLY",
+            "external_delivery_performed": False,
+            "network_request_sent": False,
+            "reason": "runtime platform callback events are recorded locally for audit and connector pickup only",
+        },
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "external_delivery_performed": False,
+        "network_request_sent": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "raw_payload_persisted": False,
+        "boundary": "主平台事件接收只写入本系统 SQLite、artifact 和审计事件；不回调外部平台，不启动或修改已安装 Agent。",
+    }
+    artifact = store.write_artifact(
+        "runtime-platform-event",
+        json.dumps(artifact_payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"event_id": event["id"], "safe_mode": "local-readonly", "raw_payload_persisted": False},
+    )
+    event["artifact_id"] = artifact["id"]
+    event["artifact_path"] = artifact["relative_path"]
+    event["download"] = f"/api/v1/artifacts/{artifact['id']}/download"
     event = store.upsert_record("integration_event", event, status="RECORDED")
     merge_state_record(state, "integrationEvents", event)
+    store.audit_event(
+        "post.integrations.runtime-platform.events",
+        "integration_event",
+        event["id"],
+        {
+            "event_type": event["event_type"],
+            "subject_type": event["subject_type"],
+            "subject_id": event["subject_id"],
+            "artifact_id": artifact["id"],
+            "payload_sha256_16": event["payload_sha256_16"],
+            "raw_payload_persisted": False,
+            "network_request_sent": False,
+            "mutates_installed_agents": False,
+        },
+    )
     return event
 
 

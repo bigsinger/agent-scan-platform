@@ -1342,6 +1342,12 @@ $integration = Invoke-RestMethod `
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/test
 $sync = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/integrations/runtime-platform/sync
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($sync.sync.download)" -OutFile integration-sync-package.json
+$event = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/integrations/runtime-platform/events `
+  -Body (@{ event_type = "risk.status.updated"; subject_type = "finding"; subject_id = "finding_001"; api_key = "sk-..." } | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($event.event.download)" -OutFile runtime-platform-event.json
 
 $settings = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings
 $settings.settings.mcp_stdio_policy = "per-server-consent"
@@ -1366,6 +1372,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 模块设置保存到本系统 SQLite 的 `module_setting` 记录，并同步到前端运行状态。后端会强制保持 `cloud_analysis=false`、`safe_mode=local-readonly` 和 `mutates_installed_agents=false`；如果导入配置尝试自动启动 stdio MCP、保存明文 Secret 或在非主平台托管下监听 `0.0.0.0`，接口会返回 422。
 
 `/integrations/{id}/test` 不再对未配置集成返回固定成功：没有 endpoint 时为 `NOT_CONFIGURED`；外部 HTTPS endpoint 默认只做配置校验并标记待联调，不发起网络探测。`sync` 会生成 `integration-sync-package` JSON artifact 并写入 `integration_event`，状态为 `PACKAGED`，`delivered=false`，用于企业平台 Connector 后续拉取或人工核对；它不会启动或修改 Codex、Hermes、MCP Server。
+
+`/integrations/runtime-platform/events` 用于接收主平台回调或嵌入容器事件。接口只保存脱敏摘要、`payload_sha256_16`、事件主体和 `runtime-platform-event` JSON artifact，返回 `raw_payload_persisted=false`、`network_request_sent=false`、`mutates_installed_agents=false`；不会把原始 payload、Secret 或 Token 作为明文事件体落库。
 
 ## 11. 客户测评建议流程
 

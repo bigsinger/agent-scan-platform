@@ -41,6 +41,7 @@
 - `GET /api/v1/integrations`
 - `POST /api/v1/integrations/{id}/test`
 - `POST /api/v1/integrations/{id}/sync`
+- `POST /api/v1/integrations/runtime-platform/events`
 
 接口返回必须统一包装：
 
@@ -67,6 +68,8 @@
 ## 5. 主要实体
 
 `integration, platform_asset, audit_event`
+
+当前本地实现中，`sync` 只生成本地 `integration-sync-package` 或 `report-sync-package` artifact，并写入 `integration_event`，`delivered=false`。`runtime-platform/events` 只记录主平台事件脱敏摘要和 `runtime-platform-event` artifact，返回 `raw_payload_persisted=false`、`network_request_sent=false`、`mutates_installed_agents=false`；不得访问外部平台或修改已安装 Agent。
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 

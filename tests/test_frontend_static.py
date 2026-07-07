@@ -724,6 +724,20 @@ def test_schedule_due_runner_ui_is_api_backed():
     assert "max_runs:10" in app_js
 
 
+def test_integration_sync_ui_surfaces_local_package_artifact():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "integrationSyncResult" in app_js
+    assert "integrationSyncLastDownload" in app_js
+    assert "downloadIntegrationSync()" in app_js
+    assert "'/api/v1/integrations/'+encodeURIComponent(integration.id)+'/sync'" in app_js
+    assert "this.integrationSyncResult=res.sync || null" in app_js
+    assert "同步包已生成" in app_js
+    assert "最近同步包：{{integrationSyncResult.schema" in html
+    assert "@click=\"downloadIntegrationSync\"" in html
+    assert "下载证据" in html
+
+
 def test_completeness_matrix_ui_uses_runtime_summary():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

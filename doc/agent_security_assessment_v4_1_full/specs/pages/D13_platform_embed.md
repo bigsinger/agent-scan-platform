@@ -38,7 +38,7 @@
 ## 4. API 契约
 
 - `GET /api/v1/embed/context`
-- `POST /api/v1/integrations/runtime-platform/mock`
+- `POST /api/v1/integrations/runtime-platform/events`
 
 接口返回必须统一包装：
 
@@ -65,6 +65,8 @@
 ## 5. 主要实体
 
 `integration, platform_context, audit_event`
+
+当前本地实现使用 `runtime-platform/events` 记录嵌入平台回调事件。接口只保存脱敏摘要、事件主体、payload hash、`integration_event`、审计事件和 `runtime-platform-event` artifact；不保存原始 payload，不回调外部平台，不启动或修改 Codex/Hermes/MCP。
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 

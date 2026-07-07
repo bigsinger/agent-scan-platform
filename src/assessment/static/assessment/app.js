@@ -63,6 +63,8 @@
     state.mcpInspection = null;
     state.scheduleLastRun = null;
     state.scheduleDueRun = null;
+    state.integrationSyncResult = null;
+    state.integrationSyncLastDownload = '';
     state.reportSyncLastDownload = '';
     state.reportPackageExport = null;
     state.policyDraftPreflight = null;
@@ -150,6 +152,8 @@ data(){
     initial.scheduleDraft = Object.assign({name:'本机变化扫描', type:'变化扫描', target:'已登记配置快照', target_path:'', trigger:'0 2 * * *', misfire:'跳过', status:'ACTIVE', profile:'quick-experience', max_backlog:1, max_files:100}, initial.scheduleDraft || {});
     initial.scheduleLastRun = null;
     initial.scheduleDueRun = null;
+    initial.integrationSyncResult = null;
+    initial.integrationSyncLastDownload = '';
     initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
@@ -2712,10 +2716,15 @@ data(){
       this.opsBusy=true; this.apiError='';
       try {
         const res=await this.apiPost('/api/v1/integrations/'+encodeURIComponent(integration.id)+'/sync', {});
+        this.integrationSyncResult=res.sync || null;
+        this.integrationSyncLastDownload=(res.sync && res.sync.download) || '';
         if(res.sync&&res.sync.record){ this.mergeRecords('integrations', [res.sync.record]); }
-        this.toastMsg(integration.name+' 同步完成：'+(res.sync&&res.sync.status));
+        this.toastMsg(integration.name+' 同步包已生成：'+(res.sync&&res.sync.status));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
+    },
+    downloadIntegrationSync(){
+      if(this.integrationSyncLastDownload) window.open(this.integrationSyncLastDownload, '_blank', 'noopener');
     },
     async testAllIntegrations(){
       for(const integration of (this.integrations||[]).filter(x=>x.status!=='关闭').slice(0, 8)){
