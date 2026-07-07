@@ -41,6 +41,8 @@
 - `GET /api/v1/tools/{id}/similar`
 - `GET /api/v1/tools/{id}/flows`
 
+当前实现状态：正式应用保留 `/assessment/tools/{id}` 独立深链，前端进入 `tool-detail` 运行态详情页。页面读取 `GET /api/v1/tools/{id}`、`GET /api/v1/tools/{id}/similar` 和 `GET /api/v1/tools/{id}/flows` 展示 Tool 元数据、能力标签、相似/Shadowing 候选和真实持久化 Toxic Flow；页面不调用真实 Tool，不启动或连接 MCP。
+
 接口返回必须统一包装：
 
 ```json

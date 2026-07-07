@@ -353,6 +353,29 @@ def test_mcp_toxic_flow_ui_uses_persisted_flows():
     assert "已持久化为本地 Toxic Flow 记录" in html
 
 
+def test_mcp_and_tool_detail_deep_links_are_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    style = (STATIC / "assessment" / "style.css").read_text(encoding="utf-8")
+
+    assert "current==='mcp-detail'" in html
+    assert "current==='tool-detail'" in html
+    assert "if(path.startsWith('/assessment/mcp/')) return 'mcp-detail';" in app_js
+    assert "if(path.startsWith('/assessment/tools/')) return 'tool-detail';" in app_js
+    assert "'mcp-detail':mcpDetailPath" in app_js
+    assert "'tool-detail':toolDetailPath" in app_js
+    assert "async loadMcpDetail" in app_js
+    assert "async loadToolDetail" in app_js
+    assert "/api/v1/mcp-servers/'+encodeURIComponent(id)" in app_js
+    assert "/api/v1/tools/'+encodeURIComponent(tool.id)+'/similar" in app_js
+    assert "/api/v1/tools/'+encodeURIComponent(tool.id)+'/flows" in app_js
+    assert "不启动 stdio MCP" in html
+    assert "持久化 Toxic Flow" in html
+    assert 'table class="compact-table"' in html
+    assert 'class="action-cell"' in html
+    assert "table.compact-table{min-width:0" in style
+
+
 def test_attack_path_visualization_uses_runtime_nodes():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

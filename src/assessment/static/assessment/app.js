@@ -61,6 +61,9 @@
     state.discoveryInventoryExport = null;
     state.skillScanResult = null;
     state.mcpInspection = null;
+    state.mcpDetailTools = [];
+    state.toolDetailSimilar = [];
+    state.toolDetailFlows = [];
     state.scheduleLastRun = null;
     state.scheduleDueRun = null;
     state.integrationSyncResult = null;
@@ -116,6 +119,9 @@ data(){
     initial.redteamBusy = false;
     initial.mcpBusy = false;
     initial.mcpInspection = null;
+    initial.mcpDetailTools = [];
+    initial.toolDetailSimilar = [];
+    initial.toolDetailFlows = [];
     initial.skillBusy = false;
     initial.skillScanResult = null;
     initial.skillDetail = null;
@@ -343,6 +349,19 @@ data(){
         }
       }
       return pairs.slice(0,8);
+    },
+    mcpDetailFindings(){
+      const server=this.selectedMcp || {};
+      const identities=new Set([server.id, server.name, server.server].filter(Boolean).map(String));
+      if(!identities.size) return [];
+      return (this.findings || []).filter(f=>identities.has(String(f.mcp_server_id||'')) || identities.has(String(f.component||'')) || identities.has(String(f.server||'')));
+    },
+    selectedToolFlows(){
+      const toolId=this.selectedTool && this.selectedTool.id;
+      const embedded=this.selectedTool && this.selectedTool.flows || [];
+      const source=embedded.length ? embedded : this.toolDetailFlows || [];
+      if(!toolId) return source;
+      return source.filter(flow=>!flow.tool_id || String(flow.tool_id)===String(toolId));
     },
     currentConsent(){
       const selectedId=this.selectedConsent && (this.selectedConsent.id || this.selectedConsent.server);
@@ -1134,7 +1153,9 @@ data(){
       const skillDetailPath=this.selectedSkill&&this.selectedSkill.id?'/assessment/skills/'+this.selectedSkill.id:'/assessment/skills';
       const findingDetailPath=this.selectedFinding&&this.selectedFinding.id?'/assessment/findings/'+this.selectedFinding.id:'/assessment/findings';
       const adapterDetailPath=this.selectedAdapter&&this.selectedAdapter.id?'/assessment/adapters/'+this.selectedAdapter.id:'/assessment/adapters';
-      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
+      const mcpDetailPath=this.selectedMcp&&this.selectedMcp.id?'/assessment/mcp/'+this.selectedMcp.id:'/assessment/mcp';
+      const toolDetailPath=this.selectedTool&&this.selectedTool.id?'/assessment/tools/'+this.selectedTool.id:'/assessment/mcp';
+      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp','mcp-detail':mcpDetailPath,'tool-detail':toolDetailPath,consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
       return map[key]||'/assessment';
     },
     keyForPath(path){
@@ -1147,8 +1168,8 @@ data(){
       if(path.startsWith('/assessment/findings/')) return 'finding-detail';
       if(path.startsWith('/assessment/adapters/')) return 'adapter-detail';
       if(path.startsWith('/assessment/agent-scan/issues')) return 'agent-scan';
-      if(path.startsWith('/assessment/mcp/')) return 'mcp';
-      if(path.startsWith('/assessment/tools/')) return 'mcp';
+      if(path.startsWith('/assessment/mcp/')) return 'mcp-detail';
+      if(path.startsWith('/assessment/tools/')) return 'tool-detail';
       if(path.startsWith('/assessment/redteam-cases/')) return 'cases';
       if(path.startsWith('/assessment/reports/')) return 'reports';
       if(path.startsWith('/assessment/profiles/')) return 'profiles';
@@ -1200,6 +1221,20 @@ data(){
         const found=(this.agents || []).find(a=>String(a.id)===adapterId || String(a.name)===adapterId || String(a.product)===adapterId);
         this.selectedAdapter=found || {id:adapterId, name:adapterId};
         if(this.current==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});
+      }
+      const toolMatch=path.match(/^\/assessment\/tools\/([^/]+)/);
+      if(toolMatch){
+        const toolId=decodeURIComponent(toolMatch[1]);
+        const found=(this.tools || []).find(t=>String(t.id)===toolId || String(t.name)===toolId || String(t.signature)===toolId);
+        this.selectedTool=found || {id:toolId, name:toolId};
+        if(this.current==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});
+      }
+      const mcpMatch=path.match(/^\/assessment\/mcp\/([^/]+)/);
+      if(mcpMatch){
+        const mcpId=decodeURIComponent(mcpMatch[1]);
+        const found=(this.mcpServers || []).find(m=>String(m.id)===mcpId || String(m.name)===mcpId || String(m.server)===mcpId);
+        this.selectedMcp=found || {id:mcpId, name:mcpId};
+        if(this.current==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});
       }
       if(this.current==='abom' && this.selectedAsset && this.selectedAsset.id){
         this.loadAgentAbom(this.selectedAsset);
@@ -1357,7 +1392,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -2103,23 +2138,83 @@ data(){
         if(res.findings && res.findings.length) this.mergeRecords('findings', res.findings);
         if(res.evidence) this.mergeRecords('evidenceItems', [res.evidence]);
         this.mcpInspection=res.inspection || null;
+        if(this.current==='mcp-detail'){
+          this.selectedMcp=res.server || this.selectedMcp;
+          if(res.tools) this.mcpDetailTools=res.tools;
+        }
         if(!quiet) this.toastMsg('MCP 静态检查完成：'+(res.server&&res.server.name || server.name)+' · '+(res.inspection&&res.inspection.risk || 'READY'));
         return res;
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.mcpBusy=wasBusy; }
     },
+    async openMcpDetail(server){
+      if(!server || !(server.id || server.name)) return;
+      this.selectedMcp=server;
+      this.current='mcp-detail';
+      this.pushRoute('mcp-detail');
+      window.scrollTo({top:0,behavior:'smooth'});
+      await this.loadMcpDetail(server);
+    },
+    async loadMcpDetail(server, options){
+      const target=server || this.selectedMcp || {};
+      const id=target.id || target.name || target.server;
+      if(!id) return null;
+      const silent=options && options.silent;
+      if(!silent){ this.mcpBusy=true; this.apiError=''; }
+      try {
+        const detail=await this.apiGet('/api/v1/mcp-servers/'+encodeURIComponent(id));
+        const tools=await this.apiGet('/api/v1/mcp-servers/'+encodeURIComponent(id)+'/tools');
+        this.selectedMcp=Object.assign({}, target, detail.item || {});
+        this.mcpDetailTools=tools.items || [];
+        this.mergeRecords('mcpServers', [this.selectedMcp]);
+        if(this.mcpDetailTools.length) this.mergeRecords('tools', this.mcpDetailTools);
+        if(!silent) this.toastMsg('MCP Server 详情已读取：'+(this.selectedMcp.name || id));
+        return this.selectedMcp;
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+        return null;
+      } finally {
+        if(!silent) this.mcpBusy=false;
+      }
+    },
+    async inspectMcpDetail(){
+      const target=this.selectedMcp || {};
+      if(!target.id) return;
+      const res=await this.inspectMcpServer(target);
+      await this.loadMcpDetail(res && res.server || target, {silent:true});
+    },
     async openToolSignature(tool){
+      return this.openToolDetail(tool);
+    },
+    async openToolDetail(tool){
+      if(!tool || !(tool.id || tool.name)) return;
+      this.selectedTool=tool;
+      this.current='tool-detail';
+      this.pushRoute('tool-detail');
+      window.scrollTo({top:0,behavior:'smooth'});
+      await this.loadToolDetail(tool);
+    },
+    async loadToolDetail(tool, options){
       if(!tool || !tool.id) return;
-      this.mcpBusy=true; this.apiError='';
+      const silent=options && options.silent;
+      if(!silent){ this.mcpBusy=true; this.apiError=''; }
       try {
         const detail=await this.apiGet('/api/v1/tools/'+encodeURIComponent(tool.id));
+        const similar=await this.apiGet('/api/v1/tools/'+encodeURIComponent(tool.id)+'/similar');
         const flows=await this.apiGet('/api/v1/tools/'+encodeURIComponent(tool.id)+'/flows');
         this.selectedTool=Object.assign({}, tool, detail.item || {}, {flows:flows.items || []});
+        this.toolDetailSimilar=similar.items || [];
+        this.toolDetailFlows=flows.items || [];
         this.mergeRecords('tools', [this.selectedTool]);
         if(flows.items && flows.items.length) this.mergeRecords('toxicFlows', flows.items);
-        this.toastMsg('Tool Signature 已加载：'+(this.selectedTool.signature || this.selectedTool.id));
-      } catch (err) { this.apiError=this.describeError(err); }
-      finally { this.mcpBusy=false; }
+        if(!silent) this.toastMsg('Tool Signature 已加载：'+(this.selectedTool.signature || this.selectedTool.id));
+        return this.selectedTool;
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+        return null;
+      } finally {
+        if(!silent) this.mcpBusy=false;
+      }
     },
     async runSkillScan(){
       this.skillBusy=true; this.apiError='';

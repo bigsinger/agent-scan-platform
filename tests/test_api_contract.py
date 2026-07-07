@@ -2680,6 +2680,24 @@ def test_mcp_static_inspection_persists_tool_flows(monkeypatch, tmp_path):
     assert len(store.list_records("tool_label")) >= len(payload["tools"])
 
     process_tool = next(tool for tool in payload["tools"] if "shell_exec" in tool["labels"])
+    server_detail = client.get(f"/api/v1/mcp-servers/{server['id']}")
+    assert server_detail.status_code == 200
+    server_item = server_detail.json()["item"]
+    assert server_item["id"] == server["id"]
+    assert server_item["safe_mode"] == "local-readonly"
+    assert server_item["mcp_started"] is False
+
+    server_tools = client.get(f"/api/v1/mcp-servers/{server['id']}/tools")
+    assert server_tools.status_code == 200
+    assert server_tools.json()["total"] >= len(payload["tools"])
+
+    tool_detail = client.get(f"/api/v1/tools/{process_tool['id']}")
+    assert tool_detail.status_code == 200
+    assert tool_detail.json()["item"]["id"] == process_tool["id"]
+    similar_response = client.get(f"/api/v1/tools/{process_tool['id']}/similar")
+    assert similar_response.status_code == 200
+    assert "items" in similar_response.json()
+
     flows_response = client.get(f"/api/v1/tools/{process_tool['id']}/flows")
     assert flows_response.status_code == 200
     flows_payload = flows_response.json()

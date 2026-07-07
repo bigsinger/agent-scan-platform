@@ -42,6 +42,8 @@
 - `GET /api/v1/mcp-servers/{id}`
 - `GET /api/v1/mcp-servers/{id}/tools`
 
+当前实现状态：正式应用保留 `/assessment/mcp/{id}` 独立深链，前端进入 `mcp-detail` 运行态详情页。页面读取 `GET /api/v1/mcp-servers/{id}` 与 `GET /api/v1/mcp-servers/{id}/tools` 展示配置摘要、命令、Transport、安全边界、关联 Tool 和风险；“只读静态检查”调用 `POST /api/v1/mcp-servers/{id}/inspect`，只写本系统 SQLite、Finding、Evidence 和 artifact，不启动 stdio MCP，不连接 Remote MCP。
+
 接口返回必须统一包装：
 
 ```json

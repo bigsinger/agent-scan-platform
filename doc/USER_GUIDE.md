@@ -467,6 +467,8 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 - 根据命令、参数、URL、环境变量 Key、配置 Hash 派生 Tool Signature、Tool Label 和 Toxic Flow。
 - 自动识别 shell/powershell/cmd、`npx -y`、远程 URL、localhost/私网目标、URL 内嵌凭据、敏感环境变量、文件系统能力等风险。
 - 生成 `mcp_signature`、`mcp_tool`、`tool_label`、`toxic_flow`、Finding、Evidence 和 `mcp-static-inspection` JSON artifact。
+- 点击 MCP Server “详情”或直接打开 `/assessment/mcp/{id}` 会读取 `GET /api/v1/mcp-servers/{id}` 与 `GET /api/v1/mcp-servers/{id}/tools`，展示配置、命令摘要、安全边界、关联 Tool 和风险。
+- 点击 Tool “详情”或直接打开 `/assessment/tools/{id}` 会读取 `GET /api/v1/tools/{id}`、`/similar` 和 `/flows`，展示标签、Shadowing 候选和真实持久化 Toxic Flow。
 
 安全边界：
 

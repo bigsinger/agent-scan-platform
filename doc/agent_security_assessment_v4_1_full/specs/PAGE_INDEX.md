@@ -54,3 +54,5 @@
 | D14 | API / 状态调试台 | `prototype/pages/D14_api_debug.html` | `specs/pages/D14_api_debug.md` | `/assessment/api-debug` | 详情页 |
 
 实现说明：D01-D04 在正式应用中复用 `adapter-detail` 运行态页面组件，但保留各自独立深链。每个深链都读取对应 `GET /api/v1/adapters/{id}`，并通过 `POST /api/v1/adapters/{id}/self-test` 写入本系统 SQLite 与 `adapter-self-test` artifact；不得回退到 `/assessment/adapters` 列表视图冒充详情页。
+
+实现说明：D06-D07 在正式应用中分别使用 `mcp-detail` 与 `tool-detail` 运行态页面组件，保留 `/assessment/mcp/{id}` 与 `/assessment/tools/{id}` 深链。MCP 详情读取 `GET /api/v1/mcp-servers/{id}` 与 `/tools`，Tool 详情读取 `GET /api/v1/tools/{id}`、`/similar` 与 `/flows`；所有检查保持 `local-readonly`，不得启动 stdio MCP 或连接 Remote MCP。

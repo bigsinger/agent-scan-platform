@@ -309,6 +309,8 @@ Invoke-WebRequest `
 
 验收时应看到 `mcp_signature`、`mcp_tool`、`tool_label`、`toxic_flow`、Finding、Evidence 和 artifact 均被写入本系统 SQLite/制品目录；`/tools/{id}/flows` 的 `total` 必须等于该 Tool 的真实持久化 Flow 数量，不得是固定原型值。整个过程仍保持 `local-readonly`，不启动 stdio MCP，不执行命令。
 
+`/assessment/mcp/{id}` 与 `/assessment/tools/{id}` 是独立运行态详情页，不应回落到 MCP 总览页。MCP 详情页必须读取 `GET /api/v1/mcp-servers/{id}` 和 `/tools` 展示配置摘要、审批边界、关联 Tool 与风险；Tool 详情页必须读取 `GET /api/v1/tools/{id}`、`/similar` 和 `/flows` 展示标签、相似 Tool 与真实 Toxic Flow。页面上的“只读静态检查”仍只调用 `POST /api/v1/mcp-servers/{id}/inspect`，不得启动或连接 MCP。
+
 动态红队 dry-run：
 
 ```powershell
