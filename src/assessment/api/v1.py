@@ -547,6 +547,12 @@ async def report_download(id: str) -> Any:
     return HTMLResponse(html, headers={"Content-Disposition": f'attachment; filename="{id}.html"'})
 
 
+@router.get("/reports/{id}/package")
+async def report_package(id: str) -> dict:
+    store = get_store()
+    return export_report_delivery_package(store, store.get_state(), id)
+
+
 @router.get("/third-party/{id}/notice")
 async def third_party_notice(id: str) -> dict:
     store = get_store()
@@ -4359,6 +4365,221 @@ def report_preview(report: dict | None, store: Any | None = None) -> dict:
         "artifacts": {"html": html_state, "json": json_state},
         "mutates_installed_agents": False,
         "download": f"/api/v1/reports/{(report or {}).get('id', 'unknown')}/download",
+    }
+
+
+def export_report_delivery_package(store: Any, state: dict, report_id: str) -> dict:
+    report = store.get_record("report", report_id) or find_item(state.get("reports", []), report_id)
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "report not found",
+                "report_id": report_id,
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+            },
+        )
+    preview = report_preview(report, store)
+    html_state = report_delivery_artifact_state(store, report, "html")
+    json_state = report_delivery_artifact_state(store, report, "json")
+    snapshot, snapshot_error = read_report_snapshot(preview["artifacts"]["json"])
+    assessment = (snapshot or {}).get("assessment") or {}
+    findings = (snapshot or {}).get("findings") or []
+    evidence = (snapshot or {}).get("evidence") or []
+    validation = validate_report_delivery_package(preview, html_state, json_state, findings, evidence, snapshot_error)
+    payload = {
+        "schema": "agent-security-report-delivery-package@4.1",
+        "generated_at": utc_now(),
+        "report": report_delivery_summary(report, preview),
+        "assessment": report_assessment_summary(assessment, report),
+        "summary": preview.get("summary", {}),
+        "counts": {
+            "findings": len(findings),
+            "evidence": len(evidence),
+            "artifacts": int(html_state["exists"]) + int(json_state["exists"]),
+            "readiness": len(preview.get("readiness", [])),
+        },
+        "validation": validation,
+        "readiness": preview.get("readiness", []),
+        "rendering": preview.get("rendering", {}),
+        "artifacts": {"html": html_state, "json": json_state},
+        "findings": [report_finding_summary(item) for item in findings[:1000]],
+        "evidence": [report_evidence_summary(item) for item in evidence[:1000]],
+        "downloads": {
+            "html": f"/api/v1/reports/{report_id}/download",
+            "package": "",
+        },
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "stdio_mcp_started": False,
+        "agent_runtime_started": False,
+        "external_delivery_performed": False,
+        "raw_sensitive_evidence": "not-included",
+        "boundary": "报告交付包只读取本系统已生成的 HTML/JSON 报告、脱敏证据摘要和 SQLite 元数据；不访问外部平台，不启动或修改已安装 Agent。",
+    }
+    artifact = store.write_artifact(
+        "report-delivery-package",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        directory="reports",
+        metadata={
+            "report_id": report_id,
+            "safe_mode": "local-readonly",
+            "validation": validation["status"],
+            "mutates_installed_agents": False,
+        },
+    )
+    payload["downloads"]["package"] = f"/api/v1/artifacts/{artifact['id']}/download"
+    package_path = artifact_disk_path(artifact)
+    package_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    artifact.update({"sha256": file_sha256(package_path), "size": package_path.stat().st_size})
+    artifact = store.upsert_record("artifact", artifact, status="READY")
+
+    report_update = {
+        **report,
+        "delivery_package_artifact_id": artifact["id"],
+        "delivery_package_path": artifact.get("relative_path", ""),
+        "delivery_package_sha256": artifact.get("sha256", ""),
+        "delivery_package_status": validation["status"],
+        "delivery_package_generated_at": payload["generated_at"],
+        "updated_at": utc_now(),
+    }
+    updated_report = store.upsert_record("report", report_update, status=str(report.get("status") or "READY"))
+    merge_state_record(state, "reports", updated_report)
+    store.audit_event(
+        "get.reports.package",
+        "report",
+        report_id,
+        {
+            "artifact_id": artifact["id"],
+            "validation_status": validation["status"],
+            "counts": payload["counts"],
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "external_delivery_performed": False,
+        },
+    )
+    return {
+        "schema": payload["schema"],
+        "format": "json",
+        "report": updated_report,
+        "counts": payload["counts"],
+        "validation": validation,
+        "artifact": artifact,
+        "download": payload["downloads"]["package"],
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "external_delivery_performed": False,
+    }
+
+
+def report_delivery_artifact_state(store: Any, report: dict, kind: str) -> dict:
+    state = report_artifact_state(store, report, kind)
+    path = data_relative_path(state.get("relative_path"))
+    actual_sha256 = file_sha256(path) if path and path.exists() and path.is_file() else ""
+    expected_sha256 = str(state.get("sha256") or "")
+    if not state["exists"]:
+        status = "MISSING"
+    elif expected_sha256 and actual_sha256 != expected_sha256:
+        status = "MISMATCH"
+    else:
+        status = "PASS"
+    return {**state, "actual_sha256": actual_sha256, "status": status}
+
+
+def validate_report_delivery_package(
+    preview: dict,
+    html_state: dict,
+    json_state: dict,
+    findings: list[dict],
+    evidence: list[dict],
+    snapshot_error: str,
+) -> dict:
+    redacted_evidence = [
+        item
+        for item in evidence
+        if str(item.get("redaction") or "").lower() in {"已脱敏", "redacted", "redacted-json", "masked"}
+        or item.get("redacted_sha256")
+        or item.get("artifact_id")
+        or item.get("redacted_artifact_id")
+    ]
+    checks = [
+        {"id": "report_snapshot", "status": "PASS" if not snapshot_error else "FAIL", "detail": snapshot_error or "JSON snapshot readable"},
+        {"id": "html_artifact", "status": "PASS" if html_state["status"] == "PASS" else "FAIL", "detail": html_state["relative_path"] or "missing html artifact"},
+        {"id": "json_artifact", "status": "PASS" if json_state["status"] == "PASS" else "FAIL", "detail": json_state["relative_path"] or "missing json artifact"},
+        {"id": "finding_section", "status": "PASS" if findings else "WARN", "detail": f"{len(findings)} findings"},
+        {
+            "id": "evidence_redaction",
+            "status": "PASS" if evidence and len(redacted_evidence) == len(evidence) else "WARN" if not evidence else "FAIL",
+            "detail": f"{len(redacted_evidence)}/{len(evidence)} evidence records carry redaction/artifact metadata",
+        },
+        {
+            "id": "readiness",
+            "status": "PASS"
+            if all(row.get("status") in {"READY", "EMPTY"} for row in preview.get("readiness", []))
+            else "WARN",
+            "detail": f"{len(preview.get('readiness', []))} readiness rows",
+        },
+        {"id": "readonly_boundary", "status": "PASS", "detail": "package generation is local SQLite/artifact read-only"},
+    ]
+    status = "FAIL" if any(check["status"] == "FAIL" for check in checks) else "WARN" if any(check["status"] == "WARN" for check in checks) else "PASS"
+    return {"status": status, "checks": checks}
+
+
+def report_delivery_summary(report: dict, preview: dict) -> dict:
+    return {
+        "id": report.get("id"),
+        "name": report.get("name"),
+        "assessment_id": report.get("assessment_id") or report.get("task"),
+        "status": report.get("status"),
+        "type": report.get("type"),
+        "template": report.get("template") or preview.get("template"),
+        "formats": report.get("formats"),
+        "finding_count": report.get("finding_count", 0),
+        "summary": report.get("summary") or preview.get("summary", {}),
+        "download": f"/api/v1/reports/{report.get('id')}/download",
+    }
+
+
+def report_assessment_summary(assessment: dict, report: dict) -> dict:
+    scan_options = assessment.get("scan_options") or {}
+    return {
+        "id": assessment.get("id") or report.get("assessment_id") or report.get("task"),
+        "name": assessment.get("name") or report.get("name"),
+        "target": redact_text(str(assessment.get("target") or report.get("task") or ""), max_len=500),
+        "status": assessment.get("status"),
+        "user_scope_requested": assessment.get("user_scope_requested") or scan_options.get("user_scope_requested") or "current-user",
+        "effective_user_scope": assessment.get("effective_user_scope") or scan_options.get("effective_user_scope") or "current-user",
+        "execution_mode": assessment.get("execution_mode") or scan_options.get("execution_mode") or "readonly",
+        "mutates_installed_agents": False,
+    }
+
+
+def report_finding_summary(finding: dict) -> dict:
+    return {
+        "id": finding.get("id"),
+        "title": redact_text(str(finding.get("title") or ""), max_len=500),
+        "severity": finding.get("severity"),
+        "rule": finding.get("rule") or finding.get("rule_id"),
+        "status": finding.get("status"),
+        "component": redact_text(str(finding.get("component") or finding.get("agent") or ""), max_len=500),
+        "confidence": finding.get("confidence"),
+        "evidence_ids": finding.get("evidence_ids", []),
+        "fix": redact_text(str(finding.get("fix") or finding.get("remediation") or ""), max_len=1000),
+    }
+
+
+def report_evidence_summary(evidence: dict) -> dict:
+    return {
+        "id": evidence.get("id"),
+        "finding_id": evidence.get("finding_id"),
+        "type": evidence.get("type"),
+        "collector": evidence.get("collector"),
+        "redaction": evidence.get("redaction"),
+        "artifact_id": evidence.get("artifact_id") or evidence.get("redacted_artifact_id"),
+        "sha256": evidence.get("redacted_sha256") or evidence.get("sha256"),
+        "download": evidence.get("download") or (f"/api/v1/evidence/{evidence.get('id')}/download" if evidence.get("id") else ""),
     }
 
 

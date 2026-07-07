@@ -689,13 +689,23 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 
 1. 在页面打开报告中心。
 2. 点击“生成报告”，系统会基于当前 SQLite 中的任务、风险和证据生成 HTML/JSON 制品。
-3. 点击“预览”查看报告摘要，点击“下载”或访问：
+3. 点击“预览”查看报告摘要，点击“HTML”或访问：
 
    ```text
    /api/v1/reports/{report_id}/download
    ```
+4. 点击“交付包”或访问 `/api/v1/reports/{report_id}/package`，生成包含 HTML/JSON 制品哈希、章节完整性、Finding/Evidence 摘要和只读边界的 JSON artifact。
 
 报告中心的“章节完整性”和“渲染能力”来自 `GET /api/v1/reports/{report_id}` 的 `preview.readiness`、`preview.rendering` 和 artifact 状态。系统只展示本地已生成 HTML/JSON 制品的真实存在性、大小和模板版本；当前本地版本未配置 PDF 渲染器时会显示 `UNAVAILABLE`，不会伪造 Chromium 或 PDF 可用状态。
+
+报告交付包：
+
+```powershell
+$package = Invoke-RestMethod http://127.0.0.1:8000/api/v1/reports/<report_id>/package
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($package.download)" -OutFile report-delivery-package.json
+```
+
+`report-delivery-package.json` 的 schema 为 `agent-security-report-delivery-package@4.1`，包含 `validation.checks`、HTML/JSON artifact 的 `actual_sha256`、证据脱敏状态和 `raw_sensitive_evidence=not-included`。它只读取本系统 `report`、`artifact`、`data/reports` 和报告 JSON snapshot，不访问外部平台，不启动或修改已安装 Agent。
 
 报告回写包：
 
@@ -1174,6 +1184,9 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.asses
 Invoke-WebRequest `
   -Uri http://127.0.0.1:8000/api/v1/reports/<report_id>/download `
   -OutFile report.html
+
+$package = Invoke-RestMethod http://127.0.0.1:8000/api/v1/reports/<report_id>/package
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($package.download)" -OutFile report-delivery-package.json
 ```
 
 ### SQLite 运维

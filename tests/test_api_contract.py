@@ -1552,6 +1552,47 @@ def test_report_evidence_and_risk_closure_actions():
     download = client.get(f"/api/v1/reports/{report['id']}/download")
     assert download.status_code == 200
     assert "Agent 安全测评能力模块 V4.1" in download.text
+    package_response = client.get(f"/api/v1/reports/{report['id']}/package")
+    assert package_response.status_code == 200
+    package_body = package_response.json()
+    assert package_body["schema"] == "agent-security-report-delivery-package@4.1"
+    assert package_body["format"] == "json"
+    assert package_body["counts"]["artifacts"] == 2
+    assert package_body["validation"]["status"] in {"PASS", "WARN"}
+    assert package_body["safe_mode"] == "local-readonly"
+    assert package_body["mutates_installed_agents"] is False
+    assert package_body["external_delivery_performed"] is False
+    assert package_body["download"].endswith("/download")
+    package_download = client.get(package_body["download"])
+    assert package_download.status_code == 200
+    package = package_download.json()
+    assert package["schema"] == "agent-security-report-delivery-package@4.1"
+    assert package["raw_sensitive_evidence"] == "not-included"
+    assert package["artifacts"]["html"]["status"] == "PASS"
+    assert package["artifacts"]["json"]["status"] == "PASS"
+    assert package["artifacts"]["html"]["actual_sha256"]
+    assert package["downloads"]["html"].endswith("/download")
+    assert package["downloads"]["package"] == package_body["download"]
+    assert package["mutates_installed_agents"] is False
+    assert package["stdio_mcp_started"] is False
+    assert package["agent_runtime_started"] is False
+    assert package["external_delivery_performed"] is False
+    assert {check["id"] for check in package["validation"]["checks"]} >= {
+        "report_snapshot",
+        "html_artifact",
+        "json_artifact",
+        "evidence_redaction",
+        "readonly_boundary",
+    }
+    stored_report = api_v1.get_store().get_record("report", report["id"])
+    assert stored_report["delivery_package_artifact_id"] == package_body["artifact"]["id"]
+    with api_v1.get_store().connect() as conn:
+        audit = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (report["id"],),
+        ).fetchone()
+    assert audit["action"] == "get.reports.package"
+    assert json.loads(audit["payload_json"])["external_delivery_performed"] is False
 
     evidence = scan["evidence"][0]
     redacted = client.post(f"/api/v1/evidence/{evidence['id']}/redact", json={})

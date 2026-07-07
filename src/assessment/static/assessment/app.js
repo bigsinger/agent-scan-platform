@@ -59,6 +59,7 @@
     state.mcpInspection = null;
     state.scheduleLastRun = null;
     state.reportSyncLastDownload = '';
+    state.reportPackageExport = null;
     state.retestDiff = null;
     state.selectedFindingHistory = [];
     state.completenessSummary = {};
@@ -140,6 +141,7 @@ data(){
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
     initial.reportPreviewData = initial.reportPreviewData || null;
     initial.reportSyncLastDownload = '';
+    initial.reportPackageExport = null;
     initial.selectedRetest = initial.selectedRetest || ((initial.retests || [])[0]) || {};
     initial.retestDiff = initial.retestDiff || null;
     initial.selectedFindingHistory = initial.selectedFindingHistory || [];
@@ -2170,6 +2172,19 @@ data(){
       if(!report || !report.id) return;
       window.open('/api/v1/reports/'+encodeURIComponent(report.id)+'/download', '_blank', 'noopener');
       this.toastMsg('已请求下载本地 HTML 报告');
+    },
+    async exportReportPackage(report){
+      const target=report || this.selectedReport;
+      if(!target || !target.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/reports/'+encodeURIComponent(target.id)+'/package');
+        this.reportPackageExport=res;
+        if(res.report){ this.mergeRecords('reports', [res.report]); this.selectedReport=Object.assign({}, this.selectedReport || {}, res.report); }
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('报告交付包已生成：'+(res.artifact&&res.artifact.id || 'READY'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
     },
     async syncReport(report){
       if(!report || !report.id) return;

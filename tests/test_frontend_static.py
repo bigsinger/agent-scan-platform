@@ -640,13 +640,19 @@ def test_report_readiness_ui_is_api_backed():
     assert "standard@4.0.0" not in html
     assert "范围/授权</td><td><span class=\"badge low\">✓" not in html
     assert "v-for=\"row in reportReadinessRows\"" in html
+    assert "@click.stop=\"exportReportPackage(r)\"" in html
+    assert "reportPackageExport" in html
+    assert "最近交付包：{{reportPackageExport.schema}}" in html
     assert "reportRenderingStatus.engine" in html
     assert "refreshReportPreview(selectedReport)" in html
     assert "reportReadinessRows()" in app_js
     assert "reportRenderingStatus()" in app_js
     assert "async refreshReportPreview" in app_js
+    assert "async exportReportPackage" in app_js
     assert "async syncReport" in app_js
     assert "reportSyncLastDownload" in app_js
+    assert "/package" in app_js
+    assert "报告交付包已生成" in app_js
     assert "this.mergeRecords('reports', [res.report])" in app_js
     assert "报告回写包已生成" in app_js
 
