@@ -71,6 +71,8 @@
     state.scheduleExportDownload = '';
     state.integrationSyncResult = null;
     state.integrationSyncLastDownload = '';
+    state.integrationExport = null;
+    state.integrationExportDownload = '';
     state.reportSyncLastDownload = '';
     state.reportPackageExport = null;
     state.redteamCaseDetail = null;
@@ -180,6 +182,8 @@ data(){
     initial.scheduleExportDownload = '';
     initial.integrationSyncResult = null;
     initial.integrationSyncLastDownload = '';
+    initial.integrationExport = null;
+    initial.integrationExportDownload = '';
     initial.apiDebugOpenapi = null;
     initial.apiDebugSummary = {};
     initial.apiDebugScenario = initial.apiDebugScenario || 'empty';
@@ -315,6 +319,31 @@ data(){
     },
     remoteMcpCount(){
       return this.mcpServers.filter(m=>m.transport && m.transport!=='stdio').length;
+    },
+    integrationRows(){
+      return (this.integrations || []).map(item => {
+        const id=item.id || item.name || '';
+        const name=item.name || item.id || '未命名集成';
+        const status=item.status || item.last_test_status || '未配置';
+        const endpoint=item.endpoint || item.url || item.callback || '未配置';
+        const direction=item.direction || 'bidirectional';
+        const pending=Number(item.pending || item.pending_count || 0);
+        const initials=String(name || id || 'IN').replace(/[^A-Za-z0-9]/g,'').slice(0,2).toUpperCase() || 'IN';
+        const last=item.last || item.last_sync || item.last_test_at || item.updated_at || item.created_at || '-';
+        return Object.assign({}, item, {
+          id,
+          name,
+          icon:item.icon || initials,
+          desc:item.desc || item.description || '本地集成记录，测试和同步均只生成本系统证据。',
+          status,
+          status_class:this.statusClass(status),
+          endpoint,
+          direction,
+          last,
+          pending,
+          disabled:String(status).includes('关闭') || String(status).includes('DISABLED')
+        });
+      });
     },
     mcpRiskFindings(){
       return this.findings.filter(f=>String(f.source||'').includes('MCP') || String(f.rule||f.rule_id||'').startsWith('MCP-'));
@@ -1238,6 +1267,7 @@ data(){
     syncRouteFromLocation(){
       const path=location.protocol==='file:' && location.hash ? location.hash.slice(1) : location.pathname;
       this.current=this.keyForPath(path);
+      if(this.current==='integrations') this.refreshIntegrations({silent:true});
       const skillMatch=path.match(/^\/assessment\/skills\/([^/]+)/);
       if(skillMatch){
         const skillId=decodeURIComponent(skillMatch[1]);
@@ -1486,7 +1516,30 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});if(key==='case-detail') this.loadRedteamCaseDetail(this.selectedCase, {silent:true});if(key==='report-preview') this.refreshReportPreview(this.selectedReport, {silent:true});if(key==='profile-detail') this.loadProfileDetail(this.selectedProfile, {silent:true});if(key==='rule-detail') this.loadRuleDetail(this.selectedRule, {silent:true});if(key==='scanner-detail') this.loadScannerDetail(this.selectedScanner, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='agent-scan-issues') this.refreshAgentScanIssueMappings({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='schedules') this.refreshSchedules({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
+    go(key){
+      this.current=key;
+      this.pushRoute(key);
+      window.scrollTo({top:0,behavior:'smooth'});
+      if(key==='abom') this.loadAgentAbom(this.selectedAsset);
+      if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});
+      if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});
+      if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});
+      if(key==='case-detail') this.loadRedteamCaseDetail(this.selectedCase, {silent:true});
+      if(key==='report-preview') this.refreshReportPreview(this.selectedReport, {silent:true});
+      if(key==='profile-detail') this.loadProfileDetail(this.selectedProfile, {silent:true});
+      if(key==='rule-detail') this.loadRuleDetail(this.selectedRule, {silent:true});
+      if(key==='scanner-detail') this.loadScannerDetail(this.selectedScanner, {silent:true});
+      if(key==='settings') this.loadSettings();
+      if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});
+      if(key==='agent-scan-issues') this.refreshAgentScanIssueMappings({silent:true});
+      if(key==='licenses') this.refreshLicenseContext({silent:true});
+      if(key==='quick-scan') this.refreshQuickHistory({silent:true});
+      if(key==='schedules') this.refreshSchedules({silent:true});
+      if(key==='integrations') this.refreshIntegrations({silent:true});
+      if(key==='completeness') this.refreshCompleteness({silent:true});
+      if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});
+      if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});
+    },
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -3198,12 +3251,41 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
+    async refreshIntegrations(options){
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/integrations?page_size=200');
+        this.integrations=res.items || [];
+        if(!silent) this.toastMsg('集成列表已刷新：'+(res.total || this.integrations.length)+' 项');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async exportIntegrations(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/integrations/export');
+        this.integrationExport=res || null;
+        this.integrationExportDownload=res.download || '';
+        if(res.items) this.integrations=res.items;
+        if(this.integrationExportDownload) window.open(this.integrationExportDownload, '_blank', 'noopener');
+        this.toastMsg('集成证据已导出：'+((res.counts&&res.counts.integrations)||0)+' 个集成');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    downloadIntegrationExport(){
+      if(this.integrationExportDownload) window.open(this.integrationExportDownload, '_blank', 'noopener');
+    },
     async testIntegration(integration){
       if(!integration || !integration.id) return;
       this.opsBusy=true; this.apiError='';
       try {
         const res=await this.apiPost('/api/v1/integrations/'+encodeURIComponent(integration.id)+'/test', {});
         if(res.test&&res.test.record){ this.mergeRecords('integrations', [res.test.record]); }
+        await this.refreshIntegrations({silent:true});
         this.toastMsg(integration.name+' 连接测试：'+(res.test&&res.test.status));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -3216,6 +3298,7 @@ data(){
         this.integrationSyncResult=res.sync || null;
         this.integrationSyncLastDownload=(res.sync && res.sync.download) || '';
         if(res.sync&&res.sync.record){ this.mergeRecords('integrations', [res.sync.record]); }
+        await this.refreshIntegrations({silent:true});
         this.toastMsg(integration.name+' 同步包已生成：'+(res.sync&&res.sync.status));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
@@ -3257,7 +3340,8 @@ data(){
       if(this.platformEmbedEventDownload) window.open(this.platformEmbedEventDownload, '_blank', 'noopener');
     },
     async testAllIntegrations(){
-      for(const integration of (this.integrations||[]).filter(x=>x.status!=='关闭').slice(0, 8)){
+      if(!this.integrationRows.length) await this.refreshIntegrations({silent:true});
+      for(const integration of (this.integrationRows||[]).filter(x=>!x.disabled).slice(0, 8)){
         await this.testIntegration(integration);
       }
       this.toastMsg('启用连接测试已完成');

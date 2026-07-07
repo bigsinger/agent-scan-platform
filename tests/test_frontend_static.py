@@ -849,11 +849,28 @@ def test_integration_sync_ui_surfaces_local_package_artifact():
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "integrationSyncResult" in app_js
     assert "integrationSyncLastDownload" in app_js
+    assert "integrationExport" in app_js
+    assert "integrationExportDownload" in app_js
+    assert "integrationRows(){" in app_js
+    assert "async refreshIntegrations" in app_js
+    assert "async exportIntegrations" in app_js
+    assert "downloadIntegrationExport()" in app_js
     assert "downloadIntegrationSync()" in app_js
+    assert "/api/v1/integrations?page_size=200" in app_js
+    assert "/api/v1/integrations/export" in app_js
     assert "'/api/v1/integrations/'+encodeURIComponent(integration.id)+'/sync'" in app_js
     assert "this.integrationSyncResult=res.sync || null" in app_js
+    assert "await this.refreshIntegrations({silent:true})" in app_js
+    assert "if(key==='integrations') this.refreshIntegrations({silent:true})" in app_js
+    assert "if(this.current==='integrations')" in app_js
     assert "同步包已生成" in app_js
+    assert "v-for=\"i in integrationRows\"" in html
+    assert "@click=\"refreshIntegrations()\"" in html
+    assert "@click=\"exportIntegrations\"" in html
+    assert "@click=\"downloadIntegrationExport\"" in html
     assert "最近同步包：{{integrationSyncResult.schema" in html
+    assert "最近导出：{{integrationExport.schema" in html
+    assert "尚无集成配置" in html
     assert "@click=\"downloadIntegrationSync\"" in html
     assert "下载证据" in html
 

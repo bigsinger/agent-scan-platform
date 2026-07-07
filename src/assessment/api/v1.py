@@ -886,6 +886,8 @@ async def generic_get(resource: str, request: Request) -> dict:
         return sandbox_policy_response(get_store(), state)
     if path == "/schedules/export":
         return export_schedule_operations(get_store(), state)
+    if path == "/integrations/export":
+        return export_integration_operations(get_store(), state)
     if path == "/settings/export":
         return export_settings(get_store(), state)
     if path == "/settings":
@@ -10579,6 +10581,103 @@ def sanitize_integration_record(record: dict) -> dict:
         if any(token in lowered for token in ("api_key", "token", "secret", "password", "passwd")):
             safe[key] = "<REDACTED_REFERENCE>" if safe.get(key) else ""
     return safe
+
+
+def export_integration_operations(store: Any, state: dict) -> dict:
+    integrations = [
+        sanitize_integration_record(item)
+        for item in combine_items(store.list_records("integration", limit=1000), store.list_records("integration_config", limit=1000))
+    ]
+    events = [
+        {
+            "id": item.get("id"),
+            "integration_id": item.get("integration_id"),
+            "event_type": item.get("event_type"),
+            "subject_type": item.get("subject_type"),
+            "subject_id": item.get("subject_id"),
+            "status": item.get("status"),
+            "created_at": item.get("created_at"),
+            "artifact_id": item.get("artifact_id"),
+            "download": item.get("download"),
+            "delivered": item.get("delivered") is True,
+            "network_request_sent": item.get("network_request_sent") is True,
+            "raw_payload_persisted": item.get("raw_payload_persisted") is True,
+            "mutates_installed_agents": item.get("mutates_installed_agents") is True,
+        }
+        for item in store.list_records("integration_event", limit=1000)
+    ]
+    artifacts = [
+        {
+            "id": item.get("id"),
+            "kind": item.get("kind"),
+            "relative_path": item.get("relative_path"),
+            "size": item.get("size"),
+            "sha256": item.get("sha256"),
+            "created_at": item.get("created_at"),
+        }
+        for item in store.list_records("artifact", limit=1000)
+        if str(item.get("kind") or "") in {"integration-sync-package", "report-sync-package", "runtime-platform-event", "integration-operations-export"}
+    ]
+    payload = {
+        "schema": "agent-security-integration-operations-export@4.1",
+        "created_at": utc_now(),
+        "counts": {
+            "integrations": len(integrations),
+            "events": len(events),
+            "artifacts": len(artifacts),
+            "packaged": len([item for item in events if item.get("status") == "PACKAGED"]),
+            "recorded": len([item for item in events if item.get("status") == "RECORDED"]),
+        },
+        "integrations": integrations,
+        "events": events,
+        "artifacts": artifacts,
+        "delivery": {
+            "status": "LOCAL_PACKAGE_ONLY",
+            "delivered": False,
+            "network_probe": "disabled-by-default",
+            "external_delivery_performed": False,
+        },
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "raw_payload_persisted": False,
+        "network_request_sent": False,
+        "boundary": "集成导出只读取本系统 integration、integration_event 和 artifact 摘要并生成本地 JSON 证据；不访问外部平台、不保存原始 payload、不启动或修改已安装 Agent。",
+    }
+    artifact = store.write_artifact(
+        "integration-operations-export",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={"safe_mode": "local-readonly", "integrations": len(integrations), "events": len(events)},
+    )
+    store.audit_event(
+        "get.integrations.export",
+        "artifact",
+        artifact["id"],
+        {
+            "counts": payload["counts"],
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+            "network_request_sent": False,
+        },
+    )
+    return {
+        "schema": payload["schema"],
+        "counts": payload["counts"],
+        "items": integrations,
+        "events": events,
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "network_request_sent": False,
+        "raw_payload_persisted": False,
+    }
 
 
 def build_integration_sync_package(store: Any, state: dict, integration_id: str, record: dict, body: dict) -> dict:

@@ -4752,6 +4752,7 @@ AI 编码代理实现本页时不得：
 ## 4. API 契约
 
 - `GET /api/v1/integrations`
+- `GET /api/v1/integrations/export`
 - `POST /api/v1/integrations/{id}/test`
 - `POST /api/v1/integrations/{id}/sync`
 
@@ -4779,7 +4780,9 @@ AI 编码代理实现本页时不得：
 
 ## 5. 主要实体
 
-`integration, platform_asset, audit_event`
+`integration, integration_event, platform_asset, audit_event`
+
+当前本地实现中，`GET /api/v1/integrations?page_size=200` 为页面提供实时集成列表，`GET /api/v1/integrations/export` 生成 `integration-operations-export` artifact，汇总本系统 `integration`、`integration_event` 与相关 artifact 摘要。`sync` 只生成本地 `integration-sync-package` 或 `report-sync-package` artifact，并写入 `integration_event`，`delivered=false`。`runtime-platform/events` 只记录主平台事件脱敏摘要和 `runtime-platform-event` artifact，返回 `raw_payload_persisted=false`、`network_request_sent=false`、`mutates_installed_agents=false`；不得访问外部平台或修改已安装 Agent。
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 

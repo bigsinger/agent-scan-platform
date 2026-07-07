@@ -2303,6 +2303,28 @@ def test_capability_management_actions_are_persisted():
     assert event_package["network_request_sent"] is False
     assert event_package["mutates_installed_agents"] is False
     assert "sk-contractruntimeeventsecret" not in event_artifact.text
+    integration_export = client.get("/api/v1/integrations/export")
+    assert integration_export.status_code == 200
+    export_body = integration_export.json()
+    assert export_body["schema"] == "agent-security-integration-operations-export@4.1"
+    assert export_body["counts"]["integrations"] >= 1
+    assert export_body["counts"]["events"] >= 2
+    assert export_body["safe_mode"] == "local-readonly"
+    assert export_body["mutates_installed_agents"] is False
+    assert export_body["agent_runtime_started"] is False
+    assert export_body["stdio_mcp_started"] is False
+    assert export_body["network_request_sent"] is False
+    assert export_body["raw_payload_persisted"] is False
+    export_download = client.get(export_body["download"])
+    assert export_download.status_code == 200
+    export_package = export_download.json()
+    assert export_package["schema"] == "agent-security-integration-operations-export@4.1"
+    assert export_package["delivery"]["external_delivery_performed"] is False
+    assert export_package["mutates_installed_agents"] is False
+    assert export_package["network_request_sent"] is False
+    assert export_package["raw_payload_persisted"] is False
+    assert "sk-contractruntimeeventsecret" not in export_download.text
+    assert any(item["id"] == integration_id for item in export_package["integrations"])
     with api_v1.get_store().connect() as conn:
         audit = conn.execute(
             "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",

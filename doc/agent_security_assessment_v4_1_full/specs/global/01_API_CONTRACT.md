@@ -92,6 +92,7 @@
 - `POST /api/v1/schedules/run-due`
 - `GET /api/v1/schedules/export`
 - `GET /api/v1/integrations`
+- `GET /api/v1/integrations/export`
 - `POST /api/v1/integrations/{id}/test`
 - `POST /api/v1/integrations/{id}/sync`
 - `GET /api/v1/settings`
