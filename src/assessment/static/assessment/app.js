@@ -102,6 +102,10 @@
     state.policyDraftPreflight = null;
     state.retestDiff = null;
     state.selectedFindingHistory = [];
+    state.findingFilterText = '';
+    state.findingFilterSeverity = '全部严重度';
+    state.findingFilterStatus = '全部状态';
+    state.findingFilterSource = '全部来源';
     state.completenessSummary = {};
     state.executionLog = null;
     state.executionTermination = null;
@@ -226,6 +230,10 @@ data(){
     initial.selectedRetest = initial.selectedRetest || ((initial.retests || [])[0]) || {};
     initial.retestDiff = initial.retestDiff || null;
     initial.selectedFindingHistory = initial.selectedFindingHistory || [];
+    initial.findingFilterText = '';
+    initial.findingFilterSeverity = '全部严重度';
+    initial.findingFilterStatus = '全部状态';
+    initial.findingFilterSource = '全部来源';
     initial.agentDetail = null;
     initial.abomData = null;
     initial.abomDiff = null;
@@ -269,6 +277,59 @@ data(){
     },
     p1Count(){
       return this.findings.filter(f=>String(f.severity||'').includes('P1') || String(f.severity||'').includes('高危')).length;
+    },
+    filteredFindings(){
+      const keyword=String(this.findingFilterText || '').trim().toLowerCase();
+      const severity=String(this.findingFilterSeverity || '全部严重度');
+      const status=String(this.findingFilterStatus || '全部状态');
+      const source=String(this.findingFilterSource || '全部来源');
+      const severityMatches=(finding) => {
+        if(severity === '全部严重度') return true;
+        const raw=String(finding.severity || finding.priority || finding.sev || '');
+        if(severity === 'P0 严重') return raw.includes('P0') || raw.includes('严重') || raw.toLowerCase().includes('critical');
+        if(severity === 'P1 高危') return raw.includes('P1') || raw.includes('高危') || raw.toLowerCase().includes('high');
+        if(severity === 'P2 中危') return raw.includes('P2') || raw.includes('中危') || raw.toLowerCase().includes('medium');
+        return true;
+      };
+      const statusMatches=(finding) => {
+        if(status === '全部状态') return true;
+        const raw=String(finding.status || finding.state || '');
+        if(status === '待复核') return raw.includes('待复核') || raw.includes('NEEDS') || raw.includes('OPEN');
+        if(status === '已确认') return raw.includes('已确认') || raw.includes('CONFIRMED') || raw.includes('ACCEPTED');
+        if(status === '修复中') return raw.includes('修复中') || raw.includes('FIXING') || raw.includes('IN_PROGRESS');
+        if(status === '待复测') return raw.includes('待复测') || raw.includes('RETEST');
+        if(status === '已修复') return raw.includes('已修复') || raw.includes('FIXED') || raw.includes('RESOLVED');
+        return true;
+      };
+      const sourceMatches=(finding) => {
+        if(source === '全部来源') return true;
+        const raw=String(finding.source || finding.scanner || finding.detector || '').toLowerCase();
+        if(source === 'Local Analyzer') return raw.includes('local');
+        if(source === 'agent-scan Bridge') return raw.includes('agent-scan') || raw.includes('bridge');
+        if(source === 'Skill/SCA') return raw.includes('skill') || raw.includes('sca');
+        if(source === 'Red Team') return raw.includes('red') || raw.includes('红队');
+        return true;
+      };
+      return (this.findings || []).filter(finding => {
+        if(!severityMatches(finding) || !statusMatches(finding) || !sourceMatches(finding)) return false;
+        if(!keyword) return true;
+        const haystack=[
+          finding.id,
+          finding.title,
+          finding.summary,
+          finding.rule,
+          finding.rule_id,
+          finding.component,
+          finding.agent,
+          finding.target,
+          finding.source,
+          finding.compat,
+          finding.compatibility_code,
+          finding.status,
+          finding.severity
+        ].map(value=>String(value || '').toLowerCase()).join(' ');
+        return haystack.includes(keyword);
+      });
     },
     runningTaskCount(){
       return this.tasks.filter(t=>['运行中','等待审批','排队中','RUNNING','WAITING_CONSENT','QUEUED'].includes(t.status) || t.stage==='WAITING_CONSENT').length;

@@ -787,6 +787,8 @@ Invoke-WebRequest `
 
 导出仅读取本系统 `finding` 表并写入 `data/artifacts/findings-export`，不会重新访问客户目录、不会启动 Agent/MCP、不会修改 Codex/Hermes 配置。用于客户评审时建议同时留存 `$export.artifact.sha256`。
 
+风险中心页面筛选验收：在 `/assessment/findings` 输入规则、标题、组件或兼容码关键字，并切换严重度、状态、来源下拉，列表应只过滤当前 `findings` 运行态记录。筛选本身不得触发扫描、复测、状态修改、SQLite 写入或任何 Codex/Hermes/MCP 进程动作。
+
 证据制品运维操作只读取 SQLite 中的 evidence 记录并生成脱敏 JSON artifact；不会回读、覆盖或删除 Codex/Hermes/Claude Code 安装目录文件：
 
 ```powershell

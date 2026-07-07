@@ -607,6 +607,8 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 - 整改建议。
 - 状态。
 
+风险中心顶部搜索、严重度、状态和来源筛选只过滤当前已加载的 `findings` 运行态数据。筛选用于快速定位标题、规则、组件、Agent、兼容码或来源，不会重新扫描、不写 SQLite、不改变风险状态，也不会启动或修改 Codex、Hermes、MCP。
+
 风险详情页会读取当前 Finding 的真实字段：概览、复现步骤、证据链、受影响组件、根因与整改、标准映射和历史。证据链只展示按 `finding_id` / `evidence_ids` 关联的本系统脱敏 Evidence；没有复现步骤时显示可审计空状态，不再展示固定示例步骤或固定 `ev_01` 证据。
 
 “历史”页签调用 `GET /api/v1/findings/<finding_id>/history`，从 SQLite 中的 Finding、关联 Evidence、复测任务和 `audit_event` 聚合 timeline。确认风险、标记误报候选、创建复测后会写入审计并刷新历史；该视图不会启动或修改 Codex、Hermes、MCP 配置。

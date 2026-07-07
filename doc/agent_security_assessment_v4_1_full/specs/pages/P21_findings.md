@@ -69,6 +69,8 @@
 
 `finding, remediation, risk_acceptance`
 
+当前本地实现中，风险中心搜索框、严重度、状态和来源下拉直接过滤当前 `findings` 运行态数据。筛选字段覆盖标题、摘要、规则、组件、Agent、目标、来源、兼容码、状态和严重度；筛选只改变页面视图，不写 SQLite、不重新扫描、不修改 Finding 状态或已安装 Agent/MCP。
+
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
 ## 6. 必须覆盖状态

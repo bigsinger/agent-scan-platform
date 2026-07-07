@@ -605,6 +605,24 @@ def test_findings_export_ui_is_api_backed():
     assert "/api/v1/findings/export" in app_js
 
 
+def test_finding_filters_are_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "findingFilterText" in app_js
+    assert "findingFilterSeverity" in app_js
+    assert "findingFilterStatus" in app_js
+    assert "findingFilterSource" in app_js
+    assert "filteredFindings(){" in app_js
+    assert 'v-model="findingFilterText"' in html
+    assert 'v-model="findingFilterSeverity"' in html
+    assert 'v-model="findingFilterStatus"' in html
+    assert 'v-model="findingFilterSource"' in html
+    assert 'v-for="f in filteredFindings"' in html
+    assert "筛选 {{filteredFindings.length}} / {{findings.length}}" in html
+    assert "当前筛选条件下没有风险" in html
+    assert "暂无风险。请先运行快速扫描" in html
+
+
 def test_finding_false_positive_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
