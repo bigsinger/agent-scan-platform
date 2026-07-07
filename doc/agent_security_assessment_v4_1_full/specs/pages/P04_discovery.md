@@ -69,6 +69,8 @@
 
 `discovery_run, discovery_hit, agent_instance`
 
+当前本地实现中，发现命中表的搜索框和类型下拉直接过滤当前 `discoveryHits` 运行态数据，支持按类型、产品、路径、来源、版本、变化状态和导入状态筛选。筛选只改变页面视图，不重新扫描、不写 SQLite、不启动或修改已安装 Agent。
+
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
 ## 6. 必须覆盖状态

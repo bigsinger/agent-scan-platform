@@ -323,6 +323,32 @@ def test_discovery_run_ui_exposes_current_evidence_download():
     assert "include_skills:!!this.form.discoverySkills" in app_js
     assert "include_mcp:!!this.form.discoveryMcp" in app_js
     assert "changes_only:!!this.form.discoveryChangesOnly" in app_js
+
+
+def test_discovery_and_agent_asset_filters_are_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+
+    assert "discoveryFilterText" in app_js
+    assert "discoveryFilterType" in app_js
+    assert "agentFilterText" in app_js
+    assert "agentFilterAdapter" in app_js
+    assert "agentFilterCoverage" in app_js
+    assert "agentFilterProbe" in app_js
+    assert "filteredDiscoveryHits(){" in app_js
+    assert "filteredAgentAssets(){" in app_js
+    assert 'v-model="discoveryFilterText"' in html
+    assert 'v-model="discoveryFilterType"' in html
+    assert 'v-for="x in filteredDiscoveryHits"' in html
+    assert "当前筛选条件下没有发现命中" in html
+    assert 'v-model="agentFilterText"' in html
+    assert 'v-model="agentFilterAdapter"' in html
+    assert 'v-model="agentFilterCoverage"' in html
+    assert 'v-model="agentFilterProbe"' in html
+    assert 'v-for="a in filteredAgentAssets"' in html
+    assert "当前筛选条件下没有 Agent 资产" in html
+    assert "筛选 {{filteredDiscoveryHits.length}} / {{discoveryHits.length}}" in html
+    assert "筛选 {{filteredAgentAssets.length}} / {{agentAssets.length}}" in html
     assert "x.change_status||'UNKNOWN'" in html
     assert "版本 / 方法" in html
     assert "x.version||'-'" in html

@@ -68,6 +68,8 @@
 
 `agent_instance, component, adapter`
 
+当前本地实现中，Agent 资产页的搜索框、Agent 类型、支持级别和探测状态下拉直接过滤当前 `agentAssets` 运行态数据。筛选字段覆盖名称、ID、路径、Adapter、版本、支持级别、探测状态和安装来源；筛选只改变页面视图，不触发重新探测、不写 SQLite、不启动或修改已安装 Agent。
+
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
 ## 6. 必须覆盖状态

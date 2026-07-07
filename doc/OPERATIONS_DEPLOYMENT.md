@@ -1023,6 +1023,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($inventory.download)" -OutFile ".
 
 `discovery-inventory.json` 指向跨多次发现的验收包，schema 为 `agent-security-discovery-inventory@4.1`。验收时应检查 `validation.status`、`probe_coverage.products`、`artifact_integrity`、`raw_sensitive_evidence=not-included`、`mutates_installed_agents=false`、`stdio_mcp_started=false`、`agent_runtime_started=false`。该导出只读取本系统 SQLite 和已生成 artifact，不重新扫描客户目录，也不写入 Codex/Hermes/Claude Code/Cursor 配置。
 
+页面筛选验收：在 `/assessment/discovery` 输入产品、路径或状态关键字，发现命中表应只过滤当前 `discoveryHits`；在 `/assessment/agents` 使用 Agent 类型、支持级别和探测状态下拉，资产表应只过滤当前 `agentAssets`。这些筛选不调用发现 API、不写 SQLite、不启动或修改 Codex/Hermes/Claude Code/MCP。
+
 版本探测验收：Hermes 应记录 `probe_method=version-command`、`probe_source=hermes --version`；Codex 应记录 `probe_method=package-metadata` 或等价只读来源，`command_started=false`。WindowsApps 下 Codex exe 不可直接执行时不得把它判定为失败，应通过 PATH 别名或包目录名解析版本。
 
 过滤和变化视图验收：

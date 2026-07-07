@@ -59,6 +59,12 @@
     state.uploadResult = null;
     state.discoveryRunEvidence = '';
     state.discoveryInventoryExport = null;
+    state.discoveryFilterText = '';
+    state.discoveryFilterType = '全部';
+    state.agentFilterText = '';
+    state.agentFilterAdapter = '全部 Agent';
+    state.agentFilterCoverage = '全部支持级别';
+    state.agentFilterProbe = '全部探测状态';
     state.skillScanResult = null;
     state.mcpInspection = null;
     state.mcpDetailTools = [];
@@ -114,6 +120,12 @@ data(){
     initial.uploadResult = null;
     initial.discoveryRunEvidence = '';
     initial.discoveryInventoryExport = null;
+    initial.discoveryFilterText = '';
+    initial.discoveryFilterType = '全部';
+    initial.agentFilterText = '';
+    initial.agentFilterAdapter = '全部 Agent';
+    initial.agentFilterCoverage = '全部支持级别';
+    initial.agentFilterProbe = '全部探测状态';
     initial.discoveryErrors = initial.discoveryErrors || [];
     initial.discoveryLog = initial.discoveryLog || [];
     initial.caseLibrary = initial.caseLibrary || [];
@@ -313,6 +325,66 @@ data(){
     sqliteMb(){
       const bytes=this.sqliteStatus && this.sqliteStatus.file_bytes || 0;
       return bytes ? (bytes/1024/1024).toFixed(bytes > 10485760 ? 0 : 1) : '0';
+    },
+    filteredDiscoveryHits(){
+      const keyword=String(this.discoveryFilterText || '').trim().toLowerCase();
+      const type=String(this.discoveryFilterType || '全部');
+      return (this.discoveryHits || []).filter(item => {
+        if(type !== '全部' && String(item.type || '') !== type) return false;
+        if(!keyword) return true;
+        const haystack=[
+          item.type,
+          item.agent,
+          item.path,
+          item.scope,
+          item.source,
+          item.version,
+          item.probe_method,
+          item.change_status,
+          item.status
+        ].map(value=>String(value || '').toLowerCase()).join(' ');
+        return haystack.includes(keyword);
+      });
+    },
+    filteredAgentAssets(){
+      const keyword=String(this.agentFilterText || '').trim().toLowerCase();
+      const adapter=String(this.agentFilterAdapter || '全部 Agent');
+      const coverage=String(this.agentFilterCoverage || '全部支持级别');
+      const probe=String(this.agentFilterProbe || '全部探测状态');
+      const coverageMatches=(item) => {
+        if(coverage === '全部支持级别') return true;
+        const raw=String(item.coverage || item.support_level || '');
+        if(coverage === '完整') return raw.includes('完整') || raw.toLowerCase().includes('full');
+        if(coverage === '扩展') return raw.includes('扩展') || raw.toLowerCase().includes('extended');
+        if(coverage === '部分') return raw.includes('部分') || raw.toLowerCase().includes('partial') || raw.toLowerCase().includes('generic');
+        return true;
+      };
+      const probeMatches=(item) => {
+        if(probe === '全部探测状态') return true;
+        const raw=String(item.probe || item.status || item.probe_status || '');
+        if(probe === '正常') return raw.includes('正常') || raw === 'ACTIVE' || raw === 'OBSERVED';
+        if(probe === '配置变化') return raw.includes('变化') || raw.includes('CHANGED');
+        if(probe === '需重探测') return raw.includes('重探测') || raw.includes('STALE') || raw.includes('UNKNOWN') || raw.includes('NOT_RUN');
+        return true;
+      };
+      const normalize=value=>String(value || '').toLowerCase().replace(/[^a-z0-9]+/g,'');
+      return (this.agentAssets || []).filter(item => {
+        if(adapter !== '全部 Agent' && normalize(item.adapter || item.name) !== normalize(adapter)) return false;
+        if(!coverageMatches(item) || !probeMatches(item)) return false;
+        if(!keyword) return true;
+        const haystack=[
+          item.id,
+          item.name,
+          item.adapter,
+          item.path,
+          item.version,
+          item.coverage,
+          item.probe,
+          item.probe_source,
+          item.install_status
+        ].map(value=>String(value || '').toLowerCase()).join(' ');
+        return haystack.includes(keyword);
+      });
     },
     stdioMcpCount(){
       return this.mcpServers.filter(m=>m.transport==='stdio').length;
