@@ -1384,6 +1384,66 @@ def test_report_evidence_and_risk_closure_actions():
     assert "agent-security-evidence-package@4.1" in package_download.text
 
 
+def test_evidence_export_materializes_redacted_artifacts_and_checks_integrity(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "evidence-integrity.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    store.upsert_record(
+        "evidence",
+        {
+            "id": "ev_without_artifact",
+            "type": "manual",
+            "collector": "contract-test",
+            "content": "api_key=sk-contractsecret000000000000000000",
+            "finding_id": "finding-integrity",
+        },
+        status="READY",
+    )
+    artifact = store.write_artifact(
+        "evidence-redacted",
+        '{"schema":"agent-security-evidence@4.1","content":"clean"}',
+        suffix="json",
+        metadata={"evidence_id": "ev_tampered"},
+    )
+    tampered_path = api_v1.DATA_DIR / artifact["relative_path"]
+    tampered_path.write_text("tampered", encoding="utf-8")
+    store.upsert_record(
+        "evidence",
+        {
+            "id": "ev_tampered",
+            "type": "manual",
+            "collector": "contract-test",
+            "content": "clean",
+            "artifact_id": artifact["id"],
+            "artifact_path": artifact["relative_path"],
+        },
+        status="READY",
+    )
+
+    response = client.get("/api/v1/evidence/export")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["integrity"]["total"] == 2
+    assert payload["integrity"]["pass"] == 1
+    assert payload["integrity"]["mismatch"] == 1
+    assert payload["integrity"]["mutates_installed_agents"] is False
+
+    package = client.get(payload["download"])
+    assert package.status_code == 200
+    body = json.loads(package.text)
+    rows = {row["evidence_id"]: row for row in body["artifact_integrity"]}
+    assert rows["ev_without_artifact"]["status"] == "PASS"
+    assert rows["ev_tampered"]["status"] == "MISMATCH"
+    assert rows["ev_tampered"]["sha256_matches"] is False
+    assert "sk-contractsecret" not in package.text
+
+    materialized = store.get_record("evidence", "ev_without_artifact")
+    assert materialized["artifact_id"]
+    assert materialized["redacted_sha256"]
+    assert store.get_record("artifact", materialized["artifact_id"]) is not None
+
+
 def test_report_sync_packages_local_report_artifacts(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "report-sync.db")
     store.initialize()

@@ -615,10 +615,17 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/skills/$($skill.id)/export"
 
 证据中心支持真实制品操作：
 
-1. “验证完整性”会生成一次脱敏证据包，返回证据数量、关联风险数量和 artifact 下载地址。
-2. “导出证据包”会下载 `agent-security-evidence-package@4.1` JSON，内容只包含脱敏片段、哈希、Finding 关联和采集元数据。
+1. “验证完整性”会生成一次脱敏证据包，返回证据数量、关联风险数量、artifact 下载地址和完整性摘要。
+2. “导出证据包”会下载 `agent-security-evidence-package@4.1` JSON，内容只包含脱敏片段、哈希、Finding 关联、采集元数据和 `artifact_integrity` 清单。
 3. “重新脱敏”会使用本地统一规则重新处理当前证据，并写入新的 redacted artifact。
 4. “下载 JSON”只下载本系统生成的脱敏证据文件，不回读目标 Agent 原始文件。
+
+完整性校验说明：
+
+- 若 Evidence 缺少脱敏 artifact，导出时会在本系统 `data/artifacts` 下生成一个脱敏 JSON，并回写 Evidence 的 `artifact_id` 与 `redacted_sha256`。
+- 若 Evidence 已有关联 artifact，系统会读取本系统 artifact 文件并重新计算 SHA-256，与 SQLite 中记录的哈希比对。
+- `integrity.status=PASS` 表示所有证据 artifact 均存在且哈希匹配；`MISSING` 或 `MISMATCH` 表示制品缺失或被改动，需要重新脱敏或重新生成报告。
+- 该流程只读校验本系统证据制品，不访问 Agent 原始目录，不启动 MCP，不修改 Codex/Hermes。
 
 ## 8.1 攻击路径与策略草案
 

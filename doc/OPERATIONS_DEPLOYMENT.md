@@ -742,10 +742,15 @@ Invoke-WebRequest `
   -OutFile evidence.json
 
 $package = Invoke-RestMethod http://127.0.0.1:8000/api/v1/evidence/export
+$package.integrity.status
+$package.integrity.missing
+$package.integrity.mismatch
 Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($package.download)" `
   -OutFile evidence-package.json
 ```
+
+`evidence/export` 会为缺少脱敏 artifact 的 Evidence 在本系统 `data/artifacts` 下补写 `evidence-redacted` JSON，并对已有 artifact 重新计算 SHA-256。下载包内的 `artifact_integrity` 每行包含 `exists`、`expected_sha256`、`sha256`、`sha256_matches` 和 `status`；企业验收时应要求 `integrity.status=PASS`，否则按 `MISSING` 或 `MISMATCH` 追溯制品缺失/被改动原因。该校验只读取本系统 artifact，不回读客户 Agent 原始路径。
 
 证据包归档建议：
 

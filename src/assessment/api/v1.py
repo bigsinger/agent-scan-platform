@@ -6116,13 +6116,24 @@ def ensure_evidence_artifact(store: Any, evidence: dict, force_new: bool = False
 
 
 def export_evidence_package(store: Any, state: dict) -> dict:
-    evidence_items = [decorate_evidence_item(item) for item in combine_items(store.list_records("evidence"), state.get("evidenceItems", []))]
+    materialized_evidence: list[dict] = []
+    for item in combine_items(store.list_records("evidence"), state.get("evidenceItems", [])):
+        evidence = dict(item)
+        ensure_evidence_artifact(store, evidence)
+        merge_state_record(state, "evidenceItems", evidence)
+        materialized_evidence.append(evidence)
+    store.save_state(state)
+
+    evidence_items = [decorate_evidence_item(item) for item in materialized_evidence]
+    integrity_rows = [evidence_artifact_integrity(store, item) for item in evidence_items]
+    integrity_summary = evidence_integrity_summary(integrity_rows)
     findings = combine_items(store.list_records("finding"), state.get("findings", []))
     package = {
         "schema": "agent-security-evidence-package@4.1",
         "generated_at": utc_now(),
         "safe_mode": "local-readonly",
         "raw_sensitive_evidence": "not-included",
+        "integrity": integrity_summary,
         "counts": {
             "evidence": len(evidence_items),
             "findings": len(findings),
@@ -6140,6 +6151,7 @@ def export_evidence_package(store: Any, state: dict) -> dict:
             for item in findings
         ],
         "evidence": evidence_items,
+        "artifact_integrity": integrity_rows,
     }
     content = json.dumps(package, ensure_ascii=False, indent=2)
     artifact = store.write_artifact(
@@ -6148,13 +6160,67 @@ def export_evidence_package(store: Any, state: dict) -> dict:
         suffix="json",
         metadata={"safe_mode": "local-readonly", "evidence_count": len(evidence_items), "finding_count": len(findings)},
     )
-    store.audit_event("get.evidence.export", "artifact", artifact["id"], package["counts"])
+    store.audit_event("get.evidence.export", "artifact", artifact["id"], {"counts": package["counts"], "integrity": integrity_summary})
     return {
         "format": "evidence-package-json",
         "artifact": artifact,
         "counts": package["counts"],
+        "integrity": integrity_summary,
         "download": f"/api/v1/artifacts/{artifact['id']}/download",
         "generated_at": package["generated_at"],
+    }
+
+
+def evidence_artifact_integrity(store: Any, evidence: dict) -> dict:
+    artifact_id = str(evidence.get("redacted_artifact_id") or evidence.get("artifact_id") or "")
+    artifact = store.get_record("artifact", artifact_id) if artifact_id else None
+    relative_path = str((artifact or {}).get("relative_path") or evidence.get("artifact_path") or "").replace("\\", "/")
+    expected_sha256 = str((artifact or {}).get("sha256") or evidence.get("redacted_sha256") or evidence.get("sha256") or "")
+    actual_sha256 = ""
+    exists = False
+    size = 0
+    status = "NO_ARTIFACT"
+    error = ""
+    if relative_path:
+        path = data_relative_path(relative_path)
+        if path and path.exists() and path.is_file():
+            exists = True
+            size = path.stat().st_size
+            actual_sha256 = file_sha256(path)
+            status = "PASS" if not expected_sha256 or actual_sha256 == expected_sha256 else "MISMATCH"
+        else:
+            status = "MISSING"
+            error = "artifact file is missing or outside data directory"
+    return {
+        "evidence_id": evidence.get("id"),
+        "artifact_id": artifact_id,
+        "relative_path": relative_path,
+        "exists": exists,
+        "size": size,
+        "expected_sha256": expected_sha256,
+        "sha256": actual_sha256,
+        "sha256_matches": bool(exists and actual_sha256 and (not expected_sha256 or actual_sha256 == expected_sha256)),
+        "status": status,
+        "error": error,
+        "safe_mode": "local-readonly",
+    }
+
+
+def evidence_integrity_summary(rows: list[dict]) -> dict:
+    total = len(rows)
+    pass_count = len([row for row in rows if row.get("status") == "PASS"])
+    missing = len([row for row in rows if row.get("status") == "MISSING"])
+    mismatch = len([row for row in rows if row.get("status") == "MISMATCH"])
+    no_artifact = len([row for row in rows if row.get("status") == "NO_ARTIFACT"])
+    return {
+        "total": total,
+        "pass": pass_count,
+        "missing": missing,
+        "mismatch": mismatch,
+        "no_artifact": no_artifact,
+        "status": "PASS" if total == pass_count else "WARN",
+        "raw_sensitive_evidence": "not-included",
+        "mutates_installed_agents": False,
     }
 
 
