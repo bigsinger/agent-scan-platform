@@ -1004,6 +1004,18 @@ def test_completeness_matrix_ui_uses_runtime_summary():
     assert "statusClass(x.contract)" in html
     assert "statusClass(x.e2e)" in html
     assert "completenessStats()" in app_js
+    assert "completenessFilterText" in app_js
+    assert "completenessFilterGroup" in app_js
+    assert "completenessFilterStatus" in app_js
+    assert "completenessGroups()" in app_js
+    assert "filteredCompletenessRows()" in app_js
+    assert 'v-model="completenessFilterText"' in html
+    assert 'v-model="completenessFilterGroup"' in html
+    assert 'v-model="completenessFilterStatus"' in html
+    assert 'v-for="g in completenessGroups"' in html
+    assert 'v-for="x in filteredCompletenessRows"' in html
+    assert "筛选 {{filteredCompletenessRows.length}} / {{completeness.length}}" in html
+    assert "当前筛选条件下没有完整性记录" in html
     assert "async refreshCompleteness" in app_js
     assert "/api/v1/completeness?page_size=200" in app_js
 

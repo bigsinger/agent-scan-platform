@@ -67,6 +67,8 @@
 
 `implementation_item, requirement_trace`
 
+当前本地实现中，完整性矩阵搜索框、分组和状态下拉直接过滤当前 `/api/v1/completeness` 返回的 `completeness` 运行态行。分组选项从当前行的 `group` 字段动态生成；筛选字段覆盖 ID、页面、Route、分组、核心 API、Entity、Audit、Contract、E2E、状态、prototype/spec 路径和缺失 API。筛选只改变页面视图，不导出矩阵、不写 SQLite、不扫描、不启动或修改 Codex/Hermes/stdio MCP。
+
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
 ## 6. 必须覆盖状态

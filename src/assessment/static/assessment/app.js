@@ -114,6 +114,9 @@
     state.ruleFilterDimension = '全部维度';
     state.ruleFilterSource = '全部来源';
     state.ruleFilterStatus = '全部状态';
+    state.completenessFilterText = '';
+    state.completenessFilterGroup = '全部分组';
+    state.completenessFilterStatus = '全部状态';
     state.completenessSummary = {};
     state.executionLog = null;
     state.executionTermination = null;
@@ -264,6 +267,9 @@ data(){
     initial.agentScanIssues = initial.agentScanIssues || [];
     initial.agentScanIssueMappingLoadedAt = '';
     initial.completenessSummary = initial.completenessSummary || {};
+    initial.completenessFilterText = '';
+    initial.completenessFilterGroup = '全部分组';
+    initial.completenessFilterStatus = '全部状态';
     initial.selectedProfile = initial.selectedProfile || (initial.profiles && initial.profiles[0]) || {};
     initial.profileValidation = null;
     initial.settingsState = initial.settings || {};
@@ -1295,6 +1301,46 @@ data(){
         doc_root:summary.doc_root || 'doc/agent_security_assessment_v4_1_full',
         updated_at:summary.updated_at || ''
       };
+    },
+    completenessGroups(){
+      return [...new Set((this.completeness || []).map(row=>String(row.group || '').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b, 'zh-Hans-CN'));
+    },
+    filteredCompletenessRows(){
+      const keyword=String(this.completenessFilterText || '').trim().toLowerCase();
+      const group=String(this.completenessFilterGroup || '全部分组');
+      const status=String(this.completenessFilterStatus || '全部状态');
+      const statusMatches=(row) => {
+        if(status === '全部状态') return true;
+        const values=[row.audit, row.contract, row.e2e, row.status].map(value=>String(value || '').toLowerCase());
+        const joined=values.join(' ');
+        if(status === 'PASS') return values.includes('pass') || joined.includes('已验收');
+        if(status === 'NOT_ASSERTED') return values.includes('not_asserted');
+        if(status === 'MISSING_DOC') return values.includes('missing_doc');
+        if(status === 'MISSING_API') return values.includes('missing_api');
+        if(status === '待验证') return joined.includes('待验证');
+        return true;
+      };
+      return (this.completeness || []).filter(row => {
+        if(group !== '全部分组' && String(row.group || '') !== group) return false;
+        if(!statusMatches(row)) return false;
+        if(!keyword) return true;
+        const haystack=[
+          row.id,
+          row.page,
+          row.route,
+          row.group,
+          row.api,
+          row.entity,
+          row.audit,
+          row.contract,
+          row.e2e,
+          row.status,
+          row.prototype,
+          row.spec,
+          (row.missing_api || []).join(' ')
+        ].map(value=>String(value || '').toLowerCase()).join(' ');
+        return haystack.includes(keyword);
+      });
     },
     reportReadinessRows(){
       const rows=this.reportPreviewData && Array.isArray(this.reportPreviewData.readiness) ? this.reportPreviewData.readiness : [];

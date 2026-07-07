@@ -474,6 +474,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($completeness.download)" -OutFile
 
 `/api/v1/completeness` 的 `summary` 会从当前 V4.1 契约、`doc/agent_security_assessment_v4_1_full` 的 prototype/spec 文件、本机 SQLite 状态和本地规则目录派生。`/api/v1/completeness/export` 会写入 `completeness-export` artifact，并记录 `get.completeness.export` 审计事件；artifact 包含完整性行、汇总、prototype/spec/global spec/API contract/acceptance checklist/运行时代码文件的 `sha256` 与存在性。`E2E=NOT_ASSERTED` 表示当前只有契约/文档覆盖，尚未由自动化端到端用例证明；运维评审时不要把它解释为验收通过。完整性导出只读取本仓库和本系统 SQLite，不启动、不扫描、不修改已安装 Agent。
 
+完整性矩阵页面筛选验收：在 `/assessment/completeness` 输入页面、Route、API 或实体关键字，并切换分组和状态下拉，列表应只过滤当前 `/api/v1/completeness` 运行态行。筛选本身不得调用 `/export`、不得写 SQLite、不得扫描客户目录、不得执行脚本或启动/修改 Codex、Hermes、Claude Code、stdio MCP。
+
 WAL checkpoint：
 
 ```powershell

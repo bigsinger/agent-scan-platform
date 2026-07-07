@@ -1283,6 +1283,8 @@ Invoke-RestMethod `
 
 实现完整性矩阵页面来自 `/api/v1/completeness` 的实时摘要和行数据：页面/详情数量来自 V4.1 契约行，API 数量来自当前注入的 API 契约，SQLite 表数来自 `/api/v1/sqlite/status`，规则数来自本地 `rule_catalog()`。每行的 `Audit` 会检查 `doc/agent_security_assessment_v4_1_full` 中对应 prototype/spec 文件是否存在，`Contract` 会检查页面声明的 API 是否登记在契约中；没有真实自动化断言的 `E2E` 会显示 `NOT_ASSERTED`，不会再用固定勾选或“0 缺口”冒充验收结论。
 
+完整性矩阵顶部搜索、分组和状态筛选只过滤当前已加载的 `completeness` 运行态行；分组选项来自接口返回的 `group` 字段，状态筛选匹配 `audit/contract/e2e/status`。筛选不会触发导出、SQLite 写入、扫描、脚本执行或任何已安装 Agent 修改。
+
 完整性导出：
 
 ```powershell
