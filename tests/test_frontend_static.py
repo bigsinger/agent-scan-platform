@@ -369,6 +369,23 @@ def test_skill_scan_ui_has_real_sync_and_changes_only_actions():
     assert "skillScanResult.change_summary" in html
 
 
+def test_skill_list_filters_are_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "skillFilterText" in app_js
+    assert "skillFilterAgent" in app_js
+    assert "skillFilterRisk" in app_js
+    assert "skillFilterSource" in app_js
+    assert "filteredSkills(){" in app_js
+    assert 'v-model="skillFilterText"' in html
+    assert 'v-model="skillFilterAgent"' in html
+    assert 'v-model="skillFilterRisk"' in html
+    assert 'v-model="skillFilterSource"' in html
+    assert 'v-for="s in filteredSkills"' in html
+    assert "筛选 {{filteredSkills.length}} / {{skills.length}}" in html
+    assert "当前筛选条件下没有 Skill" in html
+
+
 def test_sandbox_policy_ui_has_editable_controls_and_runtime_decisions():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

@@ -534,6 +534,8 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 
 发现或 Skill 扫描会在本系统 SQLite 中保存内部 `real_path`，只用于后续详情、文件树、脱敏导出和复测的只读读取。API 响应、前端表格和导出 artifact 不回传 `real_path`，只展示脱敏后的 `path`。
 
+Skill 列表顶部搜索、Agent、风险和来源筛选只过滤当前已加载的 `skills` 运行态数据，用于定位 Skill 名称、路径、Hash、Agent、Scope 或风险状态；筛选不会触发扫描、隔离、SQLite 写入、脚本执行或任何已安装 Agent 修改。
+
 API 示例：
 
 ```powershell

@@ -2050,6 +2050,8 @@ AI 编码代理实现本页时不得：
 
 `skill, skill_file, finding`
 
+当前本地实现中，Skill 列表搜索框、Agent、风险和来源下拉直接过滤当前 `skills` 运行态数据。筛选字段覆盖 Skill 名称、ID、Agent、Scope、路径、Hash、元数据、风险、状态和来源；筛选只改变页面视图，不重新扫描、不写 SQLite、不执行 Skill 脚本、不修改或隔离原始 Skill 目录。
+
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
 ## 6. 必须覆盖状态

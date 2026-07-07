@@ -66,6 +66,10 @@
     state.agentFilterCoverage = '全部支持级别';
     state.agentFilterProbe = '全部探测状态';
     state.skillScanResult = null;
+    state.skillFilterText = '';
+    state.skillFilterAgent = '全部 Agent';
+    state.skillFilterRisk = '全部风险';
+    state.skillFilterSource = '全部来源';
     state.mcpInspection = null;
     state.mcpDetailTools = [];
     state.toolDetailSimilar = [];
@@ -151,6 +155,10 @@ data(){
     initial.skillBusy = false;
     initial.skillScanResult = null;
     initial.skillDetail = null;
+    initial.skillFilterText = '';
+    initial.skillFilterAgent = '全部 Agent';
+    initial.skillFilterRisk = '全部风险';
+    initial.skillFilterSource = '全部来源';
     initial.selectedMcp = initial.selectedMcp || (initial.mcpServers || [])[0] || {};
     initial.selectedTool = initial.selectedTool || (initial.tools || [])[0] || {};
     initial.selectedConsent = initial.selectedConsent || (initial.consents || [])[0] || {};
@@ -614,6 +622,54 @@ data(){
     },
     highSkillCount(){
       return this.skills.filter(s=>['critical','high'].includes(s.riskClass)).length;
+    },
+    filteredSkills(){
+      const keyword=String(this.skillFilterText || '').trim().toLowerCase();
+      const agent=String(this.skillFilterAgent || '全部 Agent');
+      const risk=String(this.skillFilterRisk || '全部风险');
+      const source=String(this.skillFilterSource || '全部来源');
+      const normalize=value=>String(value || '').toLowerCase().replace(/[^a-z0-9]+/g,'');
+      const riskMatches=(skill) => {
+        if(risk === '全部风险') return true;
+        const raw=[skill.riskClass, skill.risk, skill.status, skill.finding_count].map(v=>String(v || '')).join(' ').toLowerCase();
+        const hasFindingCount=skill.finding_count !== undefined && skill.finding_count !== null && String(skill.finding_count).trim() !== '';
+        const findingCount=hasFindingCount ? Number(skill.finding_count) : NaN;
+        if(risk === '严重/高危') return raw.includes('critical') || raw.includes('high') || raw.includes('严重') || raw.includes('高危');
+        if(risk === '需关注') return raw.includes('medium') || raw.includes('warn') || raw.includes('需关注') || raw.includes('待扫描');
+        if(risk === '通过') return raw.includes('low') || raw.includes('pass') || raw.includes('通过') || raw.includes('已扫描') || (Number.isFinite(findingCount) && findingCount === 0);
+        return true;
+      };
+      const sourceMatches=(skill) => {
+        if(source === '全部来源') return true;
+        const raw=[skill.scope, skill.source, skill.origin, skill.path].map(v=>String(v || '').toLowerCase()).join(' ');
+        if(source === 'User') return raw.includes('user') || raw.includes('用户');
+        if(source === 'Project') return raw.includes('project') || raw.includes('workspace') || raw.includes('项目');
+        if(source === 'Plugin') return raw.includes('plugin') || raw.includes('插件');
+        if(source === 'Managed') return raw.includes('managed') || raw.includes('system') || raw.includes('托管');
+        return true;
+      };
+      return (this.skills || []).filter(skill => {
+        if(agent !== '全部 Agent') {
+          const agentText=normalize([skill.agent, skill.adapter, skill.name, skill.path].join(' '));
+          if(!agentText.includes(normalize(agent))) return false;
+        }
+        if(!riskMatches(skill) || !sourceMatches(skill)) return false;
+        if(!keyword) return true;
+        const haystack=[
+          skill.id,
+          skill.name,
+          skill.agent,
+          skill.scope,
+          skill.path,
+          skill.sha256,
+          skill.metadata,
+          skill.risk,
+          skill.status,
+          skill.source,
+          skill.origin
+        ].map(value=>String(value || '').toLowerCase()).join(' ');
+        return haystack.includes(keyword);
+      });
     },
     selectedSkillFindings(){
       const id=this.selectedSkill && this.selectedSkill.id;
