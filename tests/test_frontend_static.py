@@ -657,6 +657,17 @@ def test_rule_management_ui_uses_real_rule_state():
     assert "selectRule(rule)" in app_js
 
 
+def test_scanner_center_surfaces_runtime_self_test_artifact():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "scannerTestResult.download" in html
+    assert "下载证据" in html
+    assert "(scannerTestResult.checks||[]).length" in html
+    assert "'/api/v1/scanners/'+encodeURIComponent(scanner.id)+'/self-test'" in app_js
+    assert "this.mergeRecords('scanners', [res.scanner])" in app_js
+    assert "扫描器自测已写入 scanner_health" in app_js
+
+
 def test_completeness_matrix_ui_uses_runtime_summary():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

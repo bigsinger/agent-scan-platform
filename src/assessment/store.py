@@ -770,9 +770,9 @@ def runtime_empty_seed_state(state: dict) -> dict:
             "apiVersion: assessment.security/v1",
             "kind: ScannerManifest",
             "metadata:",
-            "  status: empty",
+            "  status: runtime-catalog",
             "spec:",
-            "  source: SQLite scanner_plugin",
+            "  source: runtime built-ins + SQLite scanner_plugin",
             "  safe_mode: local-readonly",
         ]
     )

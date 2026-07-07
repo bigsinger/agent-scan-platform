@@ -1221,11 +1221,16 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/third-party/third_party_vue/notic
 
 许可证页“刷新清单”和 `GET /api/v1/licenses` 会读取当前仓库的 `pyproject.toml`、`THIRD_PARTY_NOTICES.md`、`src/assessment/static/vendor/vendor-manifest.json` 和 agent-scan 本地兼容桥接哈希，写入/更新 `third_party_component`。页面中的 agent-scan 归属、补丁漂移、自动升级和许可证差异来自 `third_party_component` 与 `/api/v1/agent-scan/compat`，不使用固定原型行。`/api/v1/licenses/export` 会额外生成 `third-party-notices` JSON artifact。以上操作只读取本仓库文件并写入本系统 SQLite/artifact，不扫描或修改已安装 Codex/Hermes。
 
+扫描器中心会在干净数据库中展示本系统内置的只读扫描器目录，包括 `scanner.local-analysis`、`scanner.discovery`、`scanner.mcp-static` 和 `scanner.skill-static`；这些记录由运行时代码生成，不来自原型 seed。自测会执行规则目录、规则引擎、SQLite、快速扫描预检、发现预检或 MCP/Skill 静态规则检查，并写入 `scanner_run`、`scanner_health`、`scanner_plugin`、审计事件和 `scanner-self-test` JSON artifact。
+
 扫描器自测：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/scanners/scanner.local-analysis/self-test
+$selfTest = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/scanners/scanner.local-analysis/self-test
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($selfTest.self_test.download)" -OutFile scanner-self-test.json
 ```
+
+默认自测不执行外部 CLI、不启动 Agent、不启动 stdio MCP，也不发起云分析；返回和 artifact 中必须包含 `mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`、`external_cli_executed=false`。如需对开发回归样本执行完整扫描链路，必须显式传入 `sample_path`。
 
 周期计划：
 

@@ -1990,6 +1990,51 @@ def test_capability_management_actions_are_persisted():
     assert client.get("/api/v1/completeness/export").json()["format"] == "json"
 
 
+def test_scanner_catalog_and_self_test_are_runtime_backed(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "scanner-runtime.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    listed = client.get("/api/v1/scanners")
+    assert listed.status_code == 200
+    items = listed.json()["items"]
+    scanner_ids = {item["id"] for item in items}
+    assert {"scanner.local-analysis", "scanner.discovery", "scanner.mcp-static", "scanner.skill-static"}.issubset(scanner_ids)
+    assert "tests/fixtures" not in json.dumps(items, ensure_ascii=False)
+
+    response = client.post("/api/v1/scanners/scanner.local-analysis/self-test", json={})
+    assert response.status_code == 200
+    payload = response.json()["self_test"]
+    assert payload["schema"] == "agent-security-scanner-self-test@4.1"
+    assert payload["status"] == "PASS"
+    assert payload["mode"] == "local-readonly"
+    assert payload["mutates_installed_agents"] is False
+    assert payload["agent_runtime_started"] is False
+    assert payload["stdio_mcp_started"] is False
+    assert payload["external_cli_executed"] is False
+    check_ids = {check["id"] for check in payload["checks"]}
+    assert {"rule_catalog", "rule_engine", "sqlite", "quick_scan_precheck", "artifact_write"}.issubset(check_ids)
+    assert payload["artifact"]["kind"] == "scanner-self-test"
+    assert payload["download"].endswith("/download")
+    assert store.get_record("scanner_run", payload["id"]) is not None
+    assert store.get_record("scanner_health", payload["id"]) is not None
+    scanner_record = store.get_record("scanner_plugin", "scanner.local-analysis")
+    assert scanner_record["status"] == "健康"
+
+    downloaded = client.get(payload["download"])
+    assert downloaded.status_code == 200
+    assert "agent-security-scanner-self-test@4.1" in downloaded.text
+    assert "sk-test-value" not in downloaded.text
+    assert '"external_cli_executed": false' in downloaded.text
+
+    detail = client.get("/api/v1/scanners/scanner.local-analysis")
+    assert detail.status_code == 200
+    assert detail.json()["item"]["last_self_test_status"] == "PASS"
+
+    missing = client.post("/api/v1/scanners/scanner.missing/self-test", json={})
+    assert missing.status_code == 404
+
+
 def test_completeness_export_builds_real_source_artifact(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "completeness.db")
     store.initialize()

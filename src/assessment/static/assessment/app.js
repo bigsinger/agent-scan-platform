@@ -2555,6 +2555,7 @@ data(){
       try {
         const res=await this.apiPost('/api/v1/scanners/'+encodeURIComponent(scanner.id)+'/self-test', {});
         this.scannerTestResult=res.self_test;
+        if(res.scanner){ this.mergeRecords('scanners', [res.scanner]); }
         this.toastMsg(scanner.name+' 自测完成：'+res.self_test.status);
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
