@@ -254,7 +254,25 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($guard.download)" -OutFile passive-guard-check.json
 ```
 
+防御建议闭环：
+
+```powershell
+$recs = Invoke-RestMethod http://127.0.0.1:8000/api/v1/defense-recommendations
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/defense-recommendations/<recommendation_id>/acknowledge `
+  -Body (@{ reason = "reviewed by local operator" } | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/defense-recommendations/<recommendation_id>/dismiss `
+  -Body (@{ reason = "accepted local exception" } | ConvertTo-Json) `
+  -ContentType "application/json"
+$pkg = Invoke-RestMethod http://127.0.0.1:8000/api/v1/defense-recommendations/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($pkg.download)" -OutFile defense-recommendations.json
+```
+
 首次运行会建立基线；后续运行如果检测到配置哈希变化，会在总览页展示待处理建议，并在数据库中写入 `defense_recommendation`。每次检查都会生成 `passive-guard-check` JSON 证据制品，包含变化、缺失、建议、发现摘要和 `mutates_installed_agents=false` 边界声明；总览页“下载证据”按钮会打开最近一次检查的 artifact。
+
+总览页的“确认”“忽略”“导出整改包”只更新本系统 SQLite、审计事件和 JSON artifact，不会修改 Codex、Hermes、MCP 配置或 Skill 文件。整改包 schema 为 `agent-security-defense-recommendation-package@4.1`，包含建议、状态历史、Guard 事件和 `safe_mode=local-readonly` 安全边界。
 
 ## 4.2 执行安全 / 沙箱策略
 

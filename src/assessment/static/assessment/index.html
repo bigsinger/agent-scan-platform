@@ -48,7 +48,7 @@
   </div>
 
   <div class="card">
-    <div class="card-head"><div><h2>只读防御监测</h2><div class="desc">对已发现 Agent 配置、MCP 和 Skill 做哈希基线与变化检测；只写本系统 SQLite，不修改 Codex、Hermes 或任何已安装 Agent。</div></div><div class="actions"><button class="btn" v-if="guardLastDownload || guardStatus.last_download" @click="downloadGuardEvidence">下载证据</button><button class="btn primary" :disabled="quickBusy" @click="runGuardCheck">运行 Guard 检查</button></div></div>
+    <div class="card-head"><div><h2>只读防御监测</h2><div class="desc">对已发现 Agent 配置、MCP 和 Skill 做哈希基线与变化检测；只写本系统 SQLite，不修改 Codex、Hermes 或任何已安装 Agent。</div></div><div class="actions"><button class="btn" :disabled="opsBusy" @click="refreshDefenseRecommendations()">刷新建议</button><button class="btn" :disabled="opsBusy" @click="exportDefenseRecommendations">导出整改包</button><button class="btn" v-if="guardLastDownload || guardStatus.last_download" @click="downloadGuardEvidence">下载证据</button><button class="btn primary" :disabled="quickBusy" @click="runGuardCheck">运行 Guard 检查</button></div></div>
     <div class="grid g4">
       <div class="metric"><div class="metric-label">Guard 状态</div><div class="metric-value" style="font-size:18px">{{guardStatus.state}}</div></div>
       <div class="metric"><div class="metric-label">监测文件</div><div class="metric-value">{{guardStatus.watched_files||0}}</div></div>
@@ -56,6 +56,19 @@
       <div class="metric"><div class="metric-label">最近检查</div><div class="metric-value" style="font-size:14px">{{guardLastCheckDisplay}}</div></div>
     </div>
     <div class="callout green">防御策略：不启动 stdio MCP、不注入 Hook、不改写配置，只进行本地只读发现、哈希比对、审批建议和报告留痕。</div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table><thead><tr><th>建议</th><th>Agent / 类型</th><th>严重度</th><th>状态</th><th>边界</th><th>操作</th></tr></thead><tbody>
+        <tr v-for="rec in defenseRecommendationRows.slice(0,8)" :key="rec.id">
+          <td><div>{{rec.title||rec.id}}</div><div class="small muted">{{rec.recommendation||rec.path||'-'}}</div></td>
+          <td>{{rec.agent||'-'}}<div class="mono small">{{rec.type||rec.source||'-'}}</div></td>
+          <td><span :class="['badge',statusClass(rec.severity)]">{{rec.severity||'未分级'}}</span></td>
+          <td><span :class="['badge',statusClass(rec.status_code||rec.status)]">{{rec.status||rec.status_code}}</span></td>
+          <td><span class="badge low">{{rec.safe_mode||'local-readonly'}}</span><div class="tiny muted">mutates={{rec.mutates_installed_agents===true?'true':'false'}}</div></td>
+          <td><button class="btn sm success" :disabled="opsBusy || !['OPEN','ACTIVE','PENDING'].includes(String(rec.status_code||rec.status||'OPEN').toUpperCase())" @click="acknowledgeDefenseRecommendation(rec)">确认</button><button class="btn sm" :disabled="opsBusy || String(rec.status_code||rec.status).toUpperCase()==='DISMISSED'" @click="dismissDefenseRecommendation(rec)">忽略</button></td>
+        </tr>
+        <tr v-if="!defenseRecommendationRows.length"><td colspan="6" class="muted">尚无防御建议。运行 Guard 检查后会基于真实配置哈希变化和 stdio MCP 策略生成建议。</td></tr>
+      </tbody></table>
+    </div>
   </div>
 
   <div class="card">

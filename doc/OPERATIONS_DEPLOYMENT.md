@@ -124,6 +124,21 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($guard.download)" -OutFile passiv
 
 `guard/check` 会写入 `guard_event`、`defense_recommendation` 和 `passive-guard-check` artifact。artifact 中必须能看到 `safe_mode=local-readonly`、`mutates_installed_agents=false`、`starts_stdio_mcp=false`，用于证明检查没有改写 Codex/Hermes/MCP 配置，也没有启动 stdio MCP。
 
+防御建议处理和交付包：
+
+```powershell
+$recs = Invoke-RestMethod http://127.0.0.1:8000/api/v1/defense-recommendations
+$id = $recs.items[0].id
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/defense-recommendations/$id/acknowledge" `
+  -Body (@{ reason = "operation reviewed" } | ConvertTo-Json) `
+  -ContentType "application/json"
+$pkg = Invoke-RestMethod http://127.0.0.1:8000/api/v1/defense-recommendations/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($pkg.download)" -OutFile defense-recommendations.json
+```
+
+`acknowledge`、`dismiss` 和 `reopen` 只改变本系统 `defense_recommendation` 记录，写入 `audit_event`，并刷新 Guard 待处理数量。导出的 `defense-recommendation-package` 必须包含 `mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`，运维验收时可直接作为整改闭环证据。
+
 沙箱策略自测：
 
 ```powershell

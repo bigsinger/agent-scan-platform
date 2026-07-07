@@ -161,6 +161,12 @@ PATCH /api/v1/attack-paths/{id}
 GET /api/v1/policy-drafts
 GET /api/v1/policy-drafts/{id}
 PATCH /api/v1/policy-drafts/{id}
+GET /api/v1/defense-recommendations
+GET /api/v1/defense-recommendations/export
+GET /api/v1/defense-recommendations/{id}
+POST /api/v1/defense-recommendations/{id}/acknowledge
+POST /api/v1/defense-recommendations/{id}/dismiss
+POST /api/v1/defense-recommendations/{id}/reopen
 GET /api/v1/reports
 POST /api/v1/reports
 GET /api/v1/reports/{id}/download
@@ -245,7 +251,7 @@ PAGE_API_MAP = {
     "P21": ["GET /api/v1/findings", "GET /api/v1/findings/export", "PATCH /api/v1/findings/{id}", "POST /api/v1/findings/{id}/accept"],
     "P22": ["GET /api/v1/findings/{id}", "GET /api/v1/findings/{id}/evidence", "POST /api/v1/findings/{id}/retest"],
     "P23": ["GET /api/v1/evidence", "GET /api/v1/evidence/export", "GET /api/v1/evidence/{id}", "GET /api/v1/evidence/{id}/download", "POST /api/v1/evidence/{id}/redact", "GET /api/v1/artifacts/{id}/download"],
-    "P24": ["GET /api/v1/attack-paths", "POST /api/v1/attack-paths/build", "POST /api/v1/attack-paths/{id}/confirm", "POST /api/v1/attack-paths/{id}/policy-drafts", "PATCH /api/v1/attack-paths/{id}", "GET /api/v1/policy-drafts", "PATCH /api/v1/policy-drafts/{id}"],
+    "P24": ["GET /api/v1/attack-paths", "POST /api/v1/attack-paths/build", "POST /api/v1/attack-paths/{id}/confirm", "POST /api/v1/attack-paths/{id}/policy-drafts", "PATCH /api/v1/attack-paths/{id}", "GET /api/v1/policy-drafts", "PATCH /api/v1/policy-drafts/{id}", "GET /api/v1/defense-recommendations", "GET /api/v1/defense-recommendations/export", "POST /api/v1/defense-recommendations/{id}/acknowledge", "POST /api/v1/defense-recommendations/{id}/dismiss", "POST /api/v1/defense-recommendations/{id}/reopen"],
     "P25": ["GET /api/v1/reports", "POST /api/v1/reports", "GET /api/v1/reports/{id}/download"],
     "P26": ["GET /api/v1/retests", "POST /api/v1/retests", "GET /api/v1/retests/{id}/diff"],
     "P27": ["GET /api/v1/rules", "POST /api/v1/rules", "POST /api/v1/rules/{id}/test"],

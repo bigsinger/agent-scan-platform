@@ -375,9 +375,19 @@ def test_dashboard_guard_check_exports_evidence():
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "@click=\"runGuardCheck\"" in html
     assert "@click=\"downloadGuardEvidence\"" in html
+    assert "defenseRecommendationRows.slice(0,8)" in html
+    assert "@click=\"acknowledgeDefenseRecommendation(rec)\"" in html
+    assert "@click=\"dismissDefenseRecommendation(rec)\"" in html
+    assert "@click=\"exportDefenseRecommendations\"" in html
     assert "guardLastDownload" in app_js
     assert "downloadGuardEvidence()" in app_js
+    assert "defenseRecommendations" in app_js
+    assert "async refreshDefenseRecommendations" in app_js
+    assert "async acknowledgeDefenseRecommendation" in app_js
+    assert "async dismissDefenseRecommendation" in app_js
+    assert "async exportDefenseRecommendations" in app_js
     assert "/api/v1/guard/check" in app_js
+    assert "/api/v1/defense-recommendations" in app_js
 
 
 def test_profile_template_ui_is_api_backed():

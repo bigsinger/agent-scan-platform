@@ -155,6 +155,9 @@ def test_empty_runtime_state_does_not_expose_prototype_seed(monkeypatch, tmp_pat
         "reports",
         "components",
         "redteamRuns",
+        "attackPaths",
+        "policyDrafts",
+        "defenseRecommendations",
         "caseLibrary",
         "redCases",
         "profiles",
@@ -206,6 +209,77 @@ def test_empty_runtime_state_does_not_expose_prototype_seed(monkeypatch, tmp_pat
     assert "84+" not in runtime_payload
     assert state["dashboardMetrics"]["agents"] == 0
     assert state["dashboardMetrics"]["p0_p1"] == 0
+
+
+def test_defense_recommendation_lifecycle_is_sqlite_backed_and_readonly(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "defense-recommendations.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    store.upsert_record(
+        "defense_recommendation",
+        {
+            "id": "rec_contract_guard",
+            "title": "Codex MCP stdio requires approval",
+            "severity": "高危 P1",
+            "agent": "Codex",
+            "type": "MCP_STDIO_APPROVAL",
+            "status": "OPEN",
+            "recommendation": "Keep stdio MCP denied until explicit task consent.",
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "source": "passive-guard",
+        },
+        status="OPEN",
+    )
+
+    listing = client.get("/api/v1/defense-recommendations")
+    assert listing.status_code == 200
+    item = listing.json()["items"][0]
+    assert item["id"] == "rec_contract_guard"
+    assert item["status_code"] == "OPEN"
+    assert item["mutates_installed_agents"] is False
+
+    acknowledged = client.post(
+        "/api/v1/defense-recommendations/rec_contract_guard/acknowledge",
+        json={"reason": "reviewed in contract test"},
+    )
+    assert acknowledged.status_code == 200
+    ack_body = acknowledged.json()
+    assert ack_body["status"] == "ACKNOWLEDGED"
+    assert ack_body["recommendation"]["status"] == "已确认"
+    assert ack_body["recommendation"]["status_code"] == "ACKNOWLEDGED"
+    assert ack_body["recommendation"]["safe_mode"] == "local-readonly"
+    assert ack_body["mutates_installed_agents"] is False
+    assert store.get_record("defense_recommendation", "rec_contract_guard")["status"] == "已确认"
+
+    detail = client.get("/api/v1/defense-recommendations/rec_contract_guard")
+    assert detail.status_code == 200
+    assert detail.json()["item"]["status_code"] == "ACKNOWLEDGED"
+    assert any(event["action"] == "defense_recommendation.acknowledged" for event in detail.json()["history"])
+
+    dismissed = client.post(
+        "/api/v1/defense-recommendations/rec_contract_guard/dismiss",
+        json={"reason": "accepted as local exception"},
+    )
+    assert dismissed.status_code == 200
+    assert dismissed.json()["recommendation"]["status_code"] == "DISMISSED"
+    assert dismissed.json()["guard"]["open_recommendations"] == 0
+
+    exported = client.get("/api/v1/defense-recommendations/export")
+    assert exported.status_code == 200
+    export_body = exported.json()
+    assert export_body["format"] == "json"
+    assert export_body["counts"]["total"] == 1
+    assert export_body["counts"]["dismissed"] == 1
+    assert export_body["mutates_installed_agents"] is False
+    assert export_body["artifact"]["kind"] == "defense-recommendation-package"
+    package = client.get(export_body["download"])
+    assert package.status_code == 200
+    package_json = package.json()
+    assert package_json["schema"] == "agent-security-defense-recommendation-package@4.1"
+    assert package_json["mutates_installed_agents"] is False
+    assert package_json["recommendations"][0]["id"] == "rec_contract_guard"
+    assert "defense_recommendation.dismissed" in {event["action"] for event in package_json["history"]["rec_contract_guard"]}
 
 
 def test_finding_false_positive_candidate_is_api_backed_and_audited(monkeypatch, tmp_path):
@@ -2223,6 +2297,8 @@ def test_representative_spec_endpoints():
         "/api/v1/executor/health",
         "/api/v1/sandbox-policy",
         "/api/v1/guard/status",
+        "/api/v1/defense-recommendations",
+        "/api/v1/defense-recommendations/export",
         "/api/v1/findings",
         "/api/v1/evidence",
         "/api/v1/reports",

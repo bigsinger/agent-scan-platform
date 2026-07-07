@@ -138,6 +138,7 @@ LIST_KEYS = {
     "/evidence": "evidenceItems",
     "/attack-paths": "attackPaths",
     "/policy-drafts": "policyDrafts",
+    "/defense-recommendations": "defenseRecommendations",
     "/reports": "reports",
     "/retests": "retests",
     "/rules": "ruleRows",
@@ -171,6 +172,7 @@ TABLE_KEYS = {
     "/evidence": "evidence",
     "/attack-paths": "attack_path",
     "/policy-drafts": "policy_draft",
+    "/defense-recommendations": "defense_recommendation",
     "/reports": "report",
     "/retests": "retest_run",
     "/rules": "rule",
@@ -827,6 +829,8 @@ async def generic_get(resource: str, request: Request) -> dict:
         return await licenses_export()
     if path == "/discovery-hits/export":
         return export_discovery_inventory(get_store(), state)
+    if path == "/defense-recommendations/export":
+        return export_defense_recommendations(get_store(), state)
     if path == "/embed/context":
         return embed_context(state)
 
@@ -1142,6 +1146,27 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         drafts = create_policy_drafts_for_attack_path(store, state, attack_path_id, body)
         result["policy_drafts"] = drafts
         result["status"] = "DRAFTED"
+    elif path.startswith("/defense-recommendations/") and path.endswith("/acknowledge"):
+        recommendation_id = path.split("/")[-2]
+        result["recommendation"] = update_defense_recommendation_status(store, state, recommendation_id, "ACKNOWLEDGED", body)
+        result["guard"] = PassiveGuard(store).status()
+        result["status"] = "ACKNOWLEDGED"
+        result["safe_mode"] = "local-readonly"
+        result["mutates_installed_agents"] = False
+    elif path.startswith("/defense-recommendations/") and path.endswith("/dismiss"):
+        recommendation_id = path.split("/")[-2]
+        result["recommendation"] = update_defense_recommendation_status(store, state, recommendation_id, "DISMISSED", body)
+        result["guard"] = PassiveGuard(store).status()
+        result["status"] = "DISMISSED"
+        result["safe_mode"] = "local-readonly"
+        result["mutates_installed_agents"] = False
+    elif path.startswith("/defense-recommendations/") and path.endswith("/reopen"):
+        recommendation_id = path.split("/")[-2]
+        result["recommendation"] = update_defense_recommendation_status(store, state, recommendation_id, "OPEN", body)
+        result["guard"] = PassiveGuard(store).status()
+        result["status"] = "OPEN"
+        result["safe_mode"] = "local-readonly"
+        result["mutates_installed_agents"] = False
     elif path.startswith("/attack-paths/") and method == "PATCH":
         attack_path_id = path.split("/")[-1]
         result["attack_path"] = update_structured_record(store, state, "attack_path", "attackPaths", attack_path_id, body)
@@ -1748,6 +1773,8 @@ def get_item_route(path: str, state: dict) -> dict | None:
         return {"item": get_store().get_record("attack_path", parts[1]) or find_item(state.get("attackPaths", []), parts[1])}
     if len(parts) >= 2 and parts[0] == "policy-drafts":
         return {"item": get_store().get_record("policy_draft", parts[1]) or find_item(state.get("policyDrafts", []), parts[1])}
+    if len(parts) >= 2 and parts[0] == "defense-recommendations":
+        return defense_recommendation_detail(get_store(), state, parts[1])
     return None
 
 
@@ -1903,6 +1930,8 @@ def enrich_items(key: str, items: list[dict]) -> list[dict]:
         return [decorate_rule_item(item) for item in items]
     if key in {"caseLibrary", "redCases"}:
         return [normalize_redteam_case(item) for item in items]
+    if key == "defenseRecommendations":
+        return [decorate_defense_recommendation(item) for item in items]
     return items
 
 
@@ -4506,6 +4535,191 @@ def export_discovery_inventory(store: Any, state: dict) -> dict:
         "download": f"/api/v1/artifacts/{artifact['id']}/download",
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
+    }
+
+
+DEFENSE_RECOMMENDATION_STATUS = {
+    "OPEN": "OPEN",
+    "ACKNOWLEDGED": "已确认",
+    "DISMISSED": "已忽略",
+}
+
+
+def defense_recommendation_records(store: Any, state: dict, limit: int = 5000) -> list[dict]:
+    records = combine_items(store.list_records("defense_recommendation", limit=limit), state.get("defenseRecommendations", []))
+    return [decorate_defense_recommendation(item) for item in records]
+
+
+def decorate_defense_recommendation(item: dict) -> dict:
+    recommendation = dict(item)
+    raw_status = str(recommendation.get("status") or "OPEN")
+    status_code = str(recommendation.get("status_code") or raw_status).upper()
+    if raw_status in {"已确认", "ACKNOWLEDGED"}:
+        status_code = "ACKNOWLEDGED"
+    elif raw_status in {"已忽略", "DISMISSED", "忽略"}:
+        status_code = "DISMISSED"
+    elif status_code not in {"OPEN", "ACTIVE", "PENDING", "ACKNOWLEDGED", "DISMISSED"}:
+        status_code = "OPEN"
+    recommendation["status_code"] = status_code if status_code not in {"ACTIVE", "PENDING"} else "OPEN"
+    recommendation.setdefault("status", "OPEN" if recommendation["status_code"] == "OPEN" else DEFENSE_RECOMMENDATION_STATUS[recommendation["status_code"]])
+    recommendation.setdefault("safe_mode", "local-readonly")
+    recommendation.setdefault("mutates_installed_agents", False)
+    recommendation.setdefault("agent_runtime_started", False)
+    recommendation.setdefault("stdio_mcp_started", False)
+    recommendation.setdefault("source", "passive-guard")
+    recommendation.setdefault("requires_external_approval", recommendation["status_code"] == "OPEN")
+    return recommendation
+
+
+def defense_recommendation_detail(store: Any, state: dict, recommendation_id: str) -> dict:
+    item = store.get_record("defense_recommendation", recommendation_id) or find_item(state.get("defenseRecommendations", []), recommendation_id)
+    if not item:
+        return {
+            "item": {"id": recommendation_id, "status": "NOT_FOUND", "safe_mode": "local-readonly", "mutates_installed_agents": False},
+            "history": [],
+        }
+    return {
+        "item": decorate_defense_recommendation(item),
+        "history": defense_recommendation_history(store, recommendation_id),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+    }
+
+
+def defense_recommendation_history(store: Any, recommendation_id: str) -> list[dict]:
+    return [
+        {
+            "seq": event.get("seq"),
+            "action": event.get("action"),
+            "created_at": event.get("created_at"),
+            "actor": event.get("actor"),
+            "payload": event.get("payload") or {},
+            "mutates_installed_agents": False,
+        }
+        for event in store.list_audit_events("defense_recommendation", recommendation_id, limit=200)
+    ]
+
+
+def update_defense_recommendation_status(store: Any, state: dict, recommendation_id: str, status_code: str, body: dict) -> dict:
+    recommendation = store.get_record("defense_recommendation", recommendation_id) or find_item(state.get("defenseRecommendations", []), recommendation_id)
+    if not recommendation:
+        raise HTTPException(status_code=404, detail={"message": "defense recommendation not found", "id": recommendation_id})
+
+    previous = decorate_defense_recommendation(recommendation)
+    status_code = status_code.upper()
+    checked_at = utc_now()
+    reason = str(body.get("reason") or body.get("note") or "")
+    recommendation.update(
+        {
+            "status": DEFENSE_RECOMMENDATION_STATUS.get(status_code, status_code),
+            "status_code": status_code,
+            "reviewed_at": checked_at,
+            "reviewed_by": body.get("actor", "local-user"),
+            "resolution_reason": reason,
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+            "updated_at": checked_at,
+        }
+    )
+    if status_code == "OPEN":
+        recommendation.pop("reviewed_at", None)
+        recommendation.pop("reviewed_by", None)
+        recommendation.pop("resolution_reason", None)
+        recommendation["reopened_at"] = checked_at
+        recommendation["requires_external_approval"] = True
+    else:
+        recommendation["requires_external_approval"] = False
+
+    updated = store.upsert_record("defense_recommendation", recommendation, status=status_code)
+    decorated = decorate_defense_recommendation(updated)
+    merge_state_record(state, "defenseRecommendations", decorated)
+    store.audit_event(
+        f"defense_recommendation.{status_code.lower()}",
+        "defense_recommendation",
+        recommendation_id,
+        {
+            "previous_status": previous.get("status_code") or previous.get("status"),
+            "status": status_code,
+            "reason": redact_text(reason, max_len=500),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "external_agent_paths_written": False,
+            "external_agent_processes_started": False,
+        },
+    )
+    return decorated
+
+
+def defense_recommendation_counts(recommendations: list[dict]) -> dict:
+    by_status: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    by_source: dict[str, int] = {}
+    for item in recommendations:
+        by_status[str(item.get("status_code") or item.get("status") or "OPEN")] = by_status.get(str(item.get("status_code") or item.get("status") or "OPEN"), 0) + 1
+        by_severity[str(item.get("severity") or "未分级")] = by_severity.get(str(item.get("severity") or "未分级"), 0) + 1
+        by_source[str(item.get("source") or "local")] = by_source.get(str(item.get("source") or "local"), 0) + 1
+    return {
+        "total": len(recommendations),
+        "open": by_status.get("OPEN", 0),
+        "acknowledged": by_status.get("ACKNOWLEDGED", 0),
+        "dismissed": by_status.get("DISMISSED", 0),
+        "by_status": by_status,
+        "by_severity": by_severity,
+        "by_source": by_source,
+    }
+
+
+def export_defense_recommendations(store: Any, state: dict) -> dict:
+    recommendations = defense_recommendation_records(store, state)
+    guard_events = store.list_records("guard_event", limit=500)
+    history = {
+        item["id"]: defense_recommendation_history(store, str(item.get("id")))
+        for item in recommendations
+        if item.get("id")
+    }
+    payload = {
+        "schema": "agent-security-defense-recommendation-package@4.1",
+        "exported_at": utc_now(),
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "boundary": "整改建议包仅导出本系统 SQLite 中的 Guard 事件、建议和人工处理记录；不修改 Codex、Hermes、MCP 配置或 Skill 文件。",
+        "counts": defense_recommendation_counts(recommendations),
+        "guard": PassiveGuard(store).status(),
+        "recommendations": recommendations,
+        "history": history,
+        "guard_events": guard_events,
+    }
+    artifact = store.write_artifact(
+        "defense-recommendation-package",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "recommendations": len(recommendations),
+            "open": payload["counts"]["open"],
+        },
+    )
+    store.audit_event(
+        "get.defense-recommendations.export",
+        "artifact",
+        artifact["id"],
+        {"counts": payload["counts"], "safe_mode": "local-readonly", "mutates_installed_agents": False},
+    )
+    return {
+        "format": "json",
+        "artifact": artifact,
+        "counts": payload["counts"],
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "exported_at": payload["exported_at"],
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
     }
 
 
@@ -8627,6 +8841,7 @@ REAL_STATE_PATHS = {
     "caseLibrary": "/redteam-cases",
     "attackPaths": "/attack-paths",
     "policyDrafts": "/policy-drafts",
+    "defenseRecommendations": "/defense-recommendations",
     "retests": "/retests",
     "ruleRows": "/rules",
     "backupRecords": "/backups",

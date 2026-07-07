@@ -70,6 +70,12 @@
 - `GET /api/v1/attack-paths`
 - `POST /api/v1/attack-paths/build`
 - `PATCH /api/v1/attack-paths/{id}`
+- `GET /api/v1/defense-recommendations`
+- `GET /api/v1/defense-recommendations/export`
+- `GET /api/v1/defense-recommendations/{id}`
+- `POST /api/v1/defense-recommendations/{id}/acknowledge`
+- `POST /api/v1/defense-recommendations/{id}/dismiss`
+- `POST /api/v1/defense-recommendations/{id}/reopen`
 - `GET /api/v1/reports`
 - `POST /api/v1/reports`
 - `GET /api/v1/reports/{id}/download`

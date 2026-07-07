@@ -42,6 +42,7 @@ RUNTIME_SEED_LIST_KEYS = {
     "redteamRuns",
     "attackPaths",
     "policyDrafts",
+    "defenseRecommendations",
     "retests",
     "backupRecords",
     "heatmap",

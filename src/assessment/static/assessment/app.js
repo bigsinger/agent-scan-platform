@@ -15,7 +15,7 @@
   const runtimeListKeys = [
     'agents','agentAssets','discoveryHits','discoveryErrors','discoveryLog','mcpServers','consents','tools','skills',
     'tasks','jobs','processes','taskEvents','findings','evidenceItems','reports','components','redteamRuns',
-    'attackPaths','policyDrafts','retests','backupRecords','heatmap','completeness','toxicFlows'
+    'attackPaths','policyDrafts','defenseRecommendations','retests','backupRecords','heatmap','completeness','toxicFlows'
   ];
   const runtimeObjectKeys = [
     'selectedAsset','selectedTask','selectedMcp','selectedTool','selectedConsent','selectedSkill','selectedCase','selectedRedteamRun',
@@ -63,6 +63,7 @@
     state.completenessSummary = {};
     state.executionLog = null;
     state.executionTermination = null;
+    state.defenseRecommendationExport = null;
   }
   try {
     const { createApp } = Vue;
@@ -97,6 +98,8 @@ data(){
     initial.sqliteStatus = initial.sqliteStatus || {file_bytes:0, mode:'WAL', state:'未知', pragma:{}};
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
     initial.guardLastDownload = initial.guardLastDownload || initial.guardStatus.last_download || '';
+    initial.defenseRecommendations = initial.defenseRecommendations || [];
+    initial.defenseRecommendationExport = null;
     initial.supervisorStatus = initial.supervisorStatus || {state:'IDLE', status:'ok', queue:0, process_count:0, slots:{running:0,max:2,available:2}, safe_mode:false};
     initial.selectedProcess = initial.selectedProcess || {};
     initial.selectedJob = initial.selectedJob || {};
@@ -1007,6 +1010,23 @@ data(){
       if(Number.isNaN(dt.getTime())) return String(raw).replace('T',' ').replace(/\.\d+Z?$/,'');
       return new Intl.DateTimeFormat('zh-CN', {year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'}).format(dt);
     },
+    defenseRecommendationRows(){
+      const rows=(this.defenseRecommendations && this.defenseRecommendations.length)
+        ? this.defenseRecommendations
+        : ((this.guardStatus && this.guardStatus.recommendations) || []);
+      const weight={OPEN:0, ACTIVE:0, PENDING:0, ACKNOWLEDGED:1, DISMISSED:2};
+      return rows.slice().sort((a,b)=>{
+        const as=String(a.status_code || a.status || 'OPEN').toUpperCase();
+        const bs=String(b.status_code || b.status || 'OPEN').toUpperCase();
+        const aw=weight[as]!=null ? weight[as] : 1;
+        const bw=weight[bs]!=null ? weight[bs] : 1;
+        if(aw!==bw) return aw-bw;
+        return String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''));
+      });
+    },
+    openDefenseRecommendationCount(){
+      return this.defenseRecommendationRows.filter(r=>['OPEN','ACTIVE','PENDING'].includes(String(r.status_code || r.status || 'OPEN').toUpperCase())).length;
+    },
     sqliteWalBusy(){
       const wal=this.sqliteStatus && this.sqliteStatus.wal_checkpoint || [];
       return wal[0] || 0;
@@ -1271,13 +1291,15 @@ data(){
       if(raw.includes('P1') || raw.includes('高危')) return 'high';
       if(raw.includes('P2') || raw.includes('中危') || raw.includes('需关注')) return 'medium';
       if(['ok','safe_mode','idle','disabled'].includes(lower)) return 'low';
-      if(s==='已完成'||s==='已记录'||s==='已验证') return 'low';
+      if(s==='已完成'||s==='已记录'||s==='已验证'||s==='已确认') return 'low';
       if(s==='COMPLETED'||s==='READY'||s==='ACTIVE'||s==='PASS'||s==='OBSERVED'||s==='VERIFIED'||s==='PINNED'||s==='REVIEW_READY') return 'low';
+      if(s==='ACKNOWLEDGED') return 'low';
       if(s==='已发布'||s==='PUBLISHED') return 'low';
       if(s==='运行中'||s==='排队中'||s==='RENDERING') return 'blue';
       if(s==='RUNNING'||s==='WAITING_CONSENT'||s==='QUEUED'||s==='READONLY_GENERIC') return 'blue';
       if(s==='等待审批'||s==='部分完成'||s==='误报待复核'||s==='WARN'||s==='NOT_RUN'||s==='未运行'||s==='NO_MATCH'||s==='DRAFT'||s==='草稿') return 'medium';
       if(s==='PENDING'||s==='OPEN'||s==='EMPTY'||s==='UNAVAILABLE'||s==='REQUIRES_CONFIG'||s==='NEEDS_SELF_TEST'||s==='NEEDS_VERIFICATION'||s==='NOT_ASSERTED'||s==='MANUAL_REVIEW_REQUIRED'||s==='待验证') return 'medium';
+      if(s==='DISMISSED'||s==='已忽略') return 'gray';
       if(s==='失败'||s==='FAILED'||s==='FAIL'||s==='DEGRADED'||s==='MISSING'||s==='NOT_FOUND'||s==='MISSING_DOC'||s==='MISSING_API') return 'critical';
       return 'gray';
     },
@@ -2050,6 +2072,7 @@ data(){
         this.mergeRecords('agentAssets', (res.discovery && res.discovery.agents) || []);
         this.mergeRecords('mcpServers', (res.discovery && res.discovery.mcp_servers) || []);
         this.mergeRecords('skills', (res.discovery && res.discovery.skills) || []);
+        await this.refreshDefenseRecommendations({silent:true});
         this.toastMsg('只读 Guard 检查完成：变化 '+((res.event&&res.event.changed)||0)+'，建议 '+((res.event&&res.event.recommendations)||0));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.quickBusy=false; }
@@ -2057,6 +2080,48 @@ data(){
     downloadGuardEvidence(){
       const url=this.guardLastDownload || (this.guardStatus && this.guardStatus.last_download);
       if(url) window.open(url, '_blank', 'noopener');
+    },
+    async refreshDefenseRecommendations(options){
+      const silent=options && options.silent;
+      if(!silent) { this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/defense-recommendations?page_size=200');
+        this.defenseRecommendations=res.items || [];
+        if(!silent) this.toastMsg('防御建议已刷新：'+(res.total || this.defenseRecommendations.length)+' 条');
+      } catch (err) { if(!silent) this.apiError=this.describeError(err); }
+      finally { if(!silent) this.opsBusy=false; }
+    },
+    async acknowledgeDefenseRecommendation(rec){
+      if(!rec || !rec.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/defense-recommendations/'+encodeURIComponent(rec.id)+'/acknowledge', {reason:'local operator acknowledged'});
+        if(res.recommendation) this.mergeRecords('defenseRecommendations', [res.recommendation]);
+        if(res.guard) this.guardStatus=res.guard;
+        this.toastMsg('防御建议已确认：'+rec.id);
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async dismissDefenseRecommendation(rec){
+      if(!rec || !rec.id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/defense-recommendations/'+encodeURIComponent(rec.id)+'/dismiss', {reason:'local operator dismissed'});
+        if(res.recommendation) this.mergeRecords('defenseRecommendations', [res.recommendation]);
+        if(res.guard) this.guardStatus=res.guard;
+        this.toastMsg('防御建议已忽略：'+rec.id);
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async exportDefenseRecommendations(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiGet('/api/v1/defense-recommendations/export');
+        this.defenseRecommendationExport=res;
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('整改建议包已导出：'+((res.counts&&res.counts.total)||0)+' 条建议');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
     },
     async createRuntimeReport(task){
       this.opsBusy=true; this.apiError='';
