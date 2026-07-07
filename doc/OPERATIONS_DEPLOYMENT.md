@@ -945,6 +945,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 
 `integrations/runtime-platform/events` 只接收并归档主平台回调事件的脱敏摘要，不保存原始 payload。验收时应检查返回和 artifact 中 `schema=agent-security-runtime-platform-event@4.1`、`raw_payload_persisted=false`、`network_request_sent=false`、`external_delivery_performed=false`、`mutates_installed_agents=false`，并确认 artifact 和审计事件中没有明文 API Key、Token 或 Secret。
 
+`/assessment/platform-embed` 是主平台嵌入联调的独立页面。验收时应确认路由不再回落到集成中心或旧 `embed-demo`，页面可读取 `/api/v1/embed/context` 的 `agent-security-platform-embed-context@4.1`、当前计数、能力和端点，并可通过“记录平台事件”生成 `runtime-platform-event` artifact。该流程不得发起外部网络请求、不得保存原始 payload、不得启动或修改 Codex/Hermes/MCP。
+
 报告级回写包验收：
 
 ```powershell

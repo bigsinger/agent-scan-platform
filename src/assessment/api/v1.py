@@ -906,7 +906,7 @@ async def generic_get(resource: str, request: Request) -> dict:
     if path == "/policy-drafts/export":
         return export_policy_draft_package(get_store(), state, request.query_params.get("attack_path_id"))
     if path == "/embed/context":
-        return embed_context(state)
+        return embed_context(get_store(), state)
 
     item_result = get_item_route(path, state)
     if item_result is not None:
@@ -3790,16 +3790,45 @@ def export_sandbox_policy(store: Any, state: dict) -> dict:
     }
 
 
-def embed_context(state: dict) -> dict:
+def embed_context(store: Any, state: dict) -> dict:
+    agents = store.list_records("agent_instance", limit=5000)
+    findings = store.list_records("finding", limit=5000)
+    reports = store.list_records("report", limit=5000)
+    policies = store.list_records("policy_draft", limit=5000)
+    integrations = store.list_records("integration", limit=5000)
     return {
+        "schema": "agent-security-platform-embed-context@4.1",
         "module": "agent-security-assessment",
         "version": "4.1.0",
         "managed_by": "local",
+        "host_mode": "standalone-or-embedded",
+        "route": "/assessment/platform-embed",
         "capabilities": ["discovery", "local-scan", "mcp-consent", "reports", "retest"],
+        "endpoints": {
+            "context": "/api/v1/embed/context",
+            "events": "/api/v1/integrations/runtime-platform/events",
+            "integration_sync": "/api/v1/integrations/{id}/sync",
+        },
+        "permissions": ["read:embed-context", "write:integration-event"],
         "counts": {
-            "agents": len(state.get("agentAssets", [])),
-            "findings": len(state.get("findings", [])),
-            "reports": len(state.get("reports", [])),
+            "agents": len(agents or state.get("agentAssets", [])),
+            "findings": len(findings or state.get("findings", [])),
+            "reports": len(reports or state.get("reports", [])),
+            "policy_drafts": len(policies or state.get("policyDrafts", [])),
+            "integrations": len(integrations or state.get("integrations", [])),
+        },
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "network_request_sent": False,
+        "raw_payload_persisted": False,
+        "event_ingest": {
+            "status": "available",
+            "artifact_schema": "agent-security-runtime-platform-event@4.1",
+            "raw_payload_persisted": False,
+            "external_delivery_performed": False,
+            "network_request_sent": False,
         },
         "audit": {"actor": "local-user", "correlation_id": new_id("corr")},
     }

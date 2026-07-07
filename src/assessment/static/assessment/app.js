@@ -72,6 +72,10 @@
     state.apiDebugScenario = 'empty';
     state.apiDebugDiagnostic = null;
     state.apiDebugDiagnosticDownload = '';
+    state.platformEmbedContext = null;
+    state.platformEmbedEventDraft = {direction:'push', event_type:'risk.status.updated', subject_type:'finding', subject_id:''};
+    state.platformEmbedEventResult = null;
+    state.platformEmbedEventDownload = '';
     state.policyDraftPreflight = null;
     state.retestDiff = null;
     state.selectedFindingHistory = [];
@@ -164,6 +168,10 @@ data(){
     initial.apiDebugScenario = initial.apiDebugScenario || 'empty';
     initial.apiDebugDiagnostic = null;
     initial.apiDebugDiagnosticDownload = '';
+    initial.platformEmbedContext = null;
+    initial.platformEmbedEventDraft = Object.assign({direction:'push', event_type:'risk.status.updated', subject_type:'finding', subject_id:''}, initial.platformEmbedEventDraft || {});
+    initial.platformEmbedEventResult = null;
+    initial.platformEmbedEventDownload = '';
     initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
@@ -1091,6 +1099,16 @@ data(){
     },
     apiDebugCheckRows(){
       return (this.apiDebugDiagnostic && this.apiDebugDiagnostic.checks) || [];
+    },
+    platformEmbedCounts(){
+      return (this.platformEmbedContext && this.platformEmbedContext.counts) || {};
+    },
+    platformEmbedCapabilities(){
+      return (this.platformEmbedContext && this.platformEmbedContext.capabilities) || [];
+    },
+    platformEmbedEndpoints(){
+      const endpoints=(this.platformEmbedContext && this.platformEmbedContext.endpoints) || {};
+      return Object.keys(endpoints).map(name => ({name, path:endpoints[name]}));
     }
   },
   mounted(){
@@ -1107,12 +1125,12 @@ data(){
       const taskDetailPath=this.selectedTask&&this.selectedTask.id?'/assessment/tasks/'+this.selectedTask.id:'/assessment/tasks';
       const skillDetailPath=this.selectedSkill&&this.selectedSkill.id?'/assessment/skills/'+this.selectedSkill.id:'/assessment/skills';
       const findingDetailPath=this.selectedFinding&&this.selectedFinding.id?'/assessment/findings/'+this.selectedFinding.id:'/assessment/findings';
-      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters',profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
+      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters',profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
       return map[key]||'/assessment';
     },
     keyForPath(path){
       if(!path || path==='/' || path==='/assessment') return 'dashboard';
-      const exact={'/assessment/quick-scan':'quick-scan','/assessment/new':'create','/assessment/discovery':'discovery','/assessment/agents':'agents','/assessment/abom':'abom','/assessment/adapters':'adapters','/assessment/profiles':'profiles','/assessment/agent-scan':'agent-scan','/assessment/tasks':'tasks','/assessment/mcp':'mcp','/assessment/mcp-consent':'consents','/assessment/consents':'consents','/assessment/skills':'skills','/assessment/redteam':'redteam','/assessment/redteam-cases':'cases','/assessment/cases':'cases','/assessment/python-exec':'execution','/assessment/execution':'execution','/assessment/sandbox':'sandbox','/assessment/findings':'findings','/assessment/evidence':'evidence','/assessment/attack-paths':'attack-paths','/assessment/reports':'reports','/assessment/retests':'retests','/assessment/rules':'rules','/assessment/scanners':'scanners','/assessment/schedules':'schedules','/assessment/integrations':'integrations','/assessment/settings':'settings','/assessment/sqlite':'sqlite','/assessment/licenses':'licenses','/assessment/completeness':'completeness','/assessment/platform-embed':'integrations','/assessment/api-debug':'api-debug'};
+      const exact={'/assessment/quick-scan':'quick-scan','/assessment/new':'create','/assessment/discovery':'discovery','/assessment/agents':'agents','/assessment/abom':'abom','/assessment/adapters':'adapters','/assessment/profiles':'profiles','/assessment/agent-scan':'agent-scan','/assessment/tasks':'tasks','/assessment/mcp':'mcp','/assessment/mcp-consent':'consents','/assessment/consents':'consents','/assessment/skills':'skills','/assessment/redteam':'redteam','/assessment/redteam-cases':'cases','/assessment/cases':'cases','/assessment/python-exec':'execution','/assessment/execution':'execution','/assessment/sandbox':'sandbox','/assessment/findings':'findings','/assessment/evidence':'evidence','/assessment/attack-paths':'attack-paths','/assessment/reports':'reports','/assessment/retests':'retests','/assessment/rules':'rules','/assessment/scanners':'scanners','/assessment/schedules':'schedules','/assessment/integrations':'integrations','/assessment/settings':'settings','/assessment/sqlite':'sqlite','/assessment/licenses':'licenses','/assessment/completeness':'completeness','/assessment/platform-embed':'platform-embed','/assessment/api-debug':'api-debug'};
       if(exact[path]) return exact[path];
       if(path.startsWith('/assessment/agents/')) return 'agent-detail';
       if(path.startsWith('/assessment/tasks/')) return 'task-detail';
@@ -1187,6 +1205,9 @@ data(){
       }
       if(this.current==='api-debug'){
         this.refreshApiDebugOpenapi({silent:true});
+      }
+      if(this.current==='platform-embed'){
+        this.refreshPlatformEmbedContext({silent:true});
       }
     },
     async loadBootstrap(){
@@ -1320,7 +1341,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -2752,6 +2773,39 @@ data(){
     },
     downloadIntegrationSync(){
       if(this.integrationSyncLastDownload) window.open(this.integrationSyncLastDownload, '_blank', 'noopener');
+    },
+    async refreshPlatformEmbedContext(options){
+      const silent=options && options.silent;
+      if(!silent) { this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/embed/context');
+        this.platformEmbedContext=res || {};
+        if(!silent) this.toastMsg('嵌入上下文已刷新：'+((res.counts&&res.counts.agents)||0)+' 个 Agent');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async submitPlatformEmbedEvent(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const draft=this.platformEmbedEventDraft || {};
+        const res=await this.apiPost('/api/v1/integrations/runtime-platform/events', {
+          direction:draft.direction || 'push',
+          event_type:draft.event_type || 'risk.status.updated',
+          subject_type:draft.subject_type || 'finding',
+          subject_id:draft.subject_id || '',
+          source:'platform-embed-ui'
+        });
+        this.platformEmbedEventResult=res.event || null;
+        this.platformEmbedEventDownload=(res.event && res.event.download) || '';
+        this.toastMsg('平台事件已本地归档：'+(this.platformEmbedEventResult&&this.platformEmbedEventResult.status || 'UNKNOWN'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    downloadPlatformEmbedEvent(){
+      if(this.platformEmbedEventDownload) window.open(this.platformEmbedEventDownload, '_blank', 'noopener');
     },
     async testAllIntegrations(){
       for(const integration of (this.integrations||[]).filter(x=>x.status!=='关闭').slice(0, 8)){

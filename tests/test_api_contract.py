@@ -629,6 +629,35 @@ def test_openapi_contains_v4_1_contract_endpoints():
         assert path in paths, path
 
 
+def test_platform_embed_context_is_readonly_and_runtime_backed(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "platform-embed.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+    store.upsert_record("agent_instance", {"id": "agent_embed_contract", "name": "embed contract agent"})
+    store.upsert_record("finding", {"id": "finding_embed_contract", "title": "embed contract finding"})
+    store.upsert_record("report", {"id": "report_embed_contract", "name": "embed contract report"})
+    store.upsert_record("integration", {"id": "runtime-platform", "name": "Runtime Platform"})
+
+    response = client.get("/api/v1/embed/context")
+
+    assert response.status_code == 200
+    context = response.json()
+    assert context["schema"] == "agent-security-platform-embed-context@4.1"
+    assert context["route"] == "/assessment/platform-embed"
+    assert context["endpoints"]["events"] == "/api/v1/integrations/runtime-platform/events"
+    assert context["counts"]["agents"] == 1
+    assert context["counts"]["findings"] == 1
+    assert context["counts"]["reports"] == 1
+    assert context["counts"]["integrations"] == 1
+    assert context["safe_mode"] == "local-readonly"
+    assert context["mutates_installed_agents"] is False
+    assert context["agent_runtime_started"] is False
+    assert context["stdio_mcp_started"] is False
+    assert context["network_request_sent"] is False
+    assert context["raw_payload_persisted"] is False
+    assert context["event_ingest"]["artifact_schema"] == "agent-security-runtime-platform-event@4.1"
+
+
 def test_adapter_catalog_is_runtime_backed_not_seed(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "adapter-catalog.db")
     store.initialize()

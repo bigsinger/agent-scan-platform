@@ -728,6 +728,19 @@ safe_mode: local-readonly</div></div>
 </div>
 
 
+<!-- D13 PLATFORM EMBED -->
+<div v-if="current==='platform-embed'">
+  <div class="card"><div class="card-head"><div><h2>主平台嵌入联调</h2><div class="desc">读取当前模块嵌入上下文，接收主平台回调事件，并生成本地脱敏证据包。</div></div><div><button class="btn" :disabled="opsBusy" @click="refreshPlatformEmbedContext()">刷新上下文</button><button class="btn primary" :disabled="opsBusy" @click="submitPlatformEmbedEvent">记录平台事件</button></div></div>
+    <div class="grid g5"><div class="metric"><div class="metric-label">Agent</div><div class="metric-value">{{platformEmbedCounts.agents||0}}</div></div><div class="metric"><div class="metric-label">Finding</div><div class="metric-value">{{platformEmbedCounts.findings||0}}</div></div><div class="metric"><div class="metric-label">Report</div><div class="metric-value">{{platformEmbedCounts.reports||0}}</div></div><div class="metric"><div class="metric-label">Policy Draft</div><div class="metric-value">{{platformEmbedCounts.policy_drafts||0}}</div></div><div class="metric"><div class="metric-label">模式</div><div class="metric-value" style="font-size:14px">{{platformEmbedContext&&platformEmbedContext.safe_mode||'local-readonly'}}</div></div></div>
+    <div class="callout green" style="margin-top:12px">嵌入联调只读取本系统 SQLite 并写入 `integration_event` / `runtime-platform-event` artifact；不回调外部平台，不保存原始 payload，不启动或修改 Codex/Hermes/MCP。</div>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h2>嵌入上下文</h2><div class="kv"><div>Schema</div><div class="mono">{{platformEmbedContext&&platformEmbedContext.schema||'-'}}</div><div>Route</div><div class="mono">{{platformEmbedContext&&platformEmbedContext.route||'/assessment/platform-embed'}}</div><div>Managed By</div><div>{{platformEmbedContext&&platformEmbedContext.managed_by||'local'}}</div><div>Host Mode</div><div>{{platformEmbedContext&&platformEmbedContext.host_mode||'standalone-or-embedded'}}</div><div>Correlation</div><div class="mono">{{platformEmbedContext&&platformEmbedContext.audit&&platformEmbedContext.audit.correlation_id||'-'}}</div></div><h3>能力</h3><div><span v-for="cap in platformEmbedCapabilities" class="badge blue" style="margin-right:6px">{{cap}}</span><span v-if="!platformEmbedCapabilities.length" class="muted">尚未刷新上下文。</span></div><h3>端点</h3><table><tbody><tr v-for="row in platformEmbedEndpoints" :key="row.name"><td>{{row.name}}</td><td class="mono">{{row.path}}</td></tr></tbody></table></div>
+    <div class="card"><h2>平台事件归档</h2><div class="form-grid"><div class="field"><label>方向</label><select v-model="platformEmbedEventDraft.direction"><option value="push">push</option><option value="pull">pull</option><option value="callback">callback</option></select></div><div class="field"><label>事件类型</label><input v-model="platformEmbedEventDraft.event_type"></div><div class="field"><label>主体类型</label><select v-model="platformEmbedEventDraft.subject_type"><option value="finding">finding</option><option value="report">report</option><option value="policy_draft">policy_draft</option><option value="platform_context">platform_context</option></select></div><div class="field"><label>主体 ID</label><input v-model="platformEmbedEventDraft.subject_id" placeholder="可为空，仅写入脱敏摘要"></div></div><div v-if="platformEmbedEventResult" class="callout green" style="margin-top:12px">最近事件：{{platformEmbedEventResult.event_type}} · {{platformEmbedEventResult.status}} · raw={{platformEmbedEventResult.raw_payload_persisted}} · network={{platformEmbedEventResult.network_request_sent}} <button class="btn sm" v-if="platformEmbedEventDownload" @click="downloadPlatformEmbedEvent">下载证据</button></div><div v-else class="empty" style="margin-top:12px">尚未记录平台事件。</div></div>
+  </div>
+</div>
+
+
 <!-- P31 SETTINGS -->
 <div v-if="current==='settings'">
   <div class="card"><div class="card-head"><div><h2>模块设置</h2><div class="desc">独立模式配置；嵌入主平台后身份、审计、通知和 Secret 可切换为主平台托管。</div></div><div><button class="btn" :disabled="opsBusy" @click="loadSettings">刷新</button><button class="btn" :disabled="opsBusy" @click="restoreSettingsDefaults">恢复默认</button><button class="btn" :disabled="opsBusy" @click="testSettings">校验</button><button class="btn soft" :disabled="opsBusy" @click="exportSettings">导出</button><button class="btn primary" :disabled="opsBusy" @click="saveSettings">保存设置</button></div></div>
@@ -814,7 +827,7 @@ remote_analysis: false</div></div></div></div>
 </main>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
-<script src="/static/assessment/seed.js?v=4.1.4"></script>
-<script src="/static/assessment/app.js?v=4.1.31"></script>
+<script src="/static/assessment/seed.js?v=4.1.5"></script>
+<script src="/static/assessment/app.js?v=4.1.32"></script>
 </body>
 </html>

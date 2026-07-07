@@ -738,6 +738,30 @@ def test_integration_sync_ui_surfaces_local_package_artifact():
     assert "下载证据" in html
 
 
+def test_platform_embed_page_uses_runtime_context_and_event_artifact():
+    seed = json.loads((STATIC / "assessment" / "seed.json").read_text(encoding="utf-8"))
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+
+    nav_items = [item for group in seed["navGroups"] for item in group["items"]]
+    assert any(item["key"] == "platform-embed" and item["name"] == "主平台嵌入联调" for item in nav_items)
+    assert "current==='platform-embed'" in html
+    assert "'platform-embed':'/assessment/platform-embed'" in app_js
+    assert "/assessment/platform-embed':'platform-embed" in app_js
+    assert "/assessment/platform-embed':'integrations" not in app_js
+    assert "refreshPlatformEmbedContext" in app_js
+    assert "submitPlatformEmbedEvent" in app_js
+    assert "downloadPlatformEmbedEvent" in app_js
+    assert "/api/v1/embed/context" in app_js
+    assert "/api/v1/integrations/runtime-platform/events" in app_js
+    assert "@click=\"refreshPlatformEmbedContext()\"" in html
+    assert "@click=\"submitPlatformEmbedEvent\"" in html
+    assert "@click=\"downloadPlatformEmbedEvent\"" in html
+    assert "runtime-platform-event" in html
+    assert "模拟回写" not in html
+    assert "embed-demo" not in app_js
+
+
 def test_completeness_matrix_ui_uses_runtime_summary():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

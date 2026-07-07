@@ -203,6 +203,11 @@
           "icon": "⇄"
         },
         {
+          "key": "platform-embed",
+          "name": "主平台嵌入联调",
+          "icon": "↔"
+        },
+        {
           "key": "settings",
           "name": "模块设置",
           "icon": "⚒"

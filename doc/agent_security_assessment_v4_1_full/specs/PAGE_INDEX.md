@@ -50,5 +50,5 @@
 | D10 | 测评模板详情 | `prototype/pages/D10_template_detail.html` | `specs/pages/D10_template_detail.md` | `/assessment/profiles/{id}` | 详情页 |
 | D11 | 规则详情 | `prototype/pages/D11_rule_detail.html` | `specs/pages/D11_rule_detail.md` | `/assessment/rules/{id}` | 详情页 |
 | D12 | 扫描器详情 | `prototype/pages/D12_scanner_detail.html` | `specs/pages/D12_scanner_detail.md` | `/assessment/scanners/{id}` | 详情页 |
-| D13 | 主平台嵌入演示 | `prototype/pages/D13_platform_embed.html` | `specs/pages/D13_platform_embed.md` | `/assessment/embed-demo` | 详情页 |
+| D13 | 主平台嵌入联调 | `prototype/pages/D13_platform_embed.html` | `specs/pages/D13_platform_embed.md` | `/assessment/platform-embed` | 详情页 |
 | D14 | API / 状态调试台 | `prototype/pages/D14_api_debug.html` | `specs/pages/D14_api_debug.md` | `/assessment/api-debug` | 详情页 |

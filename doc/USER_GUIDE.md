@@ -1377,6 +1377,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 
 `/integrations/runtime-platform/events` 用于接收主平台回调或嵌入容器事件。接口只保存脱敏摘要、`payload_sha256_16`、事件主体和 `runtime-platform-event` JSON artifact，返回 `raw_payload_persisted=false`、`network_request_sent=false`、`mutates_installed_agents=false`；不会把原始 payload、Secret 或 Token 作为明文事件体落库。
 
+页面 `/assessment/platform-embed` 提供主平台嵌入联调入口：刷新上下文会读取 `/api/v1/embed/context` 的当前计数、能力和端点；“记录平台事件”会调用 `/api/v1/integrations/runtime-platform/events` 并生成可下载的 `runtime-platform-event` artifact。该页面只写本系统 SQLite 和 artifact，不回调外部平台，不启动或修改 Codex、Hermes、MCP。
+
 ## 11. 客户测评建议流程
 
 企业客户 POC 推荐流程：

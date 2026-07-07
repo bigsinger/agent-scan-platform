@@ -1,31 +1,31 @@
-# D13 主平台嵌入演示 · 页面 SPEC
+# D13 主平台嵌入联调 · 页面 SPEC
 
 > 文件：`prototype/pages/D13_platform_embed.html`  
-> Route：`/assessment/embed-demo`  
+> Route：`/assessment/platform-embed`
 > 页面分组：详情页  
 > 页面类型：platform_embed
 
 ## 1. 页面目标
 
-展示作为现有 Agent 运行时防护平台模块嵌入时的菜单、Token、资产同步、风险回写和报告归档流程。
+展示作为现有 Agent 运行时防护平台模块嵌入时的上下文读取、菜单能力、事件接收、风险状态回写证据和报告归档边界。
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
 ## 2. 页面区域
 
-- 嵌入参数
-- 菜单权限
-- 资产同步
-- 风险回写
-- 报告归档
-- 审计
+- 嵌入上下文
+- 菜单能力
+- 当前运行计数
+- 主平台事件归档
+- 证据 artifact 下载
+- 审计边界
 
 ## 3. 用户动作
 
-- 测试嵌入
-- 模拟回写
-- 生成策略建议
-- 查看审计
+- 刷新嵌入上下文
+- 记录主平台事件
+- 下载事件证据
+- 查看集成审计边界
 
 每个动作必须满足：
 
@@ -64,9 +64,9 @@
 
 ## 5. 主要实体
 
-`integration, platform_context, audit_event`
+`integration, platform_context, integration_event, artifact, audit_event`
 
-当前本地实现使用 `runtime-platform/events` 记录嵌入平台回调事件。接口只保存脱敏摘要、事件主体、payload hash、`integration_event`、审计事件和 `runtime-platform-event` artifact；不保存原始 payload，不回调外部平台，不启动或修改 Codex/Hermes/MCP。
+当前本地实现使用独立页面 `/assessment/platform-embed` 读取 `embed/context`，并用 `runtime-platform/events` 记录嵌入平台回调事件。接口只保存脱敏摘要、事件主体、payload hash、`integration_event`、审计事件和 `runtime-platform-event` artifact；不保存原始 payload，不回调外部平台，不启动或修改 Codex/Hermes/MCP。
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
