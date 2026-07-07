@@ -193,7 +193,7 @@ data(){
       return extra[this.current]||'Agent 安全测评';
     },
     pendingConsentCount(){
-      return this.consents.filter(x=>x.status==='待审批').length;
+      return this.consents.filter(x=>this.isPendingConsent(x)).length;
     },
     p0Count(){
       return this.findings.filter(f=>String(f.severity||'').includes('P0') || String(f.severity||'').includes('严重')).length;
@@ -317,13 +317,16 @@ data(){
     currentConsent(){
       const selectedId=this.selectedConsent && (this.selectedConsent.id || this.selectedConsent.server);
       const selected=selectedId ? this.consents.find(c=>(c.id||c.server)===selectedId) : null;
-      return selected || this.consents.find(c=>c.status==='待审批') || this.consents[0] || {};
+      return selected || this.consents.find(c=>this.isPendingConsent(c)) || this.consents[0] || {};
     },
     allowedConsentCount(){
       return this.consents.filter(c=>['允许一次','本任务允许','APPROVED_ONCE','APPROVED_TASK'].includes(c.status)).length;
     },
     deniedConsentCount(){
       return this.consents.filter(c=>['已拒绝','DENIED','DECLINED'].includes(c.status)).length;
+    },
+    expiredConsentCount(){
+      return this.consents.filter(c=>String(c.status_code||c.status||'')==='EXPIRED' || c.status==='已过期').length;
     },
     skillScriptCount(){
       return this.skills.reduce((sum,s)=>{
@@ -2090,6 +2093,13 @@ data(){
     selectConsent(c){
       this.selectedConsent=c || {};
     },
+    isPendingConsent(c){
+      const status=String((c && (c.status_code || c.status)) || '待审批');
+      return ['待审批','PENDING','OPEN','WAITING','WAITING_CONSENT','已过期','EXPIRED'].includes(status);
+    },
+    canDecideConsent(c){
+      return !!(c && this.isPendingConsent(c));
+    },
     async runGuardCheck(){
       this.quickBusy=true; this.apiError='';
       try {
@@ -2985,7 +2995,7 @@ data(){
       this.toastMsg(c.server+' 已拒绝，任务将标记部分完成');
     },
     async denyAllConsents(){
-      const pending=this.consents.filter(c=>c.status==='待审批');
+      const pending=this.consents.filter(c=>this.isPendingConsent(c));
       if(!pending.length){ this.toastMsg('没有待审批 stdio Server'); return; }
       try {
         const res=await this.apiPost('/api/v1/consents/bulk-decision', {decision:'DENIED', reason:'local-ui bulk decline'});

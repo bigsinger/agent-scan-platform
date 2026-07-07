@@ -1022,6 +1022,8 @@ $delta.change_summary.returned                # 0 when no files changed
 
 手工登记资产会写入 `agent_instance` 并生成 `manual-agent-registration` artifact，状态为 `probe=待探测`；它不读取、不启动、不修改目标 Agent。`consents/{id}/decision`、`mcp-consents/{id}/approve|decline` 与 `consents/bulk-decision` 都会更新 `mcp_consent` 和 `consent_request`，返回实际更新数量或更新后的审批记录；这些接口只写本系统审批状态和审计事件，不能作为 MCP 启停动作验收。
 
+MCP 审批验收时应检查：批准记录包含 `approved_config_sha256`、`approved_command_sha256`、`approval_fingerprint`、`agent_runtime_started=false`、`stdio_mcp_started=false`、`mutates_installed_agents=false`。如果后续 `mcp_server.config_sha256` 或命令指纹变化，`GET /api/v1/mcp-consents` 会把原批准记录渲染为 `status=已过期`、`status_code=EXPIRED`、`requires_reapproval=true`，并给出 `expiration_reason`；重新批准会绑定新的当前 Hash。该判定只读取本系统 SQLite 中的 MCP Server 摘要，不执行 MCP 命令、不启动 stdio、不修改 Codex/Hermes 配置。
+
 计划任务操作只写本系统 SQLite，不会直接启动已安装 Agent。立即执行会生成本地任务记录：
 
 ```powershell

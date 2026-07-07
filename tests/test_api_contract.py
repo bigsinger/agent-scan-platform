@@ -2680,6 +2680,63 @@ def test_manual_agent_and_bulk_consent_actions_are_persisted(monkeypatch, tmp_pa
     assert ui_once.json()["consent"]["status"] == "允许一次"
     assert store.get_record("consent_request", "consent_ui_once")["mutates_installed_agents"] is False
 
+    store.upsert_record(
+        "mcp_server",
+        {
+            "id": "mcp_hash_bound",
+            "name": "hash-bound-mcp",
+            "transport": "stdio",
+            "command": "node server-v1.js",
+            "args": ["--safe"],
+            "config_sha256": "sha256-old",
+            "status": "待审批",
+        },
+        status="PENDING",
+    )
+    store.upsert_record(
+        "mcp_consent",
+        {
+            "id": "consent_hash_bound",
+            "server": "hash-bound-mcp",
+            "mcp_server_id": "mcp_hash_bound",
+            "status": "待审批",
+            "config_sha256": "sha256-old",
+            "command": "node server-v1.js",
+        },
+        status="PENDING",
+    )
+
+    approved = client.post("/api/v1/mcp-consents/consent_hash_bound/approve", json={"decision": "APPROVED_FOR_TASK", "scope": "task"})
+    assert approved.status_code == 200
+    approved_consent = approved.json()["consent"]
+    assert approved_consent["status"] == "本任务允许"
+    assert approved_consent["approved_config_sha256"] == "sha256-old"
+    assert approved_consent["approval_fingerprint"]
+    assert approved_consent["agent_runtime_started"] is False
+    assert approved_consent["stdio_mcp_started"] is False
+
+    changed_server = store.get_record("mcp_server", "mcp_hash_bound")
+    changed_server.update({"config_sha256": "sha256-new", "command": "node server-v2.js"})
+    store.upsert_record("mcp_server", changed_server, status="PENDING")
+
+    listed = client.get("/api/v1/mcp-consents")
+    assert listed.status_code == 200
+    stale = next(item for item in listed.json()["items"] if item["id"] == "consent_hash_bound")
+    assert stale["status"] == "已过期"
+    assert stale["status_code"] == "EXPIRED"
+    assert stale["requires_reapproval"] is True
+    assert stale["expiration_reason"] in {"CONFIG_HASH_CHANGED", "COMMAND_CHANGED"}
+    assert stale["current_config_sha256"] == "sha256-new"
+    assert stale["mutates_installed_agents"] is False
+
+    reapproved = client.post("/api/v1/mcp-consents/consent_hash_bound/approve", json={"decision": "APPROVED_ONCE", "scope": "once"})
+    assert reapproved.status_code == 200
+    reapproved_consent = reapproved.json()["consent"]
+    assert reapproved_consent["status"] == "允许一次"
+    assert reapproved_consent["approved_config_sha256"] == "sha256-new"
+    assert reapproved_consent["requires_reapproval"] is False
+    assert reapproved_consent["mutates_installed_agents"] is False
+
 
 def test_task_lifecycle_actions_are_persisted():
     draft = client.post(

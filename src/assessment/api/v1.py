@@ -2027,7 +2027,7 @@ def enrich_items(key: str, items: list[dict]) -> list[dict]:
         for index, item in enumerate(items):
             copy = dict(item)
             copy.setdefault("id", copy.get("server", f"consent_{index}"))
-            enriched.append(copy)
+            enriched.append(decorate_mcp_consent(copy, get_store()))
         return enriched
     if key == "evidenceItems":
         return [decorate_evidence_item(item) for item in items]
@@ -6557,6 +6557,102 @@ def consent_status_from_decision(decision: Any, default: str = "本任务允许"
     return raw or default
 
 
+APPROVED_CONSENT_STATUSES = {"允许一次", "本任务允许", "已批准", "APPROVED_ONCE", "APPROVED_TASK", "APPROVED_FOR_TASK"}
+DENIED_CONSENT_STATUSES = {"已拒绝", "DENIED", "DECLINED", "REJECTED"}
+PENDING_CONSENT_STATUSES = {"待审批", "PENDING", "OPEN", "WAITING", "WAITING_CONSENT", "已过期", "EXPIRED"}
+
+
+def consent_context(store: Any, record: dict) -> dict:
+    server = resolve_consent_server(store, record)
+    command = str((server or {}).get("command") or record.get("command") or "")
+    args = (server or {}).get("args") or record.get("args") or []
+    if not isinstance(args, list):
+        args = [str(args)]
+    config_sha256 = str((server or {}).get("config_sha256") or record.get("config_sha256") or "")
+    command_payload = json.dumps({"command": command, "args": args}, ensure_ascii=False, sort_keys=True)
+    return {
+        "server": server or {},
+        "server_id": str((server or {}).get("id") or record.get("mcp_server_id") or record.get("server_id") or ""),
+        "config_sha256": config_sha256,
+        "command": redact_text(command),
+        "command_sha256": stable_hash(command_payload, 24) if command or args else "",
+    }
+
+
+def resolve_consent_server(store: Any, record: dict) -> dict | None:
+    for key in ("mcp_server_id", "server_id"):
+        value = record.get(key)
+        if value:
+            server = store.get_record("mcp_server", str(value))
+            if server:
+                return server
+    server_name = str(record.get("server") or record.get("name") or "")
+    for server in store.list_records("mcp_server", limit=2000):
+        if str(server.get("id") or "") == server_name or str(server.get("name") or "") == server_name:
+            return server
+    return None
+
+
+def decorate_mcp_consent(record: dict, store: Any | None = None) -> dict:
+    store = store or get_store()
+    item = dict(record)
+    item.setdefault("id", item.get("server") or new_id("consent"))
+    item.setdefault("server", item["id"])
+    item.setdefault("safe_mode", "local-readonly")
+    item.setdefault("mutates_installed_agents", False)
+    item.setdefault("agent_runtime_started", False)
+    item.setdefault("stdio_mcp_started", False)
+    item.setdefault("requires_reapproval", False)
+    item.setdefault("status_code", consent_status_code(item.get("status")))
+    context = consent_context(store, item)
+    current_hash = context["config_sha256"]
+    current_command_hash = context["command_sha256"]
+    if current_hash:
+        item["current_config_sha256"] = current_hash
+    if current_command_hash:
+        item["current_command_sha256"] = current_command_hash
+    if context["server_id"]:
+        item.setdefault("mcp_server_id", context["server_id"])
+
+    status = str(item.get("status") or "")
+    if status in APPROVED_CONSENT_STATUSES:
+        expiration = consent_expiration_reason(item, current_hash, current_command_hash)
+        if expiration:
+            item["previous_status"] = item.get("status")
+            item["status"] = "已过期"
+            item["status_code"] = "EXPIRED"
+            item["requires_reapproval"] = True
+            item["expiration_reason"] = expiration
+        else:
+            item["status_code"] = consent_status_code(status)
+            item["requires_reapproval"] = False
+    return item
+
+
+def consent_status_code(status: Any) -> str:
+    raw = str(status or "待审批")
+    if raw in APPROVED_CONSENT_STATUSES:
+        return "APPROVED_ONCE" if raw == "允许一次" else "APPROVED_TASK"
+    if raw in DENIED_CONSENT_STATUSES:
+        return "DENIED"
+    if raw in {"已过期", "EXPIRED"}:
+        return "EXPIRED"
+    return "PENDING"
+
+
+def consent_expiration_reason(record: dict, current_config_sha256: str, current_command_sha256: str) -> str:
+    approved_config = str(record.get("approved_config_sha256") or record.get("approval_config_sha256") or "")
+    approved_command = str(record.get("approved_command_sha256") or record.get("approval_command_sha256") or "")
+    if approved_config and current_config_sha256 and approved_config != current_config_sha256:
+        return "CONFIG_HASH_CHANGED"
+    if approved_command and current_command_sha256 and approved_command != current_command_sha256:
+        return "COMMAND_CHANGED"
+    expires_at = parse_utc_datetime(str(record.get("expires_at") or record.get("approval_expires_at") or ""))
+    if expires_at and expires_at <= datetime.now(timezone.utc):
+        return "APPROVAL_EXPIRED"
+    return ""
+
+
 def update_consent(store: Any, state: dict, consent_id: str, status: str, body: dict) -> dict:
     record = (
         store.get_record("mcp_consent", consent_id)
@@ -6564,29 +6660,76 @@ def update_consent(store: Any, state: dict, consent_id: str, status: str, body: 
         or find_item(state.get("consents", []), consent_id)
         or {"id": consent_id, "server": consent_id}
     )
+    context = consent_context(store, record)
     record["id"] = str(record.get("id") or consent_id)
     record.setdefault("server", consent_id)
+    if context["server_id"]:
+        record["mcp_server_id"] = context["server_id"]
+    if context["config_sha256"]:
+        record["config_sha256"] = context["config_sha256"]
+    if context["command"]:
+        record["command"] = context["command"]
+    approval_scope = str(body.get("scope") or ("once" if status == "允许一次" else "task"))
     record.update(
         {
             "status": status,
             "decision": status,
+            "status_code": consent_status_code(status),
             "decision_input": str(body.get("decision") or status),
             "decision_reason": str(body.get("reason") or body.get("decision_reason") or ""),
+            "approval_scope": approval_scope,
             "decided_at": utc_now(),
             "safe_mode": "local-readonly",
             "mutates_installed_agents": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
         }
     )
+    if status in APPROVED_CONSENT_STATUSES:
+        record["approved_config_sha256"] = context["config_sha256"]
+        record["approved_command_sha256"] = context["command_sha256"]
+        record["approval_fingerprint"] = stable_hash(
+            json.dumps(
+                {
+                    "consent_id": record["id"],
+                    "server_id": context["server_id"],
+                    "config_sha256": context["config_sha256"],
+                    "command_sha256": context["command_sha256"],
+                    "scope": approval_scope,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            24,
+        )
+        record["requires_reapproval"] = False
+        record.pop("expiration_reason", None)
+    elif status in DENIED_CONSENT_STATUSES:
+        record["requires_reapproval"] = False
+        for key in ("approved_config_sha256", "approved_command_sha256", "approval_fingerprint", "expiration_reason"):
+            record.pop(key, None)
     updated = store.upsert_record("mcp_consent", record, status=status)
     store.upsert_record("consent_request", updated, status=status)
-    merge_state_record(state, "consents", updated)
+    decorated = decorate_mcp_consent(updated, store)
+    merge_state_record(state, "consents", decorated)
     store.audit_event(
         "post.consents.decision",
         "mcp_consent",
         record["id"],
-        {"decision": body.get("decision") or status, "status": status, "safe_mode": "local-readonly", "mutates_installed_agents": False},
+        {
+            "decision": body.get("decision") or status,
+            "status": status,
+            "status_code": record.get("status_code"),
+            "approval_scope": approval_scope,
+            "approved_config_sha256": record.get("approved_config_sha256", ""),
+            "approval_fingerprint": record.get("approval_fingerprint", ""),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+        },
     )
-    return updated
+    return decorated
 
 
 def bulk_decide_consents(store: Any, state: dict, body: dict) -> dict:
@@ -6597,26 +6740,20 @@ def bulk_decide_consents(store: Any, state: dict, body: dict) -> dict:
         combine_items(store.list_records("mcp_consent", limit=2000), store.list_records("consent_request", limit=2000)),
         state.get("consents", []),
     )
-    pending_statuses = {"待审批", "PENDING", "OPEN", "WAITING", "WAITING_CONSENT"}
     targets = [
-        record
+        decorate_mcp_consent(record, store)
         for record in records
-        if str(record.get("status") or "待审批") in pending_statuses
+        if str(record.get("status") or "待审批") in PENDING_CONSENT_STATUSES
     ]
     updated_records: list[dict] = []
     for record in targets:
-        consent_id = str(record.get("id") or record.get("server") or new_id("consent"))
-        record["id"] = consent_id
-        record.update({"status": status, "decision": status, "decision_reason": reason, "decided_at": utc_now(), "safe_mode": "local-readonly", "mutates_installed_agents": False})
-        updated = store.upsert_record("mcp_consent", record, status=status)
-        store.upsert_record("consent_request", updated, status=status)
-        merge_state_record(state, "consents", updated)
+        updated = update_consent(store, state, str(record.get("id") or record.get("server") or new_id("consent")), status, {**body, "decision": decision, "reason": reason})
         updated_records.append(updated)
     store.audit_event(
         "post.consents.bulk_decision",
         "mcp_consent",
         "bulk",
-        {"decision": decision, "status": status, "updated": len(updated_records), "safe_mode": "local-readonly", "mutates_installed_agents": False},
+        {"decision": decision, "status": status, "updated": len(updated_records), "safe_mode": "local-readonly", "mutates_installed_agents": False, "agent_runtime_started": False, "stdio_mcp_started": False},
     )
     return {
         "status": "UPDATED" if updated_records else "NO_PENDING_CONSENTS",

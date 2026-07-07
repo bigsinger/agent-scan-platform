@@ -364,10 +364,19 @@ def test_attack_path_visualization_uses_runtime_nodes():
 
 
 def test_consent_bulk_decline_ui_is_api_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "async denyAllConsents" in app_js
     assert "/api/v1/consents/bulk-decision" in app_js
     assert "for(const consent of pending) await this.denyConsent(consent)" not in app_js
+    assert "expiredConsentCount" in app_js
+    assert "isPendingConsent(c)" in app_js
+    assert "canDecideConsent(c)" in app_js
+    assert "this.consents.filter(c=>this.isPendingConsent(c))" in app_js
+    assert "已过期" in html
+    assert "approved_config_sha256" in html
+    assert "approval_fingerprint" in html
+    assert ':disabled="!canDecideConsent(c)"' in html
 
 
 def test_dashboard_health_self_test_ui_is_api_backed():

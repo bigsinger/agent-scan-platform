@@ -9,7 +9,7 @@
 
 在启动 stdio MCP Server 前展示命令、参数、环境变量和风险，要求用户逐项批准。
 
-当前本地实现只记录审批状态，不负责启动 stdio MCP Server。允许一次或本任务允许只是写入 `mcp_consent` / `consent_request` 和审计事件；配置 Hash、命令或任务上下文变化后必须重新审批。
+当前本地实现只记录审批状态，不负责启动 stdio MCP Server。允许一次或本任务允许只是写入 `mcp_consent` / `consent_request` 和审计事件；批准时会固化 `approved_config_sha256`、`approved_command_sha256` 和 `approval_fingerprint`。列表读取时会根据当前 `mcp_server` 摘要判定配置 Hash、命令或审批到期是否变化，变化后返回 `status=已过期`、`status_code=EXPIRED`、`requires_reapproval=true`，必须重新审批。
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 

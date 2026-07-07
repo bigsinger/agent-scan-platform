@@ -437,9 +437,11 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 
 1. 默认拒绝。
 2. 未审批不启动进程。
-3. 配置 Hash 变化后重新审批。
+3. 批准时会固化当前 MCP Server 的 `config_sha256`、命令指纹和审批指纹；配置 Hash、命令或审批到期变化后会在列表中显示为“已过期”，必须重新审批。
 4. 环境变量值不回显，只显示 Key 和 `<REDACTED>`。
 5. 对 shell、powershell、cmd、bash、npx 等高风险命令必须人工复核。
+
+审批接口只写入本系统 `mcp_consent` 和 `consent_request`。`GET /api/v1/mcp-consents` 会根据当前保存的 MCP Server 摘要实时判定 `status_code=EXPIRED`、`expiration_reason=CONFIG_HASH_CHANGED|COMMAND_CHANGED|APPROVAL_EXPIRED` 和 `requires_reapproval=true`；重新点击“允许一次”或“本任务允许”会绑定新的当前 Hash。整个过程不启动 stdio MCP，也不会改写 Agent 配置。
 
 常见处置：
 
