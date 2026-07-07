@@ -1782,6 +1782,44 @@ def test_attack_path_policy_drafts_are_review_only_artifacts():
     reviewed = client.patch(f"/api/v1/policy-drafts/{draft['id']}", json={"status": "REVIEWED"})
     assert reviewed.json()["policy_draft"]["status"] == "REVIEWED"
 
+    exported = client.get(f"/api/v1/policy-drafts/export?attack_path_id={attack_path['id']}")
+    assert exported.status_code == 200
+    export_body = exported.json()
+    assert export_body["schema"] == "agent-security-policy-draft-package@4.1"
+    assert export_body["counts"]["policy_drafts"] == len(policy_drafts)
+    assert export_body["counts"]["attack_paths"] == 1
+    assert export_body["validation"]["status"] == "PASS"
+    assert export_body["safe_mode"] == "draft-only"
+    assert export_body["mutates_installed_agents"] is False
+    assert export_body["external_policy_published"] is False
+    package_download = client.get(export_body["download"])
+    assert package_download.status_code == 200
+    package = package_download.json()
+    assert package["schema"] == "agent-security-policy-draft-package@4.1"
+    assert package["deployment"]["publish_mode"] == "manual-approval-only"
+    assert package["deployment"]["writes_external_agent_config"] is False
+    assert package["raw_sensitive_evidence"] == "not-included"
+    assert package["mutates_installed_agents"] is False
+    assert package["external_policy_published"] is False
+    assert {check["id"] for check in package["validation"]["checks"]} >= {
+        "drafts_present",
+        "review_required",
+        "no_agent_mutation",
+        "safe_mode",
+        "controls_declared",
+    }
+    assert all(item["mutates_installed_agents"] is False for item in package["policy_drafts"])
+    assert all(item["requires_external_approval"] is True for item in package["policy_drafts"])
+    assert "sk-test-value" not in package_download.text
+
+    with api_v1.get_store().connect() as conn:
+        event = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (export_body["artifact"]["id"],),
+        ).fetchone()
+    assert event["action"] == "get.policy-drafts.export"
+    assert json.loads(event["payload_json"])["external_policy_published"] is False
+
 
 def test_redteam_dry_run_creates_local_evidence_without_agent_mutation():
     case = client.post(

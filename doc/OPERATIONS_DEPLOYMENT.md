@@ -808,7 +808,16 @@ $drafts = Invoke-RestMethod `
 Invoke-WebRequest `
   -Uri "http://127.0.0.1:8000$($drafts.policy_drafts[0].download)" `
   -OutFile policy-draft.json
+
+$package = Invoke-RestMethod `
+  "http://127.0.0.1:8000/api/v1/policy-drafts/export?attack_path_id=$($path.attack_path.id)"
+
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($package.download)" `
+  -OutFile policy-draft-package.json
 ```
+
+策略包 artifact 的 schema 为 `agent-security-policy-draft-package@4.1`，必须包含 `validation.status`、`deployment.publish_mode=manual-approval-only`、`external_policy_published=false`、`mutates_installed_agents=false` 和 `raw_sensitive_evidence=not-included`。这份包是交付评审材料，不是运行时发布动作。
 
 策略草案交付建议：
 

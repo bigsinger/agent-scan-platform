@@ -891,6 +891,8 @@ async def generic_get(resource: str, request: Request) -> dict:
         return export_discovery_inventory(get_store(), state)
     if path == "/defense-recommendations/export":
         return export_defense_recommendations(get_store(), state)
+    if path == "/policy-drafts/export":
+        return export_policy_draft_package(get_store(), state, request.query_params.get("attack_path_id"))
     if path == "/embed/context":
         return embed_context(state)
 
@@ -7161,6 +7163,219 @@ def create_policy_drafts_for_attack_path(store: Any, state: dict, attack_path_id
     merge_state_record(state, "attackPaths", updated_path)
     state["selectedAttackPath"] = updated_path
     return drafts
+
+
+def export_policy_draft_package(store: Any, state: dict, attack_path_id: str | None = None) -> dict:
+    requested_attack_path_id = str(attack_path_id or "").strip()
+    drafts = combine_items(store.list_records("policy_draft", limit=1000), state.get("policyDrafts", []))
+    if requested_attack_path_id:
+        drafts = [draft for draft in drafts if str(draft.get("attack_path_id") or "") == requested_attack_path_id]
+
+    attack_paths = combine_items(store.list_records("attack_path", limit=1000), state.get("attackPaths", []))
+    findings = combine_items(store.list_records("finding", limit=5000), state.get("findings", []))
+    evidence_records = combine_items(store.list_records("evidence", limit=5000), state.get("evidenceItems", []))
+    recommendations = defense_recommendation_records(store, state)
+
+    attack_path_ids = {str(draft.get("attack_path_id") or "") for draft in drafts if draft.get("attack_path_id")}
+    finding_ids = {str(finding_id) for draft in drafts for finding_id in draft.get("finding_ids", []) if finding_id}
+    for attack_path in attack_paths:
+        if attack_path_ids and str(attack_path.get("id") or "") in attack_path_ids:
+            finding_ids.update(str(item) for item in attack_path.get("finding_ids", []) if item)
+
+    evidence_ids = {
+        str(evidence_id)
+        for finding in findings
+        if str(finding.get("id") or "") in finding_ids
+        for evidence_id in finding.get("evidence_ids", [])
+        if evidence_id
+    }
+    linked_attack_paths = [policy_attack_path_summary(item) for item in attack_paths if str(item.get("id") or "") in attack_path_ids]
+    linked_findings = [policy_finding_summary(item) for item in findings if str(item.get("id") or "") in finding_ids]
+    linked_evidence = [policy_evidence_summary(item) for item in evidence_records if str(item.get("id") or "") in evidence_ids or str(item.get("finding_id") or "") in finding_ids]
+    linked_recommendations = [
+        policy_recommendation_summary(item)
+        for item in recommendations
+        if str(item.get("policy_draft_id") or "") in {str(draft.get("id") or "") for draft in drafts}
+        or str(item.get("attack_path_id") or "") in attack_path_ids
+    ]
+    validation = validate_policy_draft_package(drafts)
+    payload = {
+        "schema": "agent-security-policy-draft-package@4.1",
+        "generated_at": utc_now(),
+        "requested_attack_path_id": requested_attack_path_id or None,
+        "safe_mode": "draft-only",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "external_policy_published": False,
+        "raw_sensitive_evidence": "not-included",
+        "boundary": "策略包仅导出本系统 SQLite 中的策略草案、攻击路径、Finding 和脱敏证据摘要；不会写入 Codex、Hermes、MCP 配置或 Skill 文件。",
+        "deployment": {
+            "status": "review-required",
+            "publish_mode": "manual-approval-only",
+            "target_platform": "host-runtime-policy-gateway",
+            "writes_external_agent_config": False,
+            "requires_change_ticket": True,
+        },
+        "counts": {
+            "policy_drafts": len(drafts),
+            "attack_paths": len(linked_attack_paths),
+            "findings": len(linked_findings),
+            "evidence": len(linked_evidence),
+            "recommendations": len(linked_recommendations),
+        },
+        "validation": validation,
+        "policy_drafts": [policy_draft_export_summary(draft) for draft in drafts],
+        "attack_paths": linked_attack_paths,
+        "findings": linked_findings,
+        "evidence": linked_evidence,
+        "recommendations": linked_recommendations,
+    }
+    artifact = store.write_artifact(
+        "policy-draft-package",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "safe_mode": "draft-only",
+            "mutates_installed_agents": False,
+            "policy_drafts": len(drafts),
+            "attack_path_id": requested_attack_path_id or "",
+        },
+    )
+    store.audit_event(
+        "get.policy-drafts.export",
+        "artifact",
+        artifact["id"],
+        {
+            "counts": payload["counts"],
+            "validation_status": validation["status"],
+            "requested_attack_path_id": requested_attack_path_id or None,
+            "safe_mode": "draft-only",
+            "mutates_installed_agents": False,
+            "external_policy_published": False,
+        },
+    )
+    return {
+        "format": "json",
+        "schema": payload["schema"],
+        "counts": payload["counts"],
+        "validation": validation,
+        "artifact": artifact,
+        "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        "safe_mode": "draft-only",
+        "mutates_installed_agents": False,
+        "external_policy_published": False,
+    }
+
+
+def validate_policy_draft_package(drafts: list[dict]) -> dict:
+    checks = [
+        {
+            "id": "drafts_present",
+            "status": "PASS" if drafts else "WARN",
+            "detail": f"{len(drafts)} policy drafts selected",
+        },
+        {
+            "id": "review_required",
+            "status": "PASS"
+            if all(str(draft.get("requires_external_approval", True)).lower() in {"true", "1", "yes"} for draft in drafts)
+            else "FAIL",
+            "detail": "all drafts require external approval before publishing",
+        },
+        {
+            "id": "no_agent_mutation",
+            "status": "PASS" if all(draft.get("mutates_installed_agents") is False for draft in drafts) else "FAIL",
+            "detail": "drafts do not write Codex/Hermes/MCP/Skill configuration",
+        },
+        {
+            "id": "safe_mode",
+            "status": "PASS" if all(str(draft.get("safe_mode") or "") == "draft-only" for draft in drafts) else "FAIL",
+            "detail": "all drafts are draft-only artifacts",
+        },
+        {
+            "id": "controls_declared",
+            "status": "PASS" if all(draft.get("control") and draft.get("effect") for draft in drafts) else "FAIL",
+            "detail": "each draft declares control and effect",
+        },
+    ]
+    status = "FAIL" if any(check["status"] == "FAIL" for check in checks) else "WARN" if any(check["status"] == "WARN" for check in checks) else "PASS"
+    return {"status": status, "checks": checks}
+
+
+def policy_draft_export_summary(draft: dict) -> dict:
+    return {
+        "id": draft.get("id"),
+        "name": draft.get("name"),
+        "type": draft.get("type"),
+        "status": draft.get("status"),
+        "state_code": draft.get("state_code"),
+        "attack_path_id": draft.get("attack_path_id"),
+        "finding_ids": draft.get("finding_ids", []),
+        "control": draft.get("control"),
+        "scope": draft.get("scope"),
+        "effect": draft.get("effect"),
+        "rationale": draft.get("rationale"),
+        "artifact_id": draft.get("artifact_id"),
+        "artifact_path": draft.get("artifact_path"),
+        "download": draft.get("download"),
+        "safe_mode": draft.get("safe_mode") or "draft-only",
+        "mutates_installed_agents": False,
+        "requires_external_approval": draft.get("requires_external_approval", True),
+    }
+
+
+def policy_attack_path_summary(attack_path: dict) -> dict:
+    return {
+        "id": attack_path.get("id"),
+        "name": attack_path.get("name"),
+        "status": attack_path.get("status"),
+        "risk": attack_path.get("risk"),
+        "confidence": attack_path.get("confidence"),
+        "finding_ids": attack_path.get("finding_ids", []),
+        "evidence_ids": attack_path.get("evidence_ids", []),
+        "policy_draft_ids": attack_path.get("policy_draft_ids", []),
+        "safe_mode": attack_path.get("safe_mode") or "draft-only",
+    }
+
+
+def policy_finding_summary(finding: dict) -> dict:
+    return {
+        "id": finding.get("id"),
+        "title": finding.get("title"),
+        "severity": finding.get("severity"),
+        "rule": finding.get("rule") or finding.get("rule_id"),
+        "component": redact_text(str(finding.get("component") or finding.get("agent") or ""), max_len=200),
+        "status": finding.get("status"),
+        "confidence": finding.get("confidence"),
+        "evidence_ids": finding.get("evidence_ids", []),
+    }
+
+
+def policy_evidence_summary(evidence: dict) -> dict:
+    return {
+        "id": evidence.get("id"),
+        "finding_id": evidence.get("finding_id"),
+        "type": evidence.get("type"),
+        "collector": evidence.get("collector"),
+        "redaction": evidence.get("redaction"),
+        "artifact_id": evidence.get("artifact_id") or evidence.get("redacted_artifact_id"),
+        "sha256": evidence.get("redacted_sha256") or evidence.get("sha256"),
+        "download": evidence.get("download") or (f"/api/v1/evidence/{evidence.get('id')}/download" if evidence.get("id") else ""),
+    }
+
+
+def policy_recommendation_summary(recommendation: dict) -> dict:
+    return {
+        "id": recommendation.get("id"),
+        "title": recommendation.get("title"),
+        "severity": recommendation.get("severity"),
+        "status": recommendation.get("status"),
+        "status_code": recommendation.get("status_code"),
+        "policy_draft_id": recommendation.get("policy_draft_id"),
+        "attack_path_id": recommendation.get("attack_path_id"),
+        "safe_mode": recommendation.get("safe_mode") or "local-readonly",
+        "mutates_installed_agents": False,
+    }
 
 
 def policy_templates_for_findings(findings: list[dict]) -> list[dict]:

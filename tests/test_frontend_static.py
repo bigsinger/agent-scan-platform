@@ -341,8 +341,12 @@ def test_attack_path_visualization_uses_runtime_nodes():
     assert "{{node.findingId||'未关联 Finding'}}" in html
     assert "v-for=\"p in selectedAttackPathPolicyDrafts\"" in html
     assert "{{selectedAttackPathPolicyDrafts.length}} drafts" in html
+    assert "@click=\"exportPolicyDraftPackage\"" in html
+    assert "policyDraftExport" in html
     assert "外部文档<br><span" not in html
     assert "Agent Planner<br><span" not in html
+    assert "async exportPolicyDraftPackage" in app_js
+    assert "/api/v1/policy-drafts/export" in app_js
 
 
 def test_consent_bulk_decline_ui_is_api_backed():

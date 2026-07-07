@@ -130,6 +130,7 @@ data(){
     initial.backupDrillResult = null;
     initial.attackPaths = initial.attackPaths || [];
     initial.policyDrafts = initial.policyDrafts || [];
+    initial.policyDraftExport = null;
     initial.scheduleDraft = Object.assign({name:'本机变化扫描', type:'变化扫描', target:'已登记配置快照', target_path:'', trigger:'0 2 * * *', misfire:'跳过', status:'ACTIVE', profile:'quick-experience', max_backlog:1, max_files:100}, initial.scheduleDraft || {});
     initial.scheduleLastRun = null;
     initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
@@ -2341,6 +2342,18 @@ data(){
       if(!draft) return;
       if(draft.download) window.open(draft.download, '_blank', 'noopener');
       this.toastMsg('已请求下载策略草案 JSON');
+    },
+    async exportPolicyDraftPackage(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const pathId=this.selectedAttackPath && this.selectedAttackPath.id;
+        const suffix=pathId ? ('?attack_path_id='+encodeURIComponent(pathId)) : '';
+        const res=await this.apiGet('/api/v1/policy-drafts/export'+suffix);
+        this.policyDraftExport=res;
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.toastMsg('策略草案交付包已导出：'+((res.counts&&res.counts.policy_drafts)||0)+' 条');
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
     },
     async runSqliteBackup(){
       this.opsBusy=true; this.apiError='';
