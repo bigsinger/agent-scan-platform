@@ -2350,9 +2350,42 @@ def test_discovery_hit_asset_actions_are_persisted():
 
     exported = client.get("/api/v1/discovery-hits/export")
     assert exported.status_code == 200
-    assert exported.json()["format"] == "json"
-    assert exported.json()["artifact"]["relative_path"].endswith(".json")
-    assert exported.json()["counts"]["hits"] >= 1
+    export_body = exported.json()
+    assert export_body["format"] == "json"
+    assert export_body["schema"] == "agent-security-discovery-inventory@4.1"
+    assert export_body["artifact"]["relative_path"].endswith(".json")
+    assert export_body["counts"]["hits"] >= 1
+    assert export_body["validation"]["status"] in {"PASS", "WARN"}
+    assert export_body["safe_mode"] == "local-readonly"
+    assert export_body["mutates_installed_agents"] is False
+    assert export_body["stdio_mcp_started"] is False
+    assert export_body["agent_runtime_started"] is False
+
+    package = client.get(export_body["download"])
+    assert package.status_code == 200
+    inventory = package.json()
+    assert inventory["schema"] == "agent-security-discovery-inventory@4.1"
+    assert inventory["raw_sensitive_evidence"] == "not-included"
+    assert inventory["boundary"].startswith("发现清单导出只读取本系统 SQLite")
+    assert inventory["counts"]["hits"] >= 1
+    assert inventory["validation"]["checks"]
+    assert {check["id"] for check in inventory["validation"]["checks"]} >= {
+        "has_discovery_records",
+        "readonly_boundary",
+        "probe_evidence",
+        "artifact_integrity",
+        "no_agent_mutation",
+    }
+    assert all(item["mutates_installed_agents"] is False for item in inventory["hits"])
+    assert all(item["mutates_installed_agents"] is False for item in inventory["agents"])
+
+    with api_v1.get_store().connect() as conn:
+        audit = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (export_body["artifact"]["id"],),
+        ).fetchone()
+    assert audit["action"] == "get.discovery-hits.export"
+    assert json.loads(audit["payload_json"])["agent_runtime_started"] is False
 
 
 def test_mcp_static_inspection_persists_tool_flows(monkeypatch, tmp_path):

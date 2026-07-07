@@ -54,6 +54,7 @@
     state.quickHistorySummary = {};
     state.uploadResult = null;
     state.discoveryRunEvidence = '';
+    state.discoveryInventoryExport = null;
     state.skillScanResult = null;
     state.mcpInspection = null;
     state.scheduleLastRun = null;
@@ -78,6 +79,7 @@ data(){
     initial.quickBusy = false;
     initial.uploadResult = null;
     initial.discoveryRunEvidence = '';
+    initial.discoveryInventoryExport = null;
     initial.discoveryErrors = initial.discoveryErrors || [];
     initial.discoveryLog = initial.discoveryLog || [];
     initial.caseLibrary = initial.caseLibrary || [];
@@ -1808,8 +1810,16 @@ data(){
       this.opsBusy=true; this.apiError='';
       try {
         const res=await this.apiGet('/api/v1/discovery-hits/export');
-        this.downloadJson(res, 'agent-scan-platform-discovery-inventory.json');
-        this.toastMsg('发现清单已导出：'+(res.artifact&&res.artifact.id || '完成'));
+        this.discoveryInventoryExport=res;
+        if(res.download) window.open(res.download, '_blank', 'noopener');
+        this.discoveryLog=[
+          'inventory.export schema='+(res.schema||'agent-security-discovery-inventory@4.1'),
+          'validation='+(res.validation&&res.validation.status || 'UNKNOWN'),
+          'agents='+(res.counts&&res.counts.agents || 0)+' hits='+(res.counts&&res.counts.hits || 0)+' artifacts='+(res.counts&&res.counts.artifacts || 0),
+          'safe_mode='+(res.safe_mode||'local-readonly')+' mutates_installed_agents='+String(Boolean(res.mutates_installed_agents)),
+          res.download ? 'download='+res.download : 'download=not-generated'
+        ];
+        this.toastMsg('发现验收包已导出：'+(res.artifact&&res.artifact.id || '完成'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },

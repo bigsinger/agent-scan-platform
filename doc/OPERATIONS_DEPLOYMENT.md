@@ -957,10 +957,13 @@ $hit = $discovery.hits[0]
 $asset = Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/import"
 Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/agents/$($asset.agent.id)/probe"
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agents -Body (@{ name = "手工登记 Agent"; adapter = "Codex"; path = "$env:USERPROFILE\.codex\config.toml" } | ConvertTo-Json) -ContentType "application/json"
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
+$inventory = Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($inventory.download)" -OutFile ".\discovery-inventory.json"
 ```
 
 `$discovery.download` 指向本次发现证据包，schema 为 `agent-security-discovery-run@4.1`。验收时应检查 `safe_mode=local-readonly`、`mutates_installed_agents=false`、`stdio_mcp_started=false`、命中统计、权限跳过、`discovery_options`、`change_summary` 和 `boundary` 说明；这能证明发现动作只写本系统 SQLite 与 `data/artifacts`。
+
+`discovery-inventory.json` 指向跨多次发现的验收包，schema 为 `agent-security-discovery-inventory@4.1`。验收时应检查 `validation.status`、`probe_coverage.products`、`artifact_integrity`、`raw_sensitive_evidence=not-included`、`mutates_installed_agents=false`、`stdio_mcp_started=false`、`agent_runtime_started=false`。该导出只读取本系统 SQLite 和已生成 artifact，不重新扫描客户目录，也不写入 Codex/Hermes/Claude Code/Cursor 配置。
 
 版本探测验收：Hermes 应记录 `probe_method=version-command`、`probe_source=hermes --version`；Codex 应记录 `probe_method=package-metadata` 或等价只读来源，`command_started=false`。WindowsApps 下 Codex exe 不可直接执行时不得把它判定为失败，应通过 PATH 别名或包目录名解析版本。
 

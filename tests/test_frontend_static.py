@@ -258,12 +258,19 @@ def test_discovery_run_ui_exposes_current_evidence_download():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
     assert "下载本次证据" in html
+    assert "discoveryInventoryExport" in html
+    assert "最近导出：{{discoveryInventoryExport.schema}}" in html
     assert 'v-if="discoveryRunEvidence"' in html
     assert ':href="discoveryRunEvidence"' in html
     assert "discoveryRunEvidence" in app_js
+    assert "discoveryInventoryExport" in app_js
     assert "this.discoveryRunEvidence=res.download || (res.run&&res.run.download) || ''" in app_js
     assert "this.mergeRecords('discoveryRuns', [res.run])" in app_js
     assert "evidence='+this.discoveryRunEvidence" in app_js
+    assert "async exportDiscovery" in app_js
+    assert "/api/v1/discovery-hits/export" in app_js
+    assert "发现验收包已导出" in app_js
+    assert "window.open(res.download" in app_js
     assert 'v-model="form.discoveryAgentConfigs"' in html
     assert 'v-model="form.discoverySkills"' in html
     assert 'v-model="form.discoveryMcp"' in html

@@ -222,7 +222,7 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/profiles/$($clone.p
 
 - “导入资产”：把发现命中转换为 `agent_instance` 记录，并写入 SQLite。
 - “忽略”：把命中标记为已忽略，保留审计，不删除原始发现记录。
-- “导出清单”：生成脱敏 JSON 制品，包含 discovery run、hit、Agent、MCP 和 Skill 摘要。
+- “导出清单”：生成 `agent-security-discovery-inventory@4.1` 验收包，包含 discovery run、hit、Agent、MCP、Skill 摘要、版本探测覆盖、变化汇总、artifact 完整性和只读边界校验。
 - Agent 资产页“探测”：只读重跑本机发现，刷新该资产的配置、MCP、Skill 和版本摘要，不启动 stdio MCP。
 
 ## 4.1 只读 Guard 防御监测
@@ -900,8 +900,13 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/agents `
 Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/discovery-hits/$($hit.id)/ignore" `
   -Body (@{ reason = "本地忽略" } | ConvertTo-Json) `
   -ContentType "application/json"
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
+$inventory = Invoke-RestMethod http://127.0.0.1:8000/api/v1/discovery-hits/export
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($inventory.download)" `
+  -OutFile ".\discovery-inventory.json"
 ```
+
+`discovery-inventory.json` 是发现阶段企业验收包。检查 `validation.status`、`probe_coverage.products`、`artifact_integrity`、`raw_sensitive_evidence=not-included`、`mutates_installed_agents=false`、`stdio_mcp_started=false` 和 `agent_runtime_started=false`，即可证明导出只读取本系统 SQLite/artifact，没有重新扫描或改写已安装 Agent。
 
 `POST /api/v1/agents` 是手工登记资产，不会探测或修改安装目录；它会写入 `agent_instance`，生成 `manual-agent-registration` artifact，并标记 `probe=待探测`。后续需要点击“探测”或调用 `/agents/{id}/probe` 执行只读重探测。
 

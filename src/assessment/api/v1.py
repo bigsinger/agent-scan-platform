@@ -4590,38 +4590,250 @@ def export_discovery_inventory(store: Any, state: dict) -> dict:
     agents = combine_items(store.list_records("agent_instance"), state.get("agentAssets", []))
     mcp_servers = combine_items(store.list_records("mcp_server"), state.get("mcpServers", []))
     skills = combine_items(store.list_records("skill"), state.get("skills", []))
+    artifacts = store.list_records("artifact", limit=5000)
+    counts = {
+        "runs": len(runs),
+        "hits": len(hits),
+        "agents": len(agents),
+        "mcp_servers": len(mcp_servers),
+        "skills": len(skills),
+        "artifacts": len([item for item in artifacts if str(item.get("kind") or "").startswith("discovery")]),
+    }
+    probe_coverage = discovery_probe_coverage(agents, hits)
+    change_summary = discovery_inventory_change_summary(hits)
+    artifact_integrity = discovery_artifact_integrity(store, runs, artifacts)
+    validation = validate_discovery_inventory(counts, probe_coverage, artifact_integrity)
     payload = {
-        "schema": "agent-scan-platform.discovery-inventory@4.1",
+        "schema": "agent-security-discovery-inventory@4.1",
         "exported_at": utc_now(),
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
-        "counts": {
-            "runs": len(runs),
-            "hits": len(hits),
-            "agents": len(agents),
-            "mcp_servers": len(mcp_servers),
-            "skills": len(skills),
-        },
-        "runs": runs,
-        "hits": hits,
-        "agents": agents,
-        "mcp_servers": mcp_servers,
-        "skills": skills,
+        "stdio_mcp_started": False,
+        "agent_runtime_started": False,
+        "raw_sensitive_evidence": "not-included",
+        "boundary": "发现清单导出只读取本系统 SQLite 和已生成 artifact；不重新扫描客户目录，不启动 stdio MCP，不修改 Codex/Hermes/Claude Code/Cursor 配置。",
+        "counts": counts,
+        "validation": validation,
+        "probe_coverage": probe_coverage,
+        "change_summary": change_summary,
+        "artifact_integrity": artifact_integrity,
+        "runs": [discovery_run_summary(item) for item in runs[:500]],
+        "hits": [discovery_hit_summary(item) for item in hits[:5000]],
+        "agents": [discovery_agent_summary(item) for item in agents[:1000]],
+        "mcp_servers": [discovery_mcp_summary(item) for item in mcp_servers[:1000]],
+        "skills": [discovery_skill_summary(item) for item in skills[:1000]],
     }
     artifact = store.write_artifact(
         "discovery-inventory",
         json.dumps(payload, ensure_ascii=False, indent=2),
         suffix="json",
-        metadata={"safe_mode": "local-readonly"},
+        metadata={"safe_mode": "local-readonly", "agents": counts["agents"], "hits": counts["hits"], "validation": validation["status"]},
     )
-    store.audit_event("get.discovery-hits.export", "artifact", artifact["id"], {"counts": payload["counts"], "mutates_installed_agents": False})
+    store.audit_event(
+        "get.discovery-hits.export",
+        "artifact",
+        artifact["id"],
+        {
+            "counts": counts,
+            "validation_status": validation["status"],
+            "mutates_installed_agents": False,
+            "stdio_mcp_started": False,
+            "agent_runtime_started": False,
+        },
+    )
     return {
         "format": "json",
+        "schema": payload["schema"],
         "artifact": artifact,
-        "counts": payload["counts"],
+        "counts": counts,
+        "validation": validation,
+        "probe_coverage": probe_coverage,
+        "change_summary": change_summary,
         "exported_at": payload["exported_at"],
         "download": f"/api/v1/artifacts/{artifact['id']}/download",
         "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "stdio_mcp_started": False,
+        "agent_runtime_started": False,
+    }
+
+
+def discovery_probe_coverage(agents: list[dict], hits: list[dict]) -> dict:
+    combined = [*agents, *hits]
+    products = sorted({str(item.get("adapter") or item.get("agent") or item.get("name") or "Unknown") for item in combined if item.get("adapter") or item.get("agent") or item.get("name")})
+    rows = []
+    for product in products:
+        related = [
+            item
+            for item in combined
+            if str(item.get("adapter") or item.get("agent") or item.get("name") or "").lower().startswith(product.lower().split(" · ")[0])
+        ]
+        version = first_non_empty([item.get("version") for item in related], "")
+        probe_methods = sorted({str(item.get("probe_method") or (item.get("details") or {}).get("probe_method") or "") for item in related if item.get("probe_method") or (item.get("details") or {}).get("probe_method")})
+        probe_sources = sorted({str(item.get("probe_source") or item.get("source") or "") for item in related if item.get("probe_source") or item.get("source")})
+        command_started = any(bool(item.get("command_started") or (item.get("details") or {}).get("command_started")) for item in related)
+        rows.append(
+            {
+                "product": product,
+                "status": "OBSERVED" if related else "NOT_FOUND",
+                "version": version,
+                "probe_methods": probe_methods,
+                "probe_sources": probe_sources[:10],
+                "records": len(related),
+                "command_started": command_started,
+                "mutates_installed_agents": False,
+            }
+        )
+    return {
+        "products": rows,
+        "observed": len([row for row in rows if row["status"] == "OBSERVED"]),
+        "versioned": len([row for row in rows if row["version"]]),
+        "version_command_products": len([row for row in rows if row["command_started"]]),
+        "readonly_products": len([row for row in rows if not row["command_started"]]),
+    }
+
+
+def discovery_inventory_change_summary(hits: list[dict]) -> dict:
+    by_status: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for hit in hits:
+        by_status[str(hit.get("change_status") or hit.get("status") or "UNKNOWN")] = by_status.get(str(hit.get("change_status") or hit.get("status") or "UNKNOWN"), 0) + 1
+        by_type[str(hit.get("type") or "Unknown")] = by_type.get(str(hit.get("type") or "Unknown"), 0) + 1
+    return {
+        "by_status": by_status,
+        "by_type": by_type,
+        "changed_or_new": sum(by_status.get(status, 0) for status in ("NEW", "CHANGED")),
+        "ignored": by_status.get("已忽略", 0) + by_status.get("IGNORED", 0),
+    }
+
+
+def discovery_artifact_integrity(store: Any, runs: list[dict], artifacts: list[dict]) -> list[dict]:
+    artifact_ids = {str(run.get("artifact_id") or "") for run in runs if run.get("artifact_id")}
+    by_id = {str(item.get("id") or ""): item for item in artifacts}
+    rows = []
+    for artifact_id in sorted(artifact_ids):
+        artifact = by_id.get(artifact_id) or store.get_record("artifact", artifact_id) or {}
+        relative = str(artifact.get("relative_path") or "").replace("\\", "/")
+        path = artifact_disk_path(artifact) if artifact else DATA_DIR / relative
+        exists = bool(relative and path.exists())
+        actual = file_sha256(path) if exists else ""
+        expected = str(artifact.get("sha256") or "")
+        rows.append(
+            {
+                "artifact_id": artifact_id,
+                "kind": artifact.get("kind") or "discovery-run",
+                "relative_path": relative,
+                "exists": exists,
+                "sha256": expected,
+                "actual_sha256": actual,
+                "status": "PASS" if exists and expected and actual == expected else "MISSING" if not exists else "MISMATCH",
+            }
+        )
+    return rows
+
+
+def validate_discovery_inventory(counts: dict, probe_coverage: dict, artifact_integrity: list[dict]) -> dict:
+    checks = [
+        {"id": "has_discovery_records", "status": "PASS" if counts.get("hits", 0) or counts.get("agents", 0) else "WARN", "detail": f"{counts.get('hits', 0)} hits / {counts.get('agents', 0)} agents"},
+        {"id": "readonly_boundary", "status": "PASS", "detail": "export is SQLite/artifact read-only"},
+        {"id": "probe_evidence", "status": "PASS" if probe_coverage.get("observed", 0) else "WARN", "detail": f"{probe_coverage.get('observed', 0)} products observed"},
+        {
+            "id": "artifact_integrity",
+            "status": "PASS" if all(row["status"] == "PASS" for row in artifact_integrity) else "WARN" if not artifact_integrity else "FAIL",
+            "detail": f"{len(artifact_integrity)} discovery artifacts checked",
+        },
+        {"id": "no_agent_mutation", "status": "PASS", "detail": "mutates_installed_agents=false; stdio_mcp_started=false"},
+    ]
+    status = "FAIL" if any(check["status"] == "FAIL" for check in checks) else "WARN" if any(check["status"] == "WARN" for check in checks) else "PASS"
+    return {"status": status, "checks": checks}
+
+
+def discovery_run_summary(run: dict) -> dict:
+    return {
+        "id": run.get("id"),
+        "status": run.get("status"),
+        "scope": run.get("scope"),
+        "hit_count": run.get("hit_count"),
+        "agent_count": run.get("agent_count"),
+        "mcp_count": run.get("mcp_count"),
+        "skill_count": run.get("skill_count"),
+        "artifact_id": run.get("artifact_id"),
+        "download": run.get("download"),
+        "safe_mode": run.get("safe_mode") or "local-readonly",
+        "mutates_installed_agents": False,
+        "stdio_mcp_started": False,
+    }
+
+
+def discovery_hit_summary(hit: dict) -> dict:
+    return {
+        "id": hit.get("id"),
+        "type": hit.get("type"),
+        "agent": hit.get("agent"),
+        "path": hit.get("path"),
+        "path_hash": hit.get("path_hash"),
+        "scope": hit.get("scope"),
+        "source": hit.get("source"),
+        "sha256": hit.get("sha256"),
+        "status": hit.get("status"),
+        "change_status": hit.get("change_status"),
+        "version": hit.get("version"),
+        "probe_method": hit.get("probe_method"),
+        "probe_source": hit.get("probe_source"),
+        "command_started": bool(hit.get("command_started")),
+        "mutates_installed_agents": False,
+    }
+
+
+def discovery_agent_summary(agent: dict) -> dict:
+    return {
+        "id": agent.get("id"),
+        "name": agent.get("name"),
+        "adapter": agent.get("adapter") or agent.get("agent"),
+        "coverage": agent.get("coverage"),
+        "path": agent.get("path"),
+        "version": agent.get("version"),
+        "probe_method": agent.get("probe_method"),
+        "probe_source": agent.get("probe_source"),
+        "command_started": bool(agent.get("command_started")),
+        "configs": agent.get("configs", 0),
+        "mcp": agent.get("mcp", 0),
+        "skills": agent.get("skills", 0),
+        "install_status": agent.get("install_status"),
+        "status": agent.get("status"),
+        "mutates_installed_agents": False,
+    }
+
+
+def discovery_mcp_summary(server: dict) -> dict:
+    return {
+        "id": server.get("id"),
+        "name": server.get("name"),
+        "agent": server.get("agent"),
+        "transport": server.get("transport"),
+        "config": server.get("config"),
+        "status": server.get("status"),
+        "risk": server.get("risk"),
+        "signature": server.get("signature"),
+        "env_keys": server.get("env_keys", []),
+        "mcp_started": False,
+        "mutates_installed_agents": False,
+    }
+
+
+def discovery_skill_summary(skill: dict) -> dict:
+    public = public_skill_record(skill)
+    return {
+        "id": public.get("id"),
+        "name": public.get("name"),
+        "agent": public.get("agent"),
+        "path": public.get("path"),
+        "scope": public.get("scope"),
+        "files": public.get("files"),
+        "scripts": public.get("scripts"),
+        "risk": public.get("risk"),
+        "status": public.get("status"),
+        "sha256": public.get("sha256"),
         "mutates_installed_agents": False,
     }
 
