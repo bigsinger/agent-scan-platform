@@ -923,6 +923,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.asses
 
 任务列表底部的队列状态按当前任务、Job、进程、待审批 MCP 和执行槽计算；恢复提示按失败 Job、失败进程、停止请求和报告错误计算。运维验收时不得接受固定 `2/3/1/0/2` 或固定“服务上次正常关闭”文案作为运行状态证据。
 
+任务列表顶部搜索、状态、Adapter 和时间窗口下拉只过滤当前 `/api/v1/tasks` 返回并已加载到页面的任务记录。验收时可先运行快速扫描生成任务，再按任务 ID、目标、Adapter 或状态筛选；筛选本身不得触发扫描、重试、取消、外部进程或 SQLite 写入。
+
 任务详情页的 Job、事件流和审批页签按当前任务关联的 `scan_job` / `process_execution`、`scan_event`、`mcp_consent` 记录计算。运维验收时不得接受固定 `job_006`、`1841/1842` 或固定“当前 2 个 stdio MCP Server”等演示值作为运行状态证据。
 
 任务详情页支持 `/assessment/tasks/{id}` 深链，打开深链后前端会按任务 ID 选中任务并刷新事件流。企业演示和问题复现时应直接记录该 URL、任务 ID 和对应 `scan_event` 序号。

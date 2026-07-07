@@ -704,6 +704,24 @@ def test_task_queue_status_is_runtime_backed():
     assert "当前无待恢复 Job、失败进程或可重试报告" in app_js
 
 
+def test_task_list_filters_are_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "taskFilterText" in app_js
+    assert "taskFilterStatus" in app_js
+    assert "taskFilterAdapter" in app_js
+    assert "taskFilterWindow" in app_js
+    assert "filteredTasks(){" in app_js
+    assert 'v-model="taskFilterText"' in html
+    assert 'v-model="taskFilterStatus"' in html
+    assert 'v-model="taskFilterAdapter"' in html
+    assert 'v-model="taskFilterWindow"' in html
+    assert 'v-for="t in filteredTasks"' in html
+    assert "筛选 {{filteredTasks.length}} / {{tasks.length}}" in html
+    assert "当前筛选条件下没有测评任务" in html
+    assert "暂无测评任务。请先运行快速扫描" in html
+
+
 def test_task_detail_findings_and_evidence_tabs_are_data_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

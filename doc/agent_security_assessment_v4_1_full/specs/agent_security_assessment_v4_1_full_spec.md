@@ -2373,6 +2373,8 @@ AI 编码代理实现本页时不得：
 
 `task, task_stage, task_event`
 
+当前本地实现中，任务列表搜索框、状态、Adapter 和时间窗口下拉直接过滤当前 `tasks` 运行态数据。筛选字段覆盖任务名、ID、目标、Adapter、模板、阶段、状态和重试来源；筛选只改变页面视图，不写 SQLite、不启动任务、不终止或修改已安装 Agent/MCP。
+
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
 ## 6. 必须覆盖状态

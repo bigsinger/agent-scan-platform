@@ -788,6 +788,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($sync.sync.download)" -OutFile re
 
 任务列表底部“队列状态”和“恢复提示”来自当前 `task`、`scan_job`、`process_execution`、`mcp_consent`、`report` 与 `execution-supervisor` 状态，不再显示固定运行数、等待数、可用槽或固定恢复文案。无失败 Job、失败进程和可重试报告时显示真实空态。
 
+任务列表顶部搜索、状态、Adapter 和时间窗口筛选只过滤当前已加载的 `tasks` 运行态数据，不会创建、重试、取消或启动任何任务。它用于在企业测评现场按目标、任务 ID、状态、Adapter 或最近时间快速定位记录。
+
 重试和取消都只影响本系统 SQLite 任务记录，不启动、不终止、不修改 Codex、Hermes、Claude Code、Cursor 或 stdio MCP Server。
 
 ## 10. API 使用示例

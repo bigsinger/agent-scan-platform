@@ -81,6 +81,10 @@
     state.integrationExportDownload = '';
     state.reportSyncLastDownload = '';
     state.reportPackageExport = null;
+    state.taskFilterText = '';
+    state.taskFilterStatus = '全部状态';
+    state.taskFilterAdapter = '全部 Adapter';
+    state.taskFilterWindow = '全部';
     state.redteamCaseDetail = null;
     state.apiDebugOpenapi = null;
     state.apiDebugSummary = {};
@@ -215,6 +219,10 @@ data(){
     initial.reportPreviewData = initial.reportPreviewData || null;
     initial.reportSyncLastDownload = '';
     initial.reportPackageExport = null;
+    initial.taskFilterText = '';
+    initial.taskFilterStatus = '全部状态';
+    initial.taskFilterAdapter = '全部 Adapter';
+    initial.taskFilterWindow = '全部';
     initial.selectedRetest = initial.selectedRetest || ((initial.retests || [])[0]) || {};
     initial.retestDiff = initial.retestDiff || null;
     initial.selectedFindingHistory = initial.selectedFindingHistory || [];
@@ -309,6 +317,54 @@ data(){
         reportRetries,
         stopRequests
       };
+    },
+    filteredTasks(){
+      const keyword=String(this.taskFilterText || '').trim().toLowerCase();
+      const status=String(this.taskFilterStatus || '全部状态');
+      const adapter=String(this.taskFilterAdapter || '全部 Adapter');
+      const timeWindow=String(this.taskFilterWindow || '全部');
+      const normalize=value=>String(value || '').toLowerCase().replace(/[^a-z0-9]+/g,'');
+      const statusMatches=(task) => {
+        if(status === '全部状态') return true;
+        const raw=[task.status, task.state, task.state_code, task.stage].map(v=>String(v || '')).join(' ');
+        if(status === '运行中') return ['RUNNING','运行中'].some(token=>raw.includes(token));
+        if(status === '等待审批') return ['WAITING_CONSENT','等待审批'].some(token=>raw.includes(token));
+        if(status === '已完成') return ['COMPLETED','READY','已完成'].some(token=>raw.includes(token));
+        if(status === '部分完成') return ['PARTIAL','部分完成'].some(token=>raw.includes(token));
+        if(status === '失败') return ['FAILED','FAIL','ERROR','TIMEOUT','OOM','失败','超时'].some(token=>raw.includes(token));
+        return true;
+      };
+      const windowMatches=(task) => {
+        if(timeWindow === '全部') return true;
+        const days=timeWindow === '最近 7 天' ? 7 : (timeWindow === '最近 30 天' ? 30 : 0);
+        if(!days) return true;
+        const raw=task.updated_at || task.created_at || task.time || task.started_at || task.completed_at || '';
+        const timestamp=Date.parse(raw);
+        if(Number.isNaN(timestamp)) return false;
+        return Date.now() - timestamp <= days * 24 * 60 * 60 * 1000;
+      };
+      return (this.tasks || []).filter(task => {
+        if(adapter !== '全部 Adapter') {
+          const adapterText=normalize([task.adapter, task.agent, task.target, task.name].join(' '));
+          if(!adapterText.includes(normalize(adapter))) return false;
+        }
+        if(!statusMatches(task) || !windowMatches(task)) return false;
+        if(!keyword) return true;
+        const haystack=[
+          task.id,
+          task.name,
+          task.target,
+          task.adapter,
+          task.profile,
+          task.stage,
+          task.status,
+          task.state,
+          task.state_code,
+          task.source_task_id,
+          task.retry_of
+        ].map(value=>String(value || '').toLowerCase()).join(' ');
+        return haystack.includes(keyword);
+      });
     },
     timeoutProcessCount(){
       return (this.processes || []).filter(p=>String(p.status||'').includes('TIMEOUT')).length;
