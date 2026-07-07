@@ -306,6 +306,64 @@ def test_defense_recommendation_lifecycle_is_sqlite_backed_and_readonly(monkeypa
     assert "defense_recommendation.dismissed" in {event["action"] for event in package_json["history"]["rec_contract_guard"]}
 
 
+def test_guard_preflight_evaluation_is_policy_backed_and_readonly(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "guard-preflight.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.post(
+        "/api/v1/guard/evaluate",
+        json={"action": "process", "command": "hermes --version && echo token=super-secret-token"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    evaluation = payload["evaluation"]
+    assert evaluation["schema"] == "agent-security-guard-preflight-decision@4.1"
+    assert evaluation["action"] == "process"
+    assert evaluation["decision"] == "DENY"
+    assert evaluation["outcome"] == "BLOCKED"
+    assert evaluation["command_executed"] is False
+    assert evaluation["network_request_sent"] is False
+    assert evaluation["agent_runtime_started"] is False
+    assert evaluation["stdio_mcp_started"] is False
+    assert payload["mutates_installed_agents"] is False
+    assert payload["policy_decision"]["actual"] == "DENY"
+    assert payload["policy_decision"]["status"] == "PASS"
+    assert store.get_record("policy_decision", payload["policy_decision"]["id"]) is not None
+    assert store.get_record("guard_event", payload["event"]["id"])["type"] == "preflight_decision"
+
+    artifact = client.get(payload["download"])
+    assert artifact.status_code == 200
+    artifact_json = artifact.json()
+    assert artifact_json["schema"] == "agent-security-guard-preflight-decision@4.1"
+    assert artifact_json["command_executed"] is False
+    assert artifact_json["stdio_mcp_started"] is False
+    assert artifact_json["raw_sensitive_evidence"] == "not-included"
+    assert "super-secret-token" not in artifact.text
+    assert "<REDACTED>" in artifact.text
+
+    mcp = client.post(
+        "/api/v1/guard/evaluate",
+        json={"action": "mcp_stdio", "target": "C:/Program Files/WindowsApps/OpenAI.Codex/app/Codex.exe mcp"},
+    )
+    assert mcp.status_code == 200
+    mcp_body = mcp.json()
+    assert mcp_body["evaluation"]["decision"] == "REQUIRE_CONSENT"
+    assert mcp_body["evaluation"]["outcome"] == "REQUIRES_APPROVAL"
+    assert mcp_body["evaluation"]["stdio_mcp_started"] is False
+
+    with store.connect() as conn:
+        audit = conn.execute(
+            "SELECT action, payload_json FROM audit_event WHERE object_id=? ORDER BY seq DESC LIMIT 1",
+            (payload["event"]["id"],),
+        ).fetchone()
+    assert audit["action"] == "guard.evaluate"
+    audit_payload = json.loads(audit["payload_json"])
+    assert audit_payload["command_executed"] is False
+    assert audit_payload["stdio_mcp_started"] is False
+
+
 def test_finding_false_positive_candidate_is_api_backed_and_audited(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "finding-false-positive.db")
     store.initialize()

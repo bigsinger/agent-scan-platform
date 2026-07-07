@@ -131,6 +131,19 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($guard.download)" -OutFile passiv
 
 `guard/check` 会写入 `guard_event`、`defense_recommendation` 和 `passive-guard-check` artifact。artifact 中必须能看到 `safe_mode=local-readonly`、`mutates_installed_agents=false`、`starts_stdio_mcp=false`，用于证明检查没有改写 Codex/Hermes/MCP 配置，也没有启动 stdio MCP。
 
+执行前防护判定：
+
+```powershell
+$preflight = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/guard/evaluate `
+  -Body (@{ action = "mcp_stdio"; target = "codex mcp server" } | ConvertTo-Json) `
+  -ContentType "application/json"
+$preflight.evaluation.outcome
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($preflight.download)" -OutFile guard-preflight-decision.json
+```
+
+`guard/evaluate` 是策略判定接口，不是执行接口。运维验收时应确认返回和 artifact 中 `schema=agent-security-guard-preflight-decision@4.1`、`command_executed=false`、`network_request_sent=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`、`mutates_installed_agents=false`。常用动作包括 `process`、`mcp_stdio`、`network`、`path_read`、`path_write` 和 `env`；命令、路径、环境变量会脱敏后写入 `policy_decision` 和审计事件。
+
 防御建议处理和交付包：
 
 ```powershell
@@ -1090,9 +1103,10 @@ python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8765
 当前 schema 使用通用 JSON 行表，升级风险较低，但仍必须备份。Guard 防御监测相关数据落在：
 
 - `config_snapshot`：Agent 配置、MCP、Skill 的路径哈希与 SHA-256 基线。
-- `guard_event`：每次只读 Guard 检查的统计结果、artifact ID 与下载路径。
+- `guard_event`：每次只读 Guard 检查和执行前防护判定的统计结果、artifact ID 与下载路径。
+- `policy_decision`：沙箱自测和 `guard/evaluate` 产生的路径、网络、进程、stdio MCP 与环境变量判定记录。
 - `defense_recommendation`：配置变化、stdio MCP 审批等防御建议。
-- `artifact`：`passive-guard-check` JSON 证据快照，可用于企业 POC 留痕。
+- `artifact`：`passive-guard-check` 与 `guard-preflight-decision` JSON 证据快照，可用于企业 POC 留痕。
 
 第三方与许可证导出相关数据落在：
 

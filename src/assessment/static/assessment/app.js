@@ -45,6 +45,10 @@
     discoveryMcp:true,
     discoveryChangesOnly:false
   };
+  const defaultGuardPreflight = {
+    action:'process',
+    target:'hermes --version'
+  };
   function resetRuntimeCollections(state) {
     runtimeListKeys.forEach(key => { state[key] = []; });
     runtimeObjectKeys.forEach(key => { state[key] = {}; });
@@ -65,6 +69,9 @@
     state.completenessSummary = {};
     state.executionLog = null;
     state.executionTermination = null;
+    state.guardPreflight = Object.assign({}, defaultGuardPreflight, state.guardPreflight || {});
+    state.guardPreflightResult = null;
+    state.guardPreflightDownload = '';
     state.defenseRecommendationExport = null;
   }
   try {
@@ -101,6 +108,9 @@ data(){
     initial.sqliteStatus = initial.sqliteStatus || {file_bytes:0, mode:'WAL', state:'未知', pragma:{}};
     initial.guardStatus = initial.guardStatus || {state:'NO_BASELINE', watched_files:0, open_recommendations:0, policy:{}};
     initial.guardLastDownload = initial.guardLastDownload || initial.guardStatus.last_download || '';
+    initial.guardPreflight = Object.assign({}, defaultGuardPreflight, initial.guardPreflight || {});
+    initial.guardPreflightResult = null;
+    initial.guardPreflightDownload = '';
     initial.defenseRecommendations = initial.defenseRecommendations || [];
     initial.defenseRecommendationExport = null;
     initial.supervisorStatus = initial.supervisorStatus || {state:'IDLE', status:'ok', queue:0, process_count:0, slots:{running:0,max:2,available:2}, safe_mode:false};
@@ -2089,6 +2099,27 @@ data(){
         this.toastMsg('只读 Guard 检查完成：变化 '+((res.event&&res.event.changed)||0)+'，建议 '+((res.event&&res.event.recommendations)||0));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.quickBusy=false; }
+    },
+    async evaluateGuardPreflight(){
+      const draft=this.guardPreflight || {};
+      const action=draft.action || 'process';
+      const payload={action:action, target:draft.target || ''};
+      if(action==='network') payload.url=draft.target || '';
+      if(action==='path_read' || action==='path_write') payload.path=draft.target || '';
+      if(action==='process') payload.command=draft.target || '';
+      if(action==='mcp_stdio') { payload.transport='stdio'; payload.command=draft.target || ''; }
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/guard/evaluate', payload);
+        this.guardPreflightResult=res.evaluation || null;
+        this.guardPreflightDownload=res.download || (res.evaluation && res.evaluation.download) || '';
+        if(res.policy_decision){
+          this.sandboxPolicyDecisions=[res.policy_decision].concat((this.sandboxPolicyDecisions || []).filter(x=>x.id!==res.policy_decision.id)).slice(0,50);
+        }
+        if(res.guard) this.guardStatus=res.guard;
+        this.toastMsg('执行前判定：'+((res.evaluation&&res.evaluation.outcome) || (res.decision&&res.decision.decision) || 'DONE'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
     },
     downloadGuardEvidence(){
       const url=this.guardLastDownload || (this.guardStatus && this.guardStatus.last_download);

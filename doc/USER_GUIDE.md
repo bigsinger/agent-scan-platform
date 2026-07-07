@@ -254,6 +254,19 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/guard/status
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($guard.download)" -OutFile passive-guard-check.json
 ```
 
+执行前防护判定：
+
+```powershell
+$decision = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/guard/evaluate `
+  -Body (@{ action = "process"; command = "hermes --version" } | ConvertTo-Json) `
+  -ContentType "application/json"
+$decision.evaluation.outcome
+Invoke-WebRequest -Uri "http://127.0.0.1:8000$($decision.download)" -OutFile guard-preflight-decision.json
+```
+
+`guard/evaluate` 支持 `process`、`mcp_stdio`、`network`、`path_read`、`path_write` 和 `env`。接口只调用本系统沙箱策略判定器，写入 `policy_decision`、`guard_event`、`audit_event` 和 `guard-preflight-decision` artifact；不会运行 `hermes --version`，不会发送网络请求，不会启动 stdio MCP，也不会改写 Codex/Hermes 配置。总览页“只判定不执行”按钮使用同一接口，适合在企业测评时证明执行前拦截、审批和脱敏策略真实生效。
+
 防御建议闭环：
 
 ```powershell

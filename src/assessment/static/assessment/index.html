@@ -56,6 +56,15 @@
       <div class="metric"><div class="metric-label">最近检查</div><div class="metric-value" style="font-size:14px">{{guardLastCheckDisplay}}</div></div>
     </div>
     <div class="callout green">防御策略：不启动 stdio MCP、不注入 Hook、不改写配置，只进行本地只读发现、哈希比对、审批建议和报告留痕。</div>
+    <div class="form-grid" style="margin-top:12px">
+      <div class="field"><label>执行前判定</label><select v-model="guardPreflight.action"><option value="process">外部进程</option><option value="mcp_stdio">stdio MCP</option><option value="network">网络 URL</option><option value="path_read">读取路径</option><option value="path_write">写入路径</option></select></div>
+      <div class="field full"><label>目标 / 命令 / URL / 路径</label><input v-model="guardPreflight.target" placeholder="例如 hermes --version、stdio MCP 命令、host.example 或本机路径"></div>
+      <div class="field"><label>策略动作</label><button class="btn primary" :disabled="opsBusy" @click="evaluateGuardPreflight">只判定不执行</button></div>
+    </div>
+    <div v-if="guardPreflightResult" :class="['callout',guardPreflightResult.outcome==='BLOCKED'?'red':guardPreflightResult.outcome==='REQUIRES_APPROVAL'?'amber':'green']" style="margin-top:10px">
+      执行前判定：{{guardPreflightResult.outcome}} · {{guardPreflightResult.decision}} · {{guardPreflightResult.target}}
+      <a v-if="guardPreflightDownload" :href="guardPreflightDownload" target="_blank" rel="noopener">下载证据</a>
+    </div>
     <div class="table-wrap" style="margin-top:12px">
       <table><thead><tr><th>建议</th><th>Agent / 类型</th><th>严重度</th><th>状态</th><th>边界</th><th>操作</th></tr></thead><tbody>
         <tr v-for="rec in defenseRecommendationRows.slice(0,8)" :key="rec.id">

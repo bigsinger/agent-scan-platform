@@ -324,6 +324,12 @@ async def guard_check() -> dict:
     return PassiveGuard(get_store()).check()
 
 
+@router.post("/guard/evaluate")
+async def guard_evaluate(body: dict | None = Body(default=None)) -> dict:
+    store = get_store()
+    return evaluate_guard_preflight(store, store.get_state(), body or {})
+
+
 @router.get("/database/status")
 async def database_status() -> dict:
     return get_store().database_status()
@@ -3359,6 +3365,260 @@ def run_sandbox_policy_test(store: Any, state: dict, body: dict) -> dict:
     return result
 
 
+def evaluate_guard_preflight(store: Any, state: dict, body: dict) -> dict:
+    policy = load_sandbox_policy(store, state)
+    action = normalize_guard_preflight_action(str(body.get("action") or body.get("type") or "process"))
+    decision = guard_preflight_decision(policy, action, body)
+    outcome = guard_preflight_outcome(str(decision.get("decision") or "DENY"))
+    checked_at = utc_now()
+    evaluation_id = new_id("gpf")
+    policy_decision = {
+        "id": "dec_" + stable_hash(f"{evaluation_id}:{action}:{decision.get('target')}", 24),
+        "guard_evaluation_id": evaluation_id,
+        "policy_id": policy.get("id"),
+        "check_id": f"guard.preflight.{action}",
+        "category": "Guard 执行前防护",
+        "name": guard_preflight_name(action),
+        "expected": "POLICY_ENFORCED",
+        "actual": decision.get("decision"),
+        "outcome": outcome,
+        "status": "PASS",
+        "detail": decision.get("detail", ""),
+        "target": decision.get("target", ""),
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "external_process_started": False,
+        "network_request_sent": False,
+        "checked_at": checked_at,
+        "created_at": checked_at,
+    }
+    stored_decision = store.upsert_record("policy_decision", policy_decision, status=policy_decision["status"])
+    evaluation = {
+        "id": evaluation_id,
+        "schema": "agent-security-guard-preflight-decision@4.1",
+        "action": action,
+        "policy_id": policy.get("id"),
+        "decision": decision.get("decision"),
+        "outcome": outcome,
+        "status": outcome,
+        "target": decision.get("target", ""),
+        "detail": decision.get("detail", ""),
+        "policy_decision_id": stored_decision["id"],
+        "checked_at": checked_at,
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "command_executed": False,
+        "network_request_sent": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "raw_sensitive_evidence": "not-included",
+    }
+    payload = {
+        "schema": evaluation["schema"],
+        "evaluation": evaluation,
+        "request": redacted_guard_preflight_request(action, body, decision),
+        "decision": decision,
+        "policy_decision": stored_decision,
+        "policy": redacted_sandbox_policy_payload(policy),
+        "boundary": "Guard 执行前判定只评估本系统沙箱策略并写入 SQLite/artifact；不执行命令、不发送网络请求、不启动 stdio MCP、不修改已安装 Agent。",
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "command_executed": False,
+        "network_request_sent": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "raw_sensitive_evidence": "not-included",
+    }
+    artifact = store.write_artifact(
+        "guard-preflight-decision",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "guard_evaluation_id": evaluation_id,
+            "policy_decision_id": stored_decision["id"],
+            "outcome": outcome,
+            "safe_mode": "policy-evaluation-only",
+            "mutates_installed_agents": False,
+        },
+    )
+    evaluation.update(
+        {
+            "artifact_id": artifact["id"],
+            "artifact_path": artifact.get("relative_path", ""),
+            "download": f"/api/v1/artifacts/{artifact['id']}/download",
+        }
+    )
+    event = {
+        "id": new_id("grd"),
+        "status": outcome,
+        "type": "preflight_decision",
+        "created_at": checked_at,
+        "action": action,
+        "decision": decision.get("decision"),
+        "target": decision.get("target", ""),
+        "policy_decision_id": stored_decision["id"],
+        "artifact_id": artifact["id"],
+        "artifact_path": artifact.get("relative_path", ""),
+        "download": evaluation["download"],
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "command_executed": False,
+        "network_request_sent": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "evidence_schema": evaluation["schema"],
+    }
+    store.upsert_record("guard_event", event, status=outcome)
+    store.audit_event(
+        "guard.evaluate",
+        "guard_event",
+        event["id"],
+        {
+            "action": action,
+            "decision": decision.get("decision"),
+            "outcome": outcome,
+            "target": decision.get("target", ""),
+            "artifact_id": artifact["id"],
+            "safe_mode": "policy-evaluation-only",
+            "mutates_installed_agents": False,
+            "command_executed": False,
+            "network_request_sent": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+        },
+    )
+    return {
+        "evaluation": evaluation,
+        "decision": decision,
+        "policy_decision": stored_decision,
+        "event": event,
+        "artifact": artifact,
+        "download": evaluation["download"],
+        "guard": PassiveGuard(store).status(),
+        "safe_mode": "policy-evaluation-only",
+        "mutates_installed_agents": False,
+        "command_executed": False,
+        "network_request_sent": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+    }
+
+
+def normalize_guard_preflight_action(value: str) -> str:
+    text = value.strip().lower().replace("-", "_")
+    aliases = {
+        "path": "path_read",
+        "read": "path_read",
+        "file_read": "path_read",
+        "write": "path_write",
+        "file_write": "path_write",
+        "url": "network",
+        "http": "network",
+        "subprocess": "process",
+        "command": "process",
+        "cmd": "process",
+        "stdio": "mcp_stdio",
+        "mcp": "mcp_stdio",
+        "mcp_stdio": "mcp_stdio",
+        "env_var": "env",
+        "environment": "env",
+    }
+    normalized = aliases.get(text, text)
+    if normalized not in {"path_read", "path_write", "network", "process", "mcp_stdio", "env"}:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "unsupported guard preflight action",
+                "validation_errors": [{"field": "action", "message": "use path_read, path_write, network, process, mcp_stdio or env"}],
+                "safe_mode": "policy-evaluation-only",
+                "mutates_installed_agents": False,
+            },
+        )
+    return normalized
+
+
+def guard_preflight_decision(policy: dict, action: str, body: dict) -> dict:
+    target = body.get("target")
+    if action == "path_read":
+        return sandbox_path_decision(policy, "read", str(body.get("path") or target or ""))
+    if action == "path_write":
+        return sandbox_path_decision(policy, "write", str(body.get("path") or target or ""))
+    if action == "network":
+        return sandbox_network_decision(policy, str(body.get("url") or target or ""))
+    if action == "process":
+        return sandbox_process_decision(policy, str(body.get("command") or target or ""))
+    if action == "mcp_stdio":
+        decision = sandbox_mcp_decision(policy, str(body.get("transport") or "stdio").lower() or "stdio")
+        command = str(body.get("command") or target or "")
+        if command:
+            decision["detail"] = f"{decision.get('detail', '')}; command={redact_command_text(command, max_len=300)}"
+        return decision
+    env = body.get("env")
+    if not isinstance(env, dict):
+        env = parse_env_text(str(body.get("env_text") or target or ""))
+    return sandbox_env_decision(policy, env)
+
+
+def guard_preflight_outcome(decision: str) -> str:
+    if decision == "DENY":
+        return "BLOCKED"
+    if decision == "REQUIRE_CONSENT":
+        return "REQUIRES_APPROVAL"
+    if decision == "REDACT":
+        return "REDACTED"
+    if decision.startswith("ALLOW"):
+        return "ALLOWED"
+    return "REVIEW"
+
+
+def guard_preflight_name(action: str) -> str:
+    return {
+        "path_read": "路径读取判定",
+        "path_write": "路径写入判定",
+        "network": "网络访问判定",
+        "process": "外部进程判定",
+        "mcp_stdio": "stdio MCP 启动判定",
+        "env": "环境变量脱敏判定",
+    }.get(action, "执行前判定")
+
+
+def parse_env_text(raw: str) -> dict:
+    env: dict[str, str] = {}
+    for line in raw.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            env[key] = value.strip()
+    return env
+
+
+def redacted_guard_preflight_request(action: str, body: dict, decision: dict) -> dict:
+    request = {
+        "action": action,
+        "target": decision.get("target", ""),
+        "safe_mode": "policy-evaluation-only",
+        "raw_sensitive_evidence": "not-included",
+    }
+    for key in ("transport", "url"):
+        if body.get(key):
+            request[key] = redact_text(str(body.get(key)), max_len=300)
+    if body.get("command"):
+        request["command"] = redact_command_text(str(body.get("command")), max_len=300)
+    elif body.get("target") and action in {"process", "mcp_stdio"}:
+        request["command"] = redact_command_text(str(body.get("target")), max_len=300)
+    if action.startswith("path") and (body.get("path") or body.get("target")):
+        request["path"] = decision.get("target", "")
+    if isinstance(body.get("env"), dict):
+        request["env"] = {str(key): "<REDACTED>" if value else "" for key, value in body["env"].items()}
+    if body.get("env_text"):
+        request["env"] = {key: "<REDACTED>" for key in parse_env_text(str(body.get("env_text")))}
+    return request
+
+
 def sandbox_policy_self_tests(policy: dict, test_run_id: str, checked_at: str) -> list[dict]:
     stdio_policy = str(policy.get("process", {}).get("stdio_mcp", "per-server-consent")).lower()
     mcp_expected = "DENY" if stdio_policy in {"never-start", "deny", "blocked"} else "REQUIRE_CONSENT"
@@ -3437,10 +3697,19 @@ def sandbox_network_decision(policy: dict, url: str) -> dict:
     return {"decision": "ALLOW", "target": host, "detail": "host allowlisted"}
 
 
+def redact_command_text(command: str, max_len: int = 800) -> str:
+    text = redact_text(str(command), max_len=max_len).replace("\\", "/")
+    for root, label in ((REPO_ROOT, "<workspace>"), (DATA_DIR, "data"), (Path.home(), "<home>")):
+        root_text = str(root).replace("\\", "/")
+        if root_text:
+            text = re.sub(re.escape(root_text), label, text, flags=re.IGNORECASE)
+    return re.sub(r"(?i)\b[A-Z]:/[^\r\n;&|]+", lambda match: redact_local_path(match.group(0).strip()), text)
+
+
 def sandbox_process_decision(policy: dict, command: str) -> dict:
     subprocess_policy = str(policy.get("process", {}).get("subprocess", "deny-by-default")).lower()
     decision = "DENY" if subprocess_policy.startswith("deny") else "ALLOW"
-    return {"decision": decision, "target": redact_text(command), "detail": "command was classified only; not executed"}
+    return {"decision": decision, "target": redact_command_text(command), "detail": "command was classified only; not executed"}
 
 
 def sandbox_mcp_decision(policy: dict, transport: str) -> dict:
