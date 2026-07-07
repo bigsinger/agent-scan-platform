@@ -235,6 +235,8 @@ $selfTest.self_test.download
 
 P10 “本地分析替代”和“补丁与漂移”的兼容码表必须来自 `$issues.items`，不得使用固定 `E001/E002/W015~W020` 原型表；每条映射都应带 `mutates_installed_agents=false`。
 
+D05 `/assessment/agent-scan/issues` 是 Issue 映射独立运行态详情页，不应回落到 P10 兼容中心。运维验收时应确认页面读取 `/api/v1/agent-scan/issues?page_size=200` 与 `/api/v1/agent-scan/compat`，能刷新映射、运行本地映射测试、导出 JSON，并在空态时提示读取本地 API 而不是显示原型行。该页的测试动作只复用 `agent-scan/self-test` 本地兼容自测，返回和导出证据必须保持 `cloud_analysis=false`、`mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`。
+
 P10 “云连接边界”的上传预览必须由当前 `agent_instance`、`mcp_server`、`skill` 和 `agent-scan/compat` 状态派生，路径需脱敏，`push=false`。不得用固定 `claude_code`、`servers=3`、`skills=8` 原型 JSON 作为验收依据。
 
 测评模板校验：

@@ -183,6 +183,31 @@ def test_agent_scan_compat_ui_is_api_backed():
     assert "/api/v1/agent-scan/issues?page_size=200" in app_js
 
 
+def test_agent_scan_issue_mapping_detail_is_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+
+    assert "current==='agent-scan-issues'" in html
+    assert "'agent-scan-issues':'/assessment/agent-scan/issues'" in app_js
+    assert "if(path.startsWith('/assessment/agent-scan/issues')) return 'agent-scan-issues';" in app_js
+    assert "async refreshAgentScanIssueMappings" in app_js
+    assert "async runAgentScanIssueMappingTest" in app_js
+    assert "exportAgentScanIssueMappings" in app_js
+    assert "agentScanIssueMappingRows()" in app_js
+    assert "agentScanIssueMappingSummary()" in app_js
+    assert "agentScanIssueMappingJson()" in app_js
+    assert "/api/v1/agent-scan/compat" in app_js
+    assert "/api/v1/agent-scan/issues?page_size=200" in app_js
+    assert "/api/v1/agent-scan/issues`" in html
+    assert "不访问 Snyk 云、不启动或修改已安装 Agent" in html
+    assert "不启动、不修改" in html
+    assert "本页不会展示原型样例行" in html
+    assert "@click=\"refreshAgentScanIssueMappings()\"" in html
+    assert "@click=\"runAgentScanIssueMappingTest\"" in html
+    assert "@click=\"exportAgentScanIssueMappings\"" in html
+    assert "v-for=\"row in agentScanIssueMappingRows\"" in html
+
+
 def test_license_update_check_ui_is_runtime_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

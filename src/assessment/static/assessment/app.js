@@ -208,6 +208,7 @@ data(){
     initial.agentScanCompat = initial.agentScanCompat || {version:'0.5.12-compatible', source_state:'LOCAL_BRIDGE_ONLY', compatibility:{status:'NOT_RUN', passed:0, warnings:0, failed:0, total:0}};
     initial.agentScanSelfTestResult = null;
     initial.agentScanIssues = initial.agentScanIssues || [];
+    initial.agentScanIssueMappingLoadedAt = '';
     initial.completenessSummary = initial.completenessSummary || {};
     initial.selectedProfile = initial.selectedProfile || (initial.profiles && initial.profiles[0]) || {};
     initial.profileValidation = null;
@@ -227,7 +228,7 @@ data(){
       const all=this.navGroups.flatMap(g=>g.items);
       const found=all.find(x=>x.key===this.current);
       if(found) return found.name;
-      const extra={'agent-detail':'Agent 详情','task-detail':'任务详情','skill-detail':'Skill 详情','finding-detail':'风险详情','case-detail':'红队用例详情','report-preview':'报告预览','profile-detail':'测评模板详情','rule-detail':'规则详情','scanner-detail':'扫描器详情'};
+      const extra={'agent-detail':'Agent 详情','task-detail':'任务详情','skill-detail':'Skill 详情','finding-detail':'风险详情','agent-scan-issues':'agent-scan Issue 映射详情','case-detail':'红队用例详情','report-preview':'报告预览','profile-detail':'测评模板详情','rule-detail':'规则详情','scanner-detail':'扫描器详情'};
       return extra[this.current]||'Agent 安全测评';
     },
     pendingConsentCount(){
@@ -894,8 +895,46 @@ data(){
         status:item.status || 'ACTIVE'
       }));
     },
+    agentScanIssueMappingRows(){
+      return (this.agentScanIssues || []).map(item => {
+        const code=item.code || item.id || '-';
+        const localRule=item.local_rule || item.rule || '-';
+        const status=item.status || 'ACTIVE';
+        const evidenceFields=item.evidence_fields || item.evidence || item.evidence_schema || ['rule_id','severity','component','evidence_ids'];
+        return {
+          code,
+          local_rule:localRule,
+          analyzer:item.analyzer || item.name || item.dimension || localRule,
+          severity:item.severity || '待复核',
+          status,
+          source:item.source || 'agent-scan',
+          report_section:item.report_section || item.section || item.dimension || '本地规则映射',
+          evidence_fields:Array.isArray(evidenceFields) ? evidenceFields.join(', ') : String(evidenceFields || '-'),
+          mutates_installed_agents:item.mutates_installed_agents===true
+        };
+      });
+    },
+    agentScanIssueMappingSummary(){
+      const rows=this.agentScanIssueMappingRows;
+      const active=rows.filter(row => ['ACTIVE','已映射','PASS','READY'].includes(String(row.status))).length;
+      const missing=rows.filter(row => ['MISSING','缺失','NOT_FOUND'].includes(String(row.status))).length;
+      const review=rows.filter(row => ['REVIEW','需人工确认','WARN','待复核'].includes(String(row.status)) || String(row.severity).includes('待复核')).length;
+      const disabled=rows.filter(row => ['DISABLED','禁用'].includes(String(row.status))).length;
+      return {total:rows.length, active, missing, review, disabled};
+    },
     agentScanIssueCodesText(){
       return this.agentScanLocalRuleRows.map(row => row.code).filter(Boolean).join(' / ') || '未读取';
+    },
+    agentScanIssueMappingJson(){
+      return JSON.stringify({
+        schema:'agent-security-agent-scan-issue-mapping-view@4.1',
+        source:'GET /api/v1/agent-scan/issues',
+        loaded_at:this.agentScanIssueMappingLoadedAt || '',
+        mutates_installed_agents:false,
+        cloud_analysis:false,
+        summary:this.agentScanIssueMappingSummary,
+        items:this.agentScanIssueMappingRows
+      }, null, 2);
     },
     completenessStats(){
       const rows=this.completeness || [];
@@ -1162,7 +1201,7 @@ data(){
       const profileDetailPath=this.selectedProfile&&(this.selectedProfile.id||this.selectedProfile.name)?'/assessment/profiles/'+encodeURIComponent(this.selectedProfile.id||this.selectedProfile.name):'/assessment/profiles';
       const ruleDetailPath=this.selectedRule&&this.selectedRule.id?'/assessment/rules/'+encodeURIComponent(this.selectedRule.id):'/assessment/rules';
       const scannerDetailPath=this.selectedScanner&&this.selectedScanner.id?'/assessment/scanners/'+encodeURIComponent(this.selectedScanner.id):'/assessment/scanners';
-      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','profile-detail':profileDetailPath,'agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp','mcp-detail':mcpDetailPath,'tool-detail':toolDetailPath,consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases','case-detail':caseDetailPath,execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports','report-preview':reportPreviewPath,retests:'/assessment/retests',rules:'/assessment/rules','rule-detail':ruleDetailPath,scanners:'/assessment/scanners','scanner-detail':scannerDetailPath,schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
+      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','profile-detail':profileDetailPath,'agent-scan':'/assessment/agent-scan','agent-scan-issues':'/assessment/agent-scan/issues',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp','mcp-detail':mcpDetailPath,'tool-detail':toolDetailPath,consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases','case-detail':caseDetailPath,execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports','report-preview':reportPreviewPath,retests:'/assessment/retests',rules:'/assessment/rules','rule-detail':ruleDetailPath,scanners:'/assessment/scanners','scanner-detail':scannerDetailPath,schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
       return map[key]||'/assessment';
     },
     keyForPath(path){
@@ -1174,7 +1213,7 @@ data(){
       if(path.startsWith('/assessment/skills/')) return 'skill-detail';
       if(path.startsWith('/assessment/findings/')) return 'finding-detail';
       if(path.startsWith('/assessment/adapters/')) return 'adapter-detail';
-      if(path.startsWith('/assessment/agent-scan/issues')) return 'agent-scan';
+      if(path.startsWith('/assessment/agent-scan/issues')) return 'agent-scan-issues';
       if(path.startsWith('/assessment/mcp/')) return 'mcp-detail';
       if(path.startsWith('/assessment/tools/')) return 'tool-detail';
       if(path.startsWith('/assessment/redteam-cases/')) return 'case-detail';
@@ -1287,6 +1326,9 @@ data(){
       }
       if(this.current==='agent-scan'){
         this.refreshAgentScanCompat({silent:true});
+      }
+      if(this.current==='agent-scan-issues'){
+        this.refreshAgentScanIssueMappings({silent:true});
       }
       if(this.current==='licenses'){
         this.refreshLicenseContext({silent:true});
@@ -1435,7 +1477,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});if(key==='case-detail') this.loadRedteamCaseDetail(this.selectedCase, {silent:true});if(key==='report-preview') this.refreshReportPreview(this.selectedReport, {silent:true});if(key==='profile-detail') this.loadProfileDetail(this.selectedProfile, {silent:true});if(key==='rule-detail') this.loadRuleDetail(this.selectedRule, {silent:true});if(key==='scanner-detail') this.loadScannerDetail(this.selectedScanner, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='mcp-detail') this.loadMcpDetail(this.selectedMcp, {silent:true});if(key==='tool-detail') this.loadToolDetail(this.selectedTool, {silent:true});if(key==='case-detail') this.loadRedteamCaseDetail(this.selectedCase, {silent:true});if(key==='report-preview') this.refreshReportPreview(this.selectedReport, {silent:true});if(key==='profile-detail') this.loadProfileDetail(this.selectedProfile, {silent:true});if(key==='rule-detail') this.loadRuleDetail(this.selectedRule, {silent:true});if(key==='scanner-detail') this.loadScannerDetail(this.selectedScanner, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='agent-scan-issues') this.refreshAgentScanIssueMappings({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -1956,12 +1998,40 @@ data(){
         ]);
         this.agentScanCompat=res || {};
         this.agentScanIssues=issues.items || [];
+        this.agentScanIssueMappingLoadedAt=new Date().toISOString();
         if(!silent) this.toastMsg('本地桥接验证：'+(this.agentScanCompat.source_state || 'READY'));
       } catch (err) {
         if(!silent) this.apiError=this.describeError(err);
       } finally {
         if(!silent) this.opsBusy=false;
       }
+    },
+    async refreshAgentScanIssueMappings(options){
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const [compat, issues]=await Promise.all([
+          this.apiGet('/api/v1/agent-scan/compat'),
+          this.apiGet('/api/v1/agent-scan/issues?page_size=200')
+        ]);
+        this.agentScanCompat=compat || {};
+        this.agentScanIssues=issues.items || [];
+        this.agentScanIssueMappingLoadedAt=new Date().toISOString();
+        if(!silent) this.toastMsg('Issue 映射已刷新：'+(issues.total || this.agentScanIssues.length)+' 条');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async runAgentScanIssueMappingTest(){
+      await this.runAgentScanSelfTest();
+      this.current='agent-scan-issues';
+      this.pushRoute('agent-scan-issues');
+    },
+    exportAgentScanIssueMappings(){
+      this.downloadJson(JSON.parse(this.agentScanIssueMappingJson), 'agent-scan-issue-mappings.json');
+      this.toastMsg('Issue 映射 JSON 已导出');
     },
     async runAgentScanSelfTest(){
       this.opsBusy=true; this.apiError='';
@@ -1971,6 +2041,7 @@ data(){
         if(res.compat) this.agentScanCompat=res.compat;
         const issues=await this.apiGet('/api/v1/agent-scan/issues?page_size=200');
         this.agentScanIssues=issues.items || [];
+        this.agentScanIssueMappingLoadedAt=new Date().toISOString();
         this.toastMsg('agent-scan 兼容自测：'+(this.agentScanSelfTestResult.status || 'DONE'));
       } catch (err) {
         this.apiError=this.describeError(err);

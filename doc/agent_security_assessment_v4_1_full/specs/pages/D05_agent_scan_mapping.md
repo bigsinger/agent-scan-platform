@@ -11,6 +11,8 @@
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
+当前正式应用已保留独立路由 `/assessment/agent-scan/issues`，页面状态键为 `agent-scan-issues`。页面读取 `GET /api/v1/agent-scan/issues?page_size=200` 和 `GET /api/v1/agent-scan/compat` 渲染映射表、桥接状态、原始 JSON 与安全边界；“运行映射测试”复用 `POST /api/v1/agent-scan/self-test` 的本地兼容自测。刷新、测试和导出均不访问 Snyk 云、不启动 stdio MCP、不启动或修改已安装 Codex/Hermes/Claude Code/OpenClaw。
+
 ## 2. 页面区域
 
 - Issue Code
