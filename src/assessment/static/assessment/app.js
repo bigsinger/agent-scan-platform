@@ -110,6 +110,10 @@
     state.findingFilterSeverity = '全部严重度';
     state.findingFilterStatus = '全部状态';
     state.findingFilterSource = '全部来源';
+    state.ruleFilterText = '';
+    state.ruleFilterDimension = '全部维度';
+    state.ruleFilterSource = '全部来源';
+    state.ruleFilterStatus = '全部状态';
     state.completenessSummary = {};
     state.executionLog = null;
     state.executionTermination = null;
@@ -247,6 +251,10 @@ data(){
     initial.abomDiff = null;
     initial.abomBusy = false;
     initial.ruleTestResult = null;
+    initial.ruleFilterText = '';
+    initial.ruleFilterDimension = '全部维度';
+    initial.ruleFilterSource = '全部来源';
+    initial.ruleFilterStatus = '全部状态';
     initial.selectedRule = initial.selectedRule || ((initial.ruleRows || [])[0]) || {};
     initial.scannerTestResult = null;
     initial.selectedScanner = initial.selectedScanner || ((initial.scanners || [])[0]) || {};
@@ -735,6 +743,59 @@ data(){
         evidenceSchemas:evidenceSchemas.size,
         lastTestMatches:this.ruleTestResult ? ((this.ruleTestResult.matches||[]).length) : 0
       };
+    },
+    filteredRuleRows(){
+      const keyword=String(this.ruleFilterText || '').trim().toLowerCase();
+      const dimension=String(this.ruleFilterDimension || '全部维度');
+      const source=String(this.ruleFilterSource || '全部来源');
+      const status=String(this.ruleFilterStatus || '全部状态');
+      const dimensionMatches=(rule) => {
+        if(dimension === '全部维度') return true;
+        const raw=[rule.dimension, rule.category, rule.name, rule.id].map(value=>String(value || '').toLowerCase()).join(' ');
+        return raw.includes(dimension.toLowerCase());
+      };
+      const sourceMatches=(rule) => {
+        if(source === '全部来源') return true;
+        const raw=[rule.source, rule.method, rule.analyzer, rule.coverage, rule.test_coverage, rule.id, rule.name].map(value=>String(value || '').toLowerCase()).join(' ');
+        if(source === 'Baseline') return raw.includes('baseline') || raw.includes('local-static') || raw.includes('rule_catalog') || raw.includes('内置');
+        if(source === 'Local Analyzer') return raw.includes('local') || raw.includes('deterministic') || raw.includes('本地规则');
+        if(source === 'Adapter') return raw.includes('adapter') || raw.includes('openclaw') || raw.includes('hermes') || raw.includes('codex') || raw.includes('claude');
+        if(source === 'External SCA') return raw.includes('external') || raw.includes('sca') || raw.includes('snyk') || raw.includes('第三方');
+        return true;
+      };
+      const statusMatches=(rule) => {
+        if(status === '全部状态') return true;
+        const raw=String(rule.status || rule.state || '').toLowerCase();
+        if(status === '已发布') return raw.includes('已发布') || raw.includes('published') || raw.includes('active');
+        if(status === '评审中') return raw.includes('评审') || raw.includes('review');
+        if(status === '草稿') return raw.includes('草稿') || raw.includes('draft');
+        if(status === '禁用') return raw.includes('禁用') || raw.includes('disabled');
+        return true;
+      };
+      return (this.ruleRows || []).filter(rule => {
+        if(!dimensionMatches(rule) || !sourceMatches(rule) || !statusMatches(rule)) return false;
+        if(!keyword) return true;
+        const haystack=[
+          rule.id,
+          rule.name,
+          rule.dimension,
+          rule.category,
+          rule.source,
+          rule.method,
+          rule.analyzer,
+          rule.severity,
+          rule.evidence,
+          rule.evidence_schema,
+          rule.coverage,
+          rule.test_coverage,
+          rule.version,
+          rule.status,
+          rule.description,
+          rule.text,
+          rule.target_path
+        ].map(value=>String(value || '').toLowerCase()).join(' ');
+        return haystack.includes(keyword);
+      });
     },
     assessmentRulePackages(){
       const adapter=String(this.form.adapter || (this.selectedAsset&&this.selectedAsset.adapter) || '自动识别');

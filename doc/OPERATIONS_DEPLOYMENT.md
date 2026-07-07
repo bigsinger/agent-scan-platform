@@ -995,6 +995,8 @@ $test.test.id
 
 规则统计应按当前规则记录计算，不能按原型固定数量验收。`rules/{id}/test` 会持久化 `test_run` 并写入审计，只运行本地 deterministic analyzer；不启动已安装 Agent、不启动 stdio MCP Server、不修改 Codex/Hermes/Claude Code 配置。
 
+规则库页面筛选验收：在 `/assessment/rules` 输入规则 ID、名称、方法或证据 Schema，并切换维度、来源和状态下拉，列表应只过滤当前 `ruleRows` 运行态记录。筛选本身不得调用 `/test`、不得发布规则、不得写 SQLite、不得执行脚本或启动/修改 Codex、Hermes、Claude Code、stdio MCP。
+
 `/assessment/rules/{id}` 是规则独立运行态详情页。验收时应确认页面读取 `GET /api/v1/rules/{id}`，测试和发布按钮调用 `/test`、`/publish` 真实 API，最近测试结果来自 SQLite `test_run` 或当前响应，而不是固定原型表。
 
 `/assessment/scanners/{id}` 是扫描器独立运行态详情页。验收时应确认页面读取 `GET /api/v1/scanners/{id}`，自测调用 `/self-test` 并生成 `scanner_run`、`scanner_health` 与 `scanner-self-test` artifact；返回必须保持 `external_cli_executed=false`、`stdio_mcp_started=false`、`mutates_installed_agents=false`。

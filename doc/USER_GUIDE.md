@@ -1277,6 +1277,8 @@ Invoke-RestMethod `
 
 规则库页面的统计卡和发布门禁来自当前 `/api/v1/rules` 结果、本地 `rule_catalog()` 回退和最近一次 `/api/v1/rules/{id}/test` 响应，不再展示原型固定的 84/31/67/18 数量。规则测试会写入本系统 `test_run`，标记 `safe_mode=local-deterministic` 和 `mutates_installed_agents=false`；测试过程只运行本地 deterministic analyzer，不启动 Codex/Hermes、不启动 stdio MCP，也不修改已安装 Agent。
 
+规则库顶部搜索、维度、来源和状态筛选只过滤当前已加载的 `ruleRows` 运行态数据，用于定位规则 ID、名称、维度、来源、方法、证据 Schema、测试覆盖、版本或状态；筛选不会触发规则测试、发布、SQLite 写入、脚本执行或任何已安装 Agent 修改。
+
 点击规则“详情”或访问 `/assessment/rules/{id}` 会进入独立规则详情页。该页读取 `GET /api/v1/rules/{id}` 展示规则定义、发布门禁、最近测试和本地安全边界，并可从详情页触发测试或发布；不存在当前规则记录时显示空态，不使用固定 YAML 样例。
 
 实现完整性矩阵页面来自 `/api/v1/completeness` 的实时摘要和行数据：页面/详情数量来自 V4.1 契约行，API 数量来自当前注入的 API 契约，SQLite 表数来自 `/api/v1/sqlite/status`，规则数来自本地 `rule_catalog()`。每行的 `Audit` 会检查 `doc/agent_security_assessment_v4_1_full` 中对应 prototype/spec 文件是否存在，`Contract` 会检查页面声明的 API 是否登记在契约中；没有真实自动化断言的 `E2E` 会显示 `NOT_ASSERTED`，不会再用固定勾选或“0 缺口”冒充验收结论。

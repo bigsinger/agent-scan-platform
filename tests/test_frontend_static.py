@@ -876,6 +876,18 @@ def test_rule_management_ui_uses_real_rule_state():
     assert "selectedRuleDefinition" in html
     assert "ruleStats.total" in html
     assert "selectRule(r)" in html
+    assert "ruleFilterText" in app_js
+    assert "ruleFilterDimension" in app_js
+    assert "ruleFilterSource" in app_js
+    assert "ruleFilterStatus" in app_js
+    assert "filteredRuleRows()" in app_js
+    assert 'v-model="ruleFilterText"' in html
+    assert 'v-model="ruleFilterDimension"' in html
+    assert 'v-model="ruleFilterSource"' in html
+    assert 'v-model="ruleFilterStatus"' in html
+    assert 'v-for="r in filteredRuleRows"' in html
+    assert "筛选 {{filteredRuleRows.length}} / {{ruleRows.length}}" in html
+    assert "当前筛选条件下没有规则" in html
     assert "ruleStats()" in app_js
     assert "ruleGateRows()" in app_js
     assert "selectRule(rule)" in app_js
