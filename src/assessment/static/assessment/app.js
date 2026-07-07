@@ -67,6 +67,11 @@
     state.integrationSyncLastDownload = '';
     state.reportSyncLastDownload = '';
     state.reportPackageExport = null;
+    state.apiDebugOpenapi = null;
+    state.apiDebugSummary = {};
+    state.apiDebugScenario = 'empty';
+    state.apiDebugDiagnostic = null;
+    state.apiDebugDiagnosticDownload = '';
     state.policyDraftPreflight = null;
     state.retestDiff = null;
     state.selectedFindingHistory = [];
@@ -154,6 +159,11 @@ data(){
     initial.scheduleDueRun = null;
     initial.integrationSyncResult = null;
     initial.integrationSyncLastDownload = '';
+    initial.apiDebugOpenapi = null;
+    initial.apiDebugSummary = {};
+    initial.apiDebugScenario = initial.apiDebugScenario || 'empty';
+    initial.apiDebugDiagnostic = null;
+    initial.apiDebugDiagnosticDownload = '';
     initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
@@ -1067,6 +1077,20 @@ data(){
     },
     sqliteIntegrityDisplay(){
       return (this.sqliteStatus && this.sqliteStatus.integrity) || '未检查';
+    },
+    apiDebugPathRows(){
+      const paths=(this.apiDebugOpenapi && this.apiDebugOpenapi.paths) || {};
+      return Object.keys(paths).sort().map(path => {
+        const methods=Object.keys(paths[path] || {}).map(x=>x.toUpperCase()).sort();
+        return {path, methods:methods.join(', ')};
+      });
+    },
+    apiDebugSchemaCount(){
+      const schemas=this.apiDebugOpenapi && this.apiDebugOpenapi.components && this.apiDebugOpenapi.components.schemas;
+      return schemas ? Object.keys(schemas).length : 0;
+    },
+    apiDebugCheckRows(){
+      return (this.apiDebugDiagnostic && this.apiDebugDiagnostic.checks) || [];
     }
   },
   mounted(){
@@ -1083,12 +1107,12 @@ data(){
       const taskDetailPath=this.selectedTask&&this.selectedTask.id?'/assessment/tasks/'+this.selectedTask.id:'/assessment/tasks';
       const skillDetailPath=this.selectedSkill&&this.selectedSkill.id?'/assessment/skills/'+this.selectedSkill.id:'/assessment/skills';
       const findingDetailPath=this.selectedFinding&&this.selectedFinding.id?'/assessment/findings/'+this.selectedFinding.id:'/assessment/findings';
-      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters',profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness'};
+      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters',profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
       return map[key]||'/assessment';
     },
     keyForPath(path){
       if(!path || path==='/' || path==='/assessment') return 'dashboard';
-      const exact={'/assessment/quick-scan':'quick-scan','/assessment/new':'create','/assessment/discovery':'discovery','/assessment/agents':'agents','/assessment/abom':'abom','/assessment/adapters':'adapters','/assessment/profiles':'profiles','/assessment/agent-scan':'agent-scan','/assessment/tasks':'tasks','/assessment/mcp':'mcp','/assessment/mcp-consent':'consents','/assessment/consents':'consents','/assessment/skills':'skills','/assessment/redteam':'redteam','/assessment/redteam-cases':'cases','/assessment/cases':'cases','/assessment/python-exec':'execution','/assessment/execution':'execution','/assessment/sandbox':'sandbox','/assessment/findings':'findings','/assessment/evidence':'evidence','/assessment/attack-paths':'attack-paths','/assessment/reports':'reports','/assessment/retests':'retests','/assessment/rules':'rules','/assessment/scanners':'scanners','/assessment/schedules':'schedules','/assessment/integrations':'integrations','/assessment/settings':'settings','/assessment/sqlite':'sqlite','/assessment/licenses':'licenses','/assessment/completeness':'completeness','/assessment/platform-embed':'integrations','/assessment/api-debug':'completeness'};
+      const exact={'/assessment/quick-scan':'quick-scan','/assessment/new':'create','/assessment/discovery':'discovery','/assessment/agents':'agents','/assessment/abom':'abom','/assessment/adapters':'adapters','/assessment/profiles':'profiles','/assessment/agent-scan':'agent-scan','/assessment/tasks':'tasks','/assessment/mcp':'mcp','/assessment/mcp-consent':'consents','/assessment/consents':'consents','/assessment/skills':'skills','/assessment/redteam':'redteam','/assessment/redteam-cases':'cases','/assessment/cases':'cases','/assessment/python-exec':'execution','/assessment/execution':'execution','/assessment/sandbox':'sandbox','/assessment/findings':'findings','/assessment/evidence':'evidence','/assessment/attack-paths':'attack-paths','/assessment/reports':'reports','/assessment/retests':'retests','/assessment/rules':'rules','/assessment/scanners':'scanners','/assessment/schedules':'schedules','/assessment/integrations':'integrations','/assessment/settings':'settings','/assessment/sqlite':'sqlite','/assessment/licenses':'licenses','/assessment/completeness':'completeness','/assessment/platform-embed':'integrations','/assessment/api-debug':'api-debug'};
       if(exact[path]) return exact[path];
       if(path.startsWith('/assessment/agents/')) return 'agent-detail';
       if(path.startsWith('/assessment/tasks/')) return 'task-detail';
@@ -1160,6 +1184,9 @@ data(){
       }
       if(this.current==='completeness'){
         this.refreshCompleteness({silent:true});
+      }
+      if(this.current==='api-debug'){
+        this.refreshApiDebugOpenapi({silent:true});
       }
     },
     async loadBootstrap(){
@@ -1293,7 +1320,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -2897,6 +2924,45 @@ data(){
       } finally {
         if(!silent) this.opsBusy=false;
       }
+    },
+    async refreshApiDebugOpenapi(options){
+      const silent=options && options.silent;
+      if(!silent) { this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/openapi.json');
+        const paths=res.paths || {};
+        this.apiDebugOpenapi=res;
+        this.apiDebugSummary={
+          title:(res.info && res.info.title) || 'Agent Security Assessment API',
+          version:(res.info && res.info.version) || 'unknown',
+          paths:Object.keys(paths).length,
+          schemas:this.apiDebugSchemaCount,
+          safe_mode:'local-readonly',
+          mutates_installed_agents:false
+        };
+        if(!silent) this.toastMsg('OpenAPI 契约已读取：'+this.apiDebugSummary.paths+' 个路径');
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
+    async runApiDiagnosticScenario(){
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/diagnostics/scenario', {scenario:this.apiDebugScenario || 'empty'});
+        this.apiDebugDiagnostic=res.scenario || null;
+        this.apiDebugDiagnosticDownload=(this.apiDebugDiagnostic && this.apiDebugDiagnostic.download) || '';
+        this.toastMsg('诊断场景已生成：'+(this.apiDebugDiagnostic && this.apiDebugDiagnostic.status || 'UNKNOWN'));
+      } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async exportOpenapiContract(){
+      if(!this.apiDebugOpenapi) await this.refreshApiDebugOpenapi({silent:true});
+      if(this.apiDebugOpenapi) this.downloadJson(this.apiDebugOpenapi, 'agent-scan-platform-openapi.json');
+    },
+    downloadApiDiagnostic(){
+      if(this.apiDebugDiagnosticDownload) window.open(this.apiDebugDiagnosticDownload, '_blank', 'noopener');
     },
     downloadJson(payload, filename){
       const blob=new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});

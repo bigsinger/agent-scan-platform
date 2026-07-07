@@ -221,6 +221,11 @@
           "key": "completeness",
           "name": "实现完整性矩阵",
           "icon": "✓"
+        },
+        {
+          "key": "api-debug",
+          "name": "API / 状态调试台",
+          "icon": "API"
         }
       ]
     }

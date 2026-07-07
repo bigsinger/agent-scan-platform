@@ -784,6 +784,19 @@ safe_mode: local-readonly</div></div>
   <div class="notice success"><b>AI 开发约束：</b>不得删除原型入口，不得用静态数据冒充 API，不得从 Worker 直写 SQLite，不得自动启动 stdio MCP，不得用可选云分析替代本地规则。</div>
 </div>
 
+<!-- D14 API DEBUG -->
+<div v-if="current==='api-debug'">
+  <div class="card"><div class="card-head"><div><h2>API / 状态调试台</h2><div class="desc">读取当前 FastAPI OpenAPI 契约，执行本地只读诊断场景，并生成可下载的诊断证据。</div></div><div><button class="btn" :disabled="opsBusy" @click="refreshApiDebugOpenapi()">刷新 OpenAPI</button><button class="btn" @click="exportOpenapiContract">导出 OpenAPI</button><button class="btn primary" :disabled="opsBusy" @click="runApiDiagnosticScenario">运行诊断</button></div></div>
+    <div class="grid g5"><div class="metric"><div class="metric-label">API 路径</div><div class="metric-value">{{apiDebugSummary.paths||apiDebugPathRows.length}}</div></div><div class="metric"><div class="metric-label">Schemas</div><div class="metric-value">{{apiDebugSummary.schemas||apiDebugSchemaCount}}</div></div><div class="metric"><div class="metric-label">诊断状态</div><div class="metric-value" style="font-size:18px">{{apiDebugDiagnostic&&apiDebugDiagnostic.status||'未运行'}}</div></div><div class="metric"><div class="metric-label">运行记录</div><div class="metric-value">{{apiDebugDiagnostic&&apiDebugDiagnostic.counts&&Object.values(apiDebugDiagnostic.counts).reduce((a,b)=>a+(Number(b)||0),0)||0}}</div></div><div class="metric"><div class="metric-label">安全边界</div><div class="metric-value" style="font-size:14px">{{apiDebugSummary.safe_mode||'local-readonly'}}</div></div></div>
+    <div class="form-grid" style="margin-top:12px"><div class="field"><label>诊断场景</label><select v-model="apiDebugScenario"><option value="empty">空态观察</option><option value="normal">运行态观察</option></select></div><div class="field"><label>写入边界</label><input value="diagnostic_event + artifact" disabled></div><div class="field"><label>Agent 影响</label><input value="mutates_installed_agents=false" disabled></div><div class="field"><label>证据</label><button class="btn" :disabled="!apiDebugDiagnosticDownload" @click="downloadApiDiagnostic">下载诊断 JSON</button></div></div>
+    <div class="callout green" style="margin-top:12px">调试台不会注入错误、不会清空运行态、不会启动或修改 Codex/Hermes/MCP；诊断只读取本系统 SQLite、静态资源和规则目录。</div>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h2>OpenAPI 契约</h2><div class="kv"><div>Title</div><div>{{apiDebugSummary.title||'-'}}</div><div>Version</div><div>{{apiDebugSummary.version||'-'}}</div><div>Path Count</div><div>{{apiDebugPathRows.length}}</div><div>Schema Count</div><div>{{apiDebugSchemaCount}}</div></div><div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Path</th><th>Methods</th></tr></thead><tbody><tr v-for="row in apiDebugPathRows.slice(0,24)" :key="row.path"><td class="mono">{{row.path}}</td><td>{{row.methods}}</td></tr><tr v-if="!apiDebugPathRows.length"><td colspan="2" class="muted">尚未读取 OpenAPI；点击刷新后展示当前后端契约。</td></tr></tbody></table></div></div>
+    <div class="card"><h2>诊断结果</h2><div v-if="apiDebugDiagnostic" class="kv"><div>Schema</div><div class="mono">{{apiDebugDiagnostic.schema}}</div><div>Scenario</div><div>{{apiDebugDiagnostic.name}}</div><div>Status</div><div><span :class="['badge',statusClass(apiDebugDiagnostic.status)]">{{apiDebugDiagnostic.status}}</span></div><div>Artifact</div><div><a v-if="apiDebugDiagnosticDownload" :href="apiDebugDiagnosticDownload" target="_blank" rel="noopener">下载 JSON</a><span v-else>-</span></div></div><div v-else class="empty">尚未运行诊断场景。</div><table style="margin-top:12px"><thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead><tbody><tr v-for="row in apiDebugCheckRows" :key="row.id"><td>{{row.title||row.id}}</td><td><span :class="['badge',statusClass(row.status)]">{{row.status}}</span></td><td>{{row.detail}}</td></tr><tr v-if="!apiDebugCheckRows.length"><td colspan="3" class="muted">诊断后展示 SQLite、静态资源、规则目录和 Agent 安全边界检查。</td></tr></tbody></table></div>
+  </div>
+</div>
+
 <div v-if="showModal==='mcp'" class="modal-mask" @click.self="showModal=null">
   <div class="modal"><div class="modal-head"><div><h2 style="margin:0">{{selectedMcp.name}}</h2><div class="desc">{{selectedMcp.agent}} · {{selectedMcp.transport}}</div></div><button class="close" @click="showModal=null">×</button></div>
   <div class="modal-body"><div class="grid g2"><div class="kv"><div>ID</div><div class="mono">{{selectedMcp.id}}</div><div>配置</div><div class="mono">{{selectedMcp.config}}</div><div>状态</div><div>{{selectedMcp.status}}</div><div>Signature</div><div>{{selectedMcp.signature}}</div><div>风险</div><div>{{selectedMcp.risk}}</div></div><div><h3>安全边界</h3><div class="callout amber">stdio Server 不会因打开详情而启动。只有审批通过并且配置 Hash 未变化时才能执行握手。</div><div class="code">command: npx **REDACTED**
@@ -801,7 +814,7 @@ remote_analysis: false</div></div></div></div>
 </main>
 </div>
 <script src="/static/vendor/vue.global.prod.js"></script>
-<script src="/static/assessment/seed.js?v=4.1.3"></script>
-<script src="/static/assessment/app.js?v=4.1.30"></script>
+<script src="/static/assessment/seed.js?v=4.1.4"></script>
+<script src="/static/assessment/app.js?v=4.1.31"></script>
 </body>
 </html>

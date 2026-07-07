@@ -754,3 +754,26 @@ def test_completeness_matrix_ui_uses_runtime_summary():
     assert "completenessStats()" in app_js
     assert "async refreshCompleteness" in app_js
     assert "/api/v1/completeness?page_size=200" in app_js
+
+
+def test_api_debug_page_uses_runtime_openapi_and_diagnostics():
+    seed = json.loads((STATIC / "assessment" / "seed.json").read_text(encoding="utf-8"))
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+
+    nav_items = [item for group in seed["navGroups"] for item in group["items"]]
+    assert any(item["key"] == "api-debug" and item["name"] == "API / 状态调试台" for item in nav_items)
+    assert "current==='api-debug'" in html
+    assert "/assessment/api-debug':'api-debug" in app_js
+    assert "completeness','/assessment/api-debug':'completeness" not in app_js
+    assert "refreshApiDebugOpenapi" in app_js
+    assert "runApiDiagnosticScenario" in app_js
+    assert "exportOpenapiContract" in app_js
+    assert "downloadApiDiagnostic" in app_js
+    assert "/api/v1/openapi.json" in app_js
+    assert "/api/v1/diagnostics/scenario" in app_js
+    assert "@click=\"refreshApiDebugOpenapi()\"" in html
+    assert "@click=\"runApiDiagnosticScenario\"" in html
+    assert "@click=\"downloadApiDiagnostic\"" in html
+    assert "Mock 数据" not in html
+    assert "错误注入" not in html

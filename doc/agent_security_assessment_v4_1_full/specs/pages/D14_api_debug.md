@@ -1,4 +1,4 @@
-# D14 API / Mock 调试台 · 页面 SPEC
+# D14 API / 状态调试台 · 页面 SPEC
 
 > 文件：`prototype/pages/D14_api_debug.html`  
 > Route：`/assessment/api-debug`  
@@ -7,24 +7,23 @@
 
 ## 1. 页面目标
 
-给 AI 开发和联调人员使用的 API Mock、状态切换和错误注入页面。
+给 AI 开发、运维和企业测评人员使用的 API 契约、运行状态和本地诊断页面。
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
 ## 2. 页面区域
 
-- API 列表
-- Mock 数据
-- 错误注入
-- SSE 模拟
-- 下载契约
+- OpenAPI 契约摘要
+- API 路径与方法列表
+- 本地诊断场景
+- 诊断检查项
+- 证据 artifact 下载
 
 ## 3. 用户动作
 
-- 执行 GET
-- 执行 POST
-- 注入错误
-- 模拟 SSE
+- 刷新 OpenAPI
+- 运行本地诊断场景
+- 下载诊断证据
 - 导出 OpenAPI
 
 每个动作必须满足：
@@ -38,7 +37,7 @@
 ## 4. API 契约
 
 - `GET /api/v1/openapi.json`
-- `POST /api/v1/mock/scenario`
+- `POST /api/v1/diagnostics/scenario`
 
 接口返回必须统一包装：
 
@@ -64,7 +63,9 @@
 
 ## 5. 主要实体
 
-`api_contract, mock_scenario, error_case`
+`api_contract, diagnostic_event, artifact`
+
+当前本地实现中，`/assessment/api-debug` 是独立运行页，不再映射到完整性矩阵，也不再使用 Mock 场景。页面只读取 `openapi.json`，并通过 `diagnostics/scenario` 生成 `diagnostic-scenario` artifact；诊断只读取本系统 SQLite、静态资源和规则目录，不启动或修改 Codex/Hermes/MCP，不清空运行态数据。
 
 正式实现时，实体字段应与 SQLite 表、Pydantic Schema、API 响应和前端字段保持一致。页面不得使用未定义字段。
 
@@ -109,7 +110,7 @@
 
 ## 9. SQLite 数据要求
 
-本页至少涉及实体：`api_contract, mock_scenario, error_case`。
+本页至少涉及实体：`api_contract, diagnostic_event, artifact`。
 
 开发时必须确认：
 

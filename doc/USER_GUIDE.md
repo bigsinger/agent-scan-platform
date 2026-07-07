@@ -821,6 +821,8 @@ $diag.scenario.counts
 
 诊断场景只读取本系统 SQLite、静态资源和规则目录，生成 `diagnostic-scenario` JSON artifact 并写入 `diagnostic_event`。`scenario="empty"` 只判断当前库是否为空；如果已有 Finding/Task/Evidence 会返回 `WARN`，不会再清空页面状态或删除数据。
 
+页面 `/assessment/api-debug` 提供同一能力的 UI 入口：点击“刷新 OpenAPI”读取当前后端契约，点击“运行诊断”调用 `/api/v1/diagnostics/scenario` 并展示检查项，点击“下载诊断 JSON”下载本地 artifact。该页面不再显示 Mock 数据或错误注入演示，也不会启动或修改 Codex、Hermes、MCP。
+
 ### 快速扫描
 
 公开快速扫描模式只接受 `machine`、`path`、`mcp`。开发/回归样本仍可扫描，但必须像普通目录一样使用 `mode="path"` 并显式传入 `target_path`；`mode="fixture"` 会返回 422，避免企业验收误把测试样本当成产品能力。

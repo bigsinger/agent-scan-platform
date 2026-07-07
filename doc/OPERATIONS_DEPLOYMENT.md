@@ -121,6 +121,8 @@ $diag.scenario.counts
 
 `scenario=empty` 会检查 SQLite 中 Agent、Task、Finding、Evidence、Report 等记录数量；非空时返回 `WARN` 并写入 `diagnostic_event` 与 `diagnostic-scenario` artifact，不会清空 Finding 或前端状态。
 
+`/assessment/api-debug` 是面向运维和企业测评的独立页面。验收时应确认该路由不再落到完整性矩阵页，页面可以读取 `/api/v1/openapi.json` 的当前路径/Schema 数量，可以运行 `/api/v1/diagnostics/scenario` 并下载 `diagnostic-scenario` artifact；页面不得提供会改写运行态的 Mock 场景、错误注入或 SSE 模拟按钮。
+
 只读 Guard 检查：
 
 ```powershell
