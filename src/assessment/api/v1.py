@@ -3939,6 +3939,10 @@ def adapter_catalog(store: Any) -> list[dict]:
         product_mcp = adapter_product_hits(mcp_servers, product)
         product_skills = adapter_product_hits(skills, product)
         all_product_records = [*product_assets, *product_hits, *product_mcp, *product_skills]
+        agent_count = len(product_assets) or coerce_int(stored.get("discovered_agents"), 0)
+        hit_count = len(product_hits) or coerce_int(stored.get("discovered_hits"), 0)
+        mcp_count = len(product_mcp) or coerce_int(stored.get("discovered_mcp"), 0)
+        skill_count = len(product_skills) or coerce_int(stored.get("discovered_skills"), 0)
         version = first_non_empty([item.get("version") for item in all_product_records], stored.get("version", ""))
         last_status = stored.get("last_self_test_status") or stored.get("self_test") or "NOT_RUN"
         installed = bool(product_assets or any(str(hit.get("type") or "").lower() == "agent" for hit in product_hits))
@@ -3957,16 +3961,16 @@ def adapter_catalog(store: Any) -> list[dict]:
             "soft": presentation.get("soft", "#eef3ff"),
             "desc": presentation.get("desc", "本地只读 Agent 适配器。"),
             "discoverer": "local-readonly well-known paths",
-            "evidence": f"Agent {len(product_assets)} / Hit {len(product_hits)} / MCP {len(product_mcp)} / Skill {len(product_skills)}",
+            "evidence": f"Agent {agent_count} / Hit {hit_count} / MCP {mcp_count} / Skill {skill_count}",
             "version": version,
             "install_status": install_status,
             "last_self_test_status": last_status,
             "last_self_test_at": stored.get("last_self_test_at") or "",
             "last_self_test_download": stored.get("last_self_test_download") or "",
-            "discovered_agents": len(product_assets),
-            "discovered_hits": len(product_hits),
-            "discovered_mcp": len(product_mcp),
-            "discovered_skills": len(product_skills),
+            "discovered_agents": agent_count,
+            "discovered_hits": hit_count,
+            "discovered_mcp": mcp_count,
+            "discovered_skills": skill_count,
             "coverage_matrix": matrix,
             "safe_mode": "local-readonly",
             "mutates_installed_agents": False,
@@ -4128,6 +4132,8 @@ def adapter_self_test(store: Any, state: dict, adapter_id: str, body: dict | Non
         "install_status": install_status,
         "discovered_agents": len(product_agents),
         "discovered_hits": len(product_hits),
+        "discovered_mcp": len(product_mcp),
+        "discovered_skills": len(product_skills),
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
     }

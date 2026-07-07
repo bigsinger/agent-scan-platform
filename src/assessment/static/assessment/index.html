@@ -365,6 +365,52 @@ production.write</textarea></div></div></div>
 </div>
 
 
+<!-- D01-D04 ADAPTER DETAIL -->
+<div v-if="current==='adapter-detail'">
+  <div class="card">
+    <div class="card-head">
+      <div><h2>{{(adapterDetail&&adapterDetail.name)||(selectedAdapter&&selectedAdapter.name)||'适配器详情'}}</h2><div class="desc">运行态详情来自 `/api/v1/adapters/{id}`，自测会触发本机只读发现并生成 adapter-self-test artifact。</div></div>
+      <div><button class="btn" @click="go('adapters')">返回列表</button><button class="btn" :disabled="opsBusy" @click="loadAdapterDetail(adapterDetail||selectedAdapter)">{{opsBusy?'刷新中':'刷新详情'}}</button><button class="btn primary" :disabled="opsBusy" @click="runAdapterDetailSelfTest">{{opsBusy?'自测中':'运行只读自测'}}</button></div>
+    </div>
+    <div v-if="apiError" class="callout critical">{{apiError}}</div>
+    <div v-if="!(adapterDetail&&adapterDetail.id)" class="empty">正在读取适配器运行态详情；若后端不可用，不会显示原型样例数据。</div>
+    <div v-else>
+      <div class="grid g4">
+        <div class="metric"><div class="metric-label">覆盖状态</div><div class="metric-value"><span :class="['badge',statusClass(adapterDetail.coverage||adapterDetail.status)]">{{adapterDetail.coverage||adapterDetail.status||'UNKNOWN'}}</span></div></div>
+        <div class="metric"><div class="metric-label">安装状态</div><div class="metric-value">{{adapterDetail.install_status||'未发现'}}</div></div>
+        <div class="metric"><div class="metric-label">版本</div><div class="metric-value">{{adapterDetail.version||'待探测'}}</div></div>
+        <div class="metric"><div class="metric-label">最近自测</div><div class="metric-value"><span :class="['badge',statusClass(adapterDetail.last_self_test_status||adapterDetail.self_test||'NOT_RUN')]">{{adapterDetail.last_self_test_status||adapterDetail.self_test||'NOT_RUN'}}</span></div></div>
+      </div>
+      <div class="grid g2" style="margin-top:14px">
+        <div>
+          <h2>本机证据摘要</h2>
+          <div class="kv"><div>Adapter ID</div><div class="mono">{{adapterDetail.id}}</div><div>发现器</div><div>{{adapterDetail.discoverer||'local-readonly well-known paths'}}</div><div>命中</div><div>{{adapterDetail.evidence||('Agent '+(adapterDetail.discovered_agents||0)+' / Hit '+(adapterDetail.discovered_hits||0)+' / MCP '+(adapterDetail.discovered_mcp||0)+' / Skill '+(adapterDetail.discovered_skills||0))}}</div><div>安全模式</div><div>{{adapterDetail.safe_mode||'local-readonly'}}</div><div>修改已安装 Agent</div><div>{{adapterDetail.mutates_installed_agents?'是':'否'}}</div><div>Artifact</div><div><button class="btn sm" :disabled="!(adapterDetailDownload || adapterDetail.last_self_test_download)" @click="downloadAdapterDetailSelfTest">下载自测 JSON</button></div></div>
+        </div>
+        <div>
+          <h2>安全边界</h2>
+          <table><tbody><tr><td>Agent 交互运行时</td><td><span class="badge low">不启动</span></td></tr><tr><td>stdio MCP Server</td><td><span class="badge low">不启动</span></td></tr><tr><td>安装目录 / 配置</td><td><span class="badge low">不修改</span></td></tr><tr><td>写入范围</td><td>本系统 SQLite 与 data/artifacts</td></tr></tbody></table>
+          <div class="callout">Codex/Hermes 版本探测仅使用只读路径和 `--version` 类命令，不进入交互会话。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-head"><h2>覆盖矩阵</h2><span class="badge blue">{{(adapterDetail&&adapterDetail.product)||'Adapter'}}</span></div>
+      <table><thead><tr><th>能力</th><th>状态</th><th>证据说明</th></tr></thead><tbody><tr v-for="cell in ((adapterDetail&&adapterDetail.coverage_matrix)||[])" :key="cell.id"><td>{{cell.name}}</td><td><span :class="['badge',statusClass(cell.status)]">{{cell.status}}</span></td><td>{{cell.detail}}</td></tr><tr v-if="!((adapterDetail&&adapterDetail.coverage_matrix)||[]).length"><td colspan="3" class="muted">暂无覆盖矩阵，请刷新详情或运行只读自测。</td></tr></tbody></table>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>最近自测检查项</h2><span :class="['badge',statusClass(adapterDetailSelfTest&&adapterDetailSelfTest.status)]">{{(adapterDetailSelfTest&&adapterDetailSelfTest.status)||'NOT_RUN'}}</span></div>
+      <table><thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead><tbody><tr v-for="c in ((adapterDetailSelfTest&&adapterDetailSelfTest.checks)||[])" :key="c.id"><td>{{c.title||c.id}}</td><td><span :class="['badge',statusClass(c.status)]">{{c.status}}</span></td><td>{{c.detail}}</td></tr><tr v-if="!((adapterDetailSelfTest&&adapterDetailSelfTest.checks)||[]).length"><td colspan="3" class="muted">尚未运行本页自测；点击“运行只读自测”生成检查项和 artifact。</td></tr></tbody></table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>自测发现的 Agent</h2><span class="badge">{{((adapterDetailSelfTest&&adapterDetailSelfTest.discovered_agents)||[]).length}}</span></div>
+    <table><thead><tr><th>名称</th><th>适配器</th><th>版本</th><th>路径/来源</th></tr></thead><tbody><tr v-for="agent in ((adapterDetailSelfTest&&adapterDetailSelfTest.discovered_agents)||[])" :key="agent.id||agent.name"><td>{{agent.name||agent.id}}</td><td>{{agent.adapter||agent.product}}</td><td>{{agent.version||'未识别'}}</td><td class="mono">{{agent.path||agent.source||'-'}}</td></tr><tr v-if="!((adapterDetailSelfTest&&adapterDetailSelfTest.discovered_agents)||[]).length"><td colspan="4" class="muted">未记录自测发现 Agent，或当前机器未命中该适配器。</td></tr></tbody></table>
+  </div>
+</div>
+
+
 <!-- P09 PROFILES -->
 <div v-if="current==='profiles'">
   <div class="card"><div class="card-head"><div><h2>测评模板</h2><div class="desc">模板固定规则、用例、预算、安全模式、审批和报告类型。已发布版本不可修改。</div></div><button class="btn primary" :disabled="opsBusy" @click="createProfileDraft">＋ 创建模板</button></div>

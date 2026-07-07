@@ -360,6 +360,7 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($pkg.download)" -OutFile defense-
 - 生成 `adapter-self-test` JSON artifact，记录检查项、发现运行、版本、安装状态和安全边界。
 - 把最近自测结果写入本系统 SQLite 的 `adapter` 记录，并在页面展示 PASS/WARN/FAIL。
 - 适配器卡片和“能力覆盖矩阵”来自 `/api/v1/adapters` 的运行态目录：本机 Agent、discovery_hit、MCP Server、Skill 和最近自测记录共同决定 `OBSERVED`、`NOT_FOUND`、`NOT_RUN` 或 `READONLY_GENERIC`。页面不再展示固定勾选或固定回归样本数量。
+- 点击适配器卡片“覆盖详情”或直接打开 `/assessment/adapters/codex`、`/assessment/adapters/hermes`、`/assessment/adapters/claude-code`、`/assessment/adapters/openclaw` 可进入运行态详情页；页面读取 `GET /api/v1/adapters/{id}`，并可运行对应 `{id}/self-test` 后下载真实 artifact。
 
 Codex 与 Hermes 的重点行为：
 

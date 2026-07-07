@@ -52,3 +52,5 @@
 | D12 | 扫描器详情 | `prototype/pages/D12_scanner_detail.html` | `specs/pages/D12_scanner_detail.md` | `/assessment/scanners/{id}` | 详情页 |
 | D13 | 主平台嵌入联调 | `prototype/pages/D13_platform_embed.html` | `specs/pages/D13_platform_embed.md` | `/assessment/platform-embed` | 详情页 |
 | D14 | API / 状态调试台 | `prototype/pages/D14_api_debug.html` | `specs/pages/D14_api_debug.md` | `/assessment/api-debug` | 详情页 |
+
+实现说明：D01-D04 在正式应用中复用 `adapter-detail` 运行态页面组件，但保留各自独立深链。每个深链都读取对应 `GET /api/v1/adapters/{id}`，并通过 `POST /api/v1/adapters/{id}/self-test` 写入本系统 SQLite 与 `adapter-self-test` artifact；不得回退到 `/assessment/adapters` 列表视图冒充详情页。

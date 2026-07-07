@@ -678,6 +678,25 @@ def test_adapter_catalog_is_runtime_backed_not_seed(monkeypatch, tmp_path):
     assert store.get_state().get("agents") == []
 
 
+def test_adapter_detail_get_is_runtime_backed_not_seed(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "adapter-detail.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.get("/api/v1/adapters/codex")
+    assert response.status_code == 200
+    item = response.json()["item"]
+
+    assert item["id"] == "codex"
+    assert item["product"] == "Codex"
+    assert item["safe_mode"] == "local-readonly"
+    assert item["mutates_installed_agents"] is False
+    assert item["coverage_matrix"]
+    assert {cell["id"] for cell in item["coverage_matrix"]} >= {"global_config", "dynamic", "unknown_version"}
+    assert item["last_self_test_status"] == "NOT_RUN"
+    assert store.get_state().get("agents") == []
+
+
 def test_adapter_self_test_uses_discovery_and_persists_evidence(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "adapter-self-test.db")
     store.initialize()
@@ -747,6 +766,11 @@ def test_adapter_self_test_uses_discovery_and_persists_evidence(monkeypatch, tmp
     stored = store.get_record("adapter", "codex")
     assert stored["last_self_test_status"] == "PASS"
     assert store.get_record("artifact", self_test["artifact"]["id"]) is not None
+
+    detail = client.get("/api/v1/adapters/codex").json()["item"]
+    assert detail["last_self_test_status"] == "PASS"
+    assert detail["last_self_test_download"] == self_test["download"]
+    assert detail["discovered_agents"] == 1
 
 
 def test_agent_scan_self_test_is_local_and_persists_evidence(monkeypatch, tmp_path):

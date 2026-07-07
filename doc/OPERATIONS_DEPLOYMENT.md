@@ -210,6 +210,8 @@ $hermes.self_test.download
 
 `GET /api/v1/adapters` 会返回当前运行态适配器目录和 `coverage_matrix`。矩阵状态由本系统 SQLite 中的 `agent_instance`、`discovery_hit`、`mcp_server`、`skill` 与最近 `adapter` 自测记录派生；没有证据时显示 `NOT_FOUND` 或 `NOT_RUN`，未知版本只标记为 `READONLY_GENERIC` 降级扫描能力。企业验收时不要接受固定勾选、固定 fixture 数或截图作为覆盖证据。
 
+`/assessment/adapters/codex`、`/assessment/adapters/hermes`、`/assessment/adapters/claude-code` 与 `/assessment/adapters/openclaw` 是独立运行态详情页，不应回落到适配器列表页。页面应展示 `GET /api/v1/adapters/{id}` 的版本、安装状态、覆盖矩阵、安全边界和最近自测 artifact，并能通过“运行只读自测”触发对应 `POST /api/v1/adapters/{id}/self-test`。
+
 agent-scan 兼容中心自测：
 
 ```powershell

@@ -20,7 +20,7 @@
   const runtimeObjectKeys = [
     'selectedAsset','selectedTask','selectedMcp','selectedTool','selectedConsent','selectedSkill','selectedCase','selectedRedteamRun',
     'selectedFinding','selectedEvidence','selectedAttackPath','selectedPolicyDraft','selectedReport','selectedRetest','selectedRule',
-    'selectedProcess','selectedJob'
+    'selectedAdapter','selectedProcess','selectedJob'
   ];
   const defaultFormState = {
     adapter:'自动识别',
@@ -76,6 +76,10 @@
     state.platformEmbedEventDraft = {direction:'push', event_type:'risk.status.updated', subject_type:'finding', subject_id:''};
     state.platformEmbedEventResult = null;
     state.platformEmbedEventDownload = '';
+    state.selectedAdapter = {};
+    state.adapterDetail = null;
+    state.adapterDetailSelfTest = null;
+    state.adapterDetailDownload = '';
     state.policyDraftPreflight = null;
     state.retestDiff = null;
     state.selectedFindingHistory = [];
@@ -172,6 +176,10 @@ data(){
     initial.platformEmbedEventDraft = Object.assign({direction:'push', event_type:'risk.status.updated', subject_type:'finding', subject_id:''}, initial.platformEmbedEventDraft || {});
     initial.platformEmbedEventResult = null;
     initial.platformEmbedEventDownload = '';
+    initial.selectedAdapter = initial.selectedAdapter || {};
+    initial.adapterDetail = initial.adapterDetail || null;
+    initial.adapterDetailSelfTest = initial.adapterDetailSelfTest || null;
+    initial.adapterDetailDownload = '';
     initial.selectedAttackPath = initial.selectedAttackPath || (initial.attackPaths[0]) || {};
     initial.selectedPolicyDraft = initial.selectedPolicyDraft || (initial.policyDrafts[0]) || {};
     initial.selectedReport = initial.selectedReport || ((initial.reports || [])[0]) || {};
@@ -1125,7 +1133,8 @@ data(){
       const taskDetailPath=this.selectedTask&&this.selectedTask.id?'/assessment/tasks/'+this.selectedTask.id:'/assessment/tasks';
       const skillDetailPath=this.selectedSkill&&this.selectedSkill.id?'/assessment/skills/'+this.selectedSkill.id:'/assessment/skills';
       const findingDetailPath=this.selectedFinding&&this.selectedFinding.id?'/assessment/findings/'+this.selectedFinding.id:'/assessment/findings';
-      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters',profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
+      const adapterDetailPath=this.selectedAdapter&&this.selectedAdapter.id?'/assessment/adapters/'+this.selectedAdapter.id:'/assessment/adapters';
+      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','agent-scan':'/assessment/agent-scan',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp',consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases',execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports',retests:'/assessment/retests',rules:'/assessment/rules',scanners:'/assessment/scanners',schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
       return map[key]||'/assessment';
     },
     keyForPath(path){
@@ -1136,7 +1145,7 @@ data(){
       if(path.startsWith('/assessment/tasks/')) return 'task-detail';
       if(path.startsWith('/assessment/skills/')) return 'skill-detail';
       if(path.startsWith('/assessment/findings/')) return 'finding-detail';
-      if(path.startsWith('/assessment/adapters/')) return 'adapters';
+      if(path.startsWith('/assessment/adapters/')) return 'adapter-detail';
       if(path.startsWith('/assessment/agent-scan/issues')) return 'agent-scan';
       if(path.startsWith('/assessment/mcp/')) return 'mcp';
       if(path.startsWith('/assessment/tools/')) return 'mcp';
@@ -1184,6 +1193,13 @@ data(){
         const found=(this.findings || []).find(f=>String(f.id)===findingId || String(f.title)===findingId);
         if(found) this.selectedFinding=found;
         if(this.current==='finding-detail') this.loadFindingHistory(found || {id:findingId}, {silent:true});
+      }
+      const adapterMatch=path.match(/^\/assessment\/adapters\/([^/]+)/);
+      if(adapterMatch){
+        const adapterId=decodeURIComponent(adapterMatch[1]);
+        const found=(this.agents || []).find(a=>String(a.id)===adapterId || String(a.name)===adapterId || String(a.product)===adapterId);
+        this.selectedAdapter=found || {id:adapterId, name:adapterId};
+        if(this.current==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});
       }
       if(this.current==='abom' && this.selectedAsset && this.selectedAsset.id){
         this.loadAgentAbom(this.selectedAsset);
@@ -1341,7 +1357,7 @@ data(){
       finally { this.opsBusy=false; }
     },
 
-    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
+    go(key){this.current=key;this.pushRoute(key);window.scrollTo({top:0,behavior:'smooth'});if(key==='abom') this.loadAgentAbom(this.selectedAsset);if(key==='adapter-detail') this.loadAdapterDetail(this.selectedAdapter, {silent:true});if(key==='settings') this.loadSettings();if(key==='agent-scan') this.refreshAgentScanCompat({silent:true});if(key==='licenses') this.refreshLicenseContext({silent:true});if(key==='quick-scan') this.refreshQuickHistory({silent:true});if(key==='completeness') this.refreshCompleteness({silent:true});if(key==='api-debug') this.refreshApiDebugOpenapi({silent:true});if(key==='platform-embed') this.refreshPlatformEmbedContext({silent:true});},
     toastMsg(msg){this.toast=msg;clearTimeout(this._toastTimer);this._toastTimer=setTimeout(()=>this.toast='',2400);},
     formatBytes(bytes){
       const value=Number(bytes)||0;
@@ -1623,7 +1639,47 @@ data(){
       else { this.quickMode='machine'; this.toastMsg('已选择 '+a.name+'，将扫描本机发现资产'); }
       this.current='quick-scan';
     },
-    viewAdapter(a){this.adapterSelfTestResult=a && a.last_self_test_status ? {adapter_id:a.id, status:a.last_self_test_status, checked_at:a.last_self_test_at, version:a.version, install_status:a.install_status, checks:[]} : this.adapterSelfTestResult; this.toastMsg(a.name+' 适配器覆盖已定位');this.current='adapters';},
+    async viewAdapter(a){
+      if(!a || !(a.id || a.name)) return;
+      this.selectedAdapter=a;
+      this.current='adapter-detail';
+      this.pushRoute('adapter-detail');
+      window.scrollTo({top:0,behavior:'smooth'});
+      await this.loadAdapterDetail(a);
+    },
+    async loadAdapterDetail(adapter, options){
+      const target=adapter || this.selectedAdapter || {};
+      const id=target.id || target.name || target.product;
+      if(!id) return null;
+      const silent=options && options.silent;
+      if(!silent){ this.opsBusy=true; this.apiError=''; }
+      try {
+        const res=await this.apiGet('/api/v1/adapters/'+encodeURIComponent(id));
+        const detail=res.item || target;
+        this.selectedAdapter=detail;
+        this.adapterDetail=detail;
+        this.mergeRecords('agents', [detail]);
+        if(detail.last_self_test_download) this.adapterDetailDownload=detail.last_self_test_download;
+        if(detail.last_self_test_status){
+          this.adapterDetailSelfTest=Object.assign({}, this.adapterDetailSelfTest || {}, {
+            adapter_id:detail.id,
+            product:detail.product || detail.name,
+            status:detail.last_self_test_status,
+            checked_at:detail.last_self_test_at,
+            version:detail.version,
+            install_status:detail.install_status,
+            download:detail.last_self_test_download
+          });
+        }
+        if(!silent) this.toastMsg((detail.name || id)+' 适配器详情已读取');
+        return detail;
+      } catch (err) {
+        if(!silent) this.apiError=this.describeError(err);
+        return null;
+      } finally {
+        if(!silent) this.opsBusy=false;
+      }
+    },
     profileId(profile){ return profile && (profile.id || profile.name); },
     useProfile(profile){
       const target=profile || this.selectedProfile || {};
@@ -1710,8 +1766,14 @@ data(){
         const res=await this.apiPost('/api/v1/adapters/'+encodeURIComponent(id)+'/self-test', {});
         const test=res.self_test || {};
         this.adapterSelfTestResult=test;
+        this.adapterDetailSelfTest=test;
+        this.adapterDetailDownload=test.download || this.adapterDetailDownload;
         if(res.adapter) this.mergeRecords('agents', [res.adapter]);
         if(test.adapter) this.mergeRecords('agents', [test.adapter]);
+        if(this.selectedAdapter && (String(this.selectedAdapter.id||this.selectedAdapter.name)===String(id))){
+          this.selectedAdapter=res.adapter || test.adapter || this.selectedAdapter;
+          this.adapterDetail=this.selectedAdapter;
+        }
         if(test.discovered_agents) this.mergeRecords('agentAssets', test.discovered_agents);
         if(!silent) this.toastMsg((adapter.name || id)+' 自测完成：'+(test.status || 'DONE'));
         return test;
@@ -1721,6 +1783,20 @@ data(){
       } finally {
         if(!silent) this.opsBusy=false;
       }
+    },
+    async runAdapterDetailSelfTest(){
+      const target=this.adapterDetail || this.selectedAdapter;
+      if(!target || !(target.id || target.name)) return;
+      try {
+        await this.selfTestAdapter(target);
+        await this.loadAdapterDetail(target, {silent:true});
+      } catch (err) {
+        this.apiError=this.describeError(err);
+      }
+    },
+    downloadAdapterDetailSelfTest(){
+      const link=this.adapterDetailDownload || (this.adapterDetailSelfTest && this.adapterDetailSelfTest.download) || (this.adapterDetail && this.adapterDetail.last_self_test_download);
+      if(link) window.open(link, '_blank', 'noopener');
     },
     async selfTestAllAdapters(){
       const list=(this.agents || []).slice(0, 12);

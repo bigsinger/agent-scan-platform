@@ -43,6 +43,8 @@
 
 当前实现要求：Codex 自测必须通过本机只读发现识别 PATH/WindowsApps `codex.exe` 路径和包名版本，兼容 `app/Codex.exe` 与 `app/resources/codex.exe`；不得启动 Codex 交互运行时，不得修改 `~/.codex`、项目 `.codex` 或 `.agents/skills`。返回结果必须包含 `checks`、`artifact`、`mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`。
 
+当前实现状态：正式应用保留 `/assessment/adapters/codex` 独立深链，前端进入共享 `adapter-detail` 运行态详情页。页面读取 `GET /api/v1/adapters/codex` 展示安装状态、覆盖矩阵、安全边界和最近 artifact；“运行只读自测”调用 `POST /api/v1/adapters/codex/self-test`，只写本系统 SQLite 与 `data/artifacts/adapter-self-test`。
+
 接口返回必须统一包装：
 
 ```json

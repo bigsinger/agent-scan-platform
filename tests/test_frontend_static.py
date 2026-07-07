@@ -129,6 +129,22 @@ def test_adapter_self_test_ui_is_api_backed():
     assert "/api/v1/adapters/" in app_js
 
 
+def test_adapter_detail_deep_links_are_runtime_backed():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+
+    assert "current==='adapter-detail'" in html
+    assert "if(path.startsWith('/assessment/adapters/')) return 'adapter-detail';" in app_js
+    assert "'adapter-detail':adapterDetailPath" in app_js
+    assert "async loadAdapterDetail" in app_js
+    assert "async runAdapterDetailSelfTest" in app_js
+    assert "downloadAdapterDetailSelfTest" in app_js
+    assert "adapterDetailSelfTest" in html
+    assert "`/api/v1/adapters/{id}`" in html
+    assert "运行只读自测" in html
+    assert "不会显示原型样例数据" in html
+
+
 def test_agent_scan_compat_ui_is_api_backed():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

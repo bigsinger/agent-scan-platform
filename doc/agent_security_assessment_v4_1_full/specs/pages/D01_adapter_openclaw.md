@@ -40,6 +40,8 @@
 - `GET /api/v1/adapters/openclaw`
 - `POST /api/v1/adapters/openclaw/self-test`
 
+当前实现状态：正式应用保留 `/assessment/adapters/openclaw` 独立深链，前端进入共享 `adapter-detail` 运行态详情页。页面读取 `GET /api/v1/adapters/openclaw` 展示安装状态、覆盖矩阵、安全边界和最近 artifact；“运行只读自测”调用 `POST /api/v1/adapters/openclaw/self-test`，只写本系统 SQLite 与 `data/artifacts/adapter-self-test`，不得启动 OpenClaw 或 stdio MCP。
+
 接口返回必须统一包装：
 
 ```json
