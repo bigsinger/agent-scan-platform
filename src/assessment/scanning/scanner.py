@@ -4,10 +4,12 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from ..reports import ReportRenderer
 from ..store import AssessmentStore, REPO_ROOT, new_id, utc_now
-from .discovery import DiscoveryEngine
+from .discovery import DiscoveryEngine, extract_mcp_servers, strip_json_comments
+from .mcp_static import derive_mcp_tools, highest_mcp_risk, mcp_static_risks, sanitize_mcp_server, tool_flows
 from .models import DiscoveryResult, RuleMatch, ScanRequest, ScanResult, effective_user_scope, flag, normalize_user_scope
 from .redaction import file_digest, redact_text, safe_display_path, stable_hash
 from .rules import analyze_text, rule_catalog
@@ -100,6 +102,8 @@ class LocalScanEngine:
                 "dry_run_redteam_executed": False,
                 "errors": discovery.errors,
             }
+        if mode == "mcp":
+            return self._precheck_mcp_target(request)
         target = request.target_path or REPO_ROOT
         exists = target.exists()
         readable = os.access(target, os.R_OK) if exists else False
@@ -165,8 +169,14 @@ class LocalScanEngine:
     def run_assessment(self, request: ScanRequest, name: str = "本地 Agent 安全测评") -> ScanResult:
         target = request.target_path.expanduser() if request.target_path else None
         machine_mode = request.mode == "machine" and target is None
-        target_root = Path.home() if machine_mode else (target if target and target.is_dir() else target.parent if target else REPO_ROOT)
-        display_target = "本机 Agent 配置" if machine_mode else safe_display_path(target or REPO_ROOT, target_root if target and target.exists() else REPO_ROOT)
+        mcp_mode = request.mode == "mcp"
+        target_root = REPO_ROOT if mcp_mode else Path.home() if machine_mode else (target if target and target.is_dir() else target.parent if target else REPO_ROOT)
+        if mcp_mode:
+            display_target = mcp_target_label(request)
+        elif machine_mode:
+            display_target = "本机 Agent 配置"
+        else:
+            display_target = safe_display_path(target or REPO_ROOT, target_root if target and target.exists() else REPO_ROOT)
         scan_options = request.scan_options
         assessment = {
             "id": new_id("asm"),
@@ -220,6 +230,9 @@ class LocalScanEngine:
                 },
             )
         )
+
+        if mcp_mode:
+            return self._run_mcp_assessment(request, assessment, events)
 
         if target is not None and not target.exists():
             assessment.update({"status": "失败", "stage": "FAILED", "progress": 100, "finished_at": utc_now()})
@@ -362,6 +375,402 @@ class LocalScanEngine:
         self.store.upsert_record("assessment", assessment, status="COMPLETED")
         self._sync_state(assessment, discovery, findings, evidence, report, events)
         return ScanResult(assessment, discovery, findings, evidence, report, files_scanned, files_skipped, events)
+
+    def _precheck_mcp_target(self, request: ScanRequest) -> dict[str, Any]:
+        discovery = self._discover_mcp_target(request)
+        self._apply_request_options(discovery, request)
+        has_server = bool(discovery.mcp_servers)
+        target_label = mcp_target_label(request)
+        return {
+            "status": "PASS" if has_server else "FAILED",
+            "mode": "mcp",
+            "target": target_label,
+            "readable": has_server,
+            "agents": len(discovery.agents),
+            "configs": len([hit for hit in discovery.hits if hit.get("type") in {"Config", "MCP"}]),
+            "mcp_servers": len(discovery.mcp_servers),
+            "skills": 0,
+            "scan_files": 0,
+            "candidate_scan_files": len(discovery.scan_paths),
+            "scan_options": request.scan_options,
+            "remote_analysis": False,
+            "remote_analysis_requested": request.remote_analysis_requested,
+            "cloud_analysis_status": request.scan_options["cloud_analysis_status"],
+            "mutates_installed_agents": False,
+            "user_scope": request.user_scope,
+            "user_scope_requested": request.user_scope,
+            "effective_user_scope": request.scan_options["effective_user_scope"],
+            "execution_mode": request.execution_mode,
+            "effective_execution_mode": request.scan_options["effective_execution_mode"],
+            "mcp_policy": request.scan_options["mcp_policy"],
+            "stdio_mcp_started": False,
+            "agent_runtime_started": False,
+            "dry_run_redteam_requested": request.scan_options["dry_run_redteam_requested"],
+            "dry_run_redteam_executed": False,
+            "errors": discovery.errors,
+        }
+
+    def _run_mcp_assessment(
+        self,
+        request: ScanRequest,
+        assessment: dict[str, Any],
+        events: list[dict[str, Any]],
+    ) -> ScanResult:
+        discovery = self._discover_mcp_target(request)
+        self._apply_request_options(discovery, request)
+        self._persist_discovery(discovery)
+        events.append(
+            self._event(
+                assessment["id"],
+                "discovery.completed",
+                f"MCP 目标识别完成：MCP {len(discovery.mcp_servers)}，待审批 {len(discovery.consents)}",
+                {"run_id": discovery.run["id"], "errors": discovery.errors[:3]},
+            )
+        )
+
+        inspection = self._inspect_mcp_discovery_servers(assessment, discovery)
+        findings = inspection["findings"]
+        evidence = inspection["evidence"]
+        events.append(
+            self._event(
+                assessment["id"],
+                "mcp_static.completed",
+                f"MCP 静态检查完成：{len(discovery.mcp_servers)} 个 Server，{len(findings)} 项风险",
+                {
+                    "mcp_servers": len(discovery.mcp_servers),
+                    "finding_count": len(findings),
+                    "tool_count": inspection["tool_count"],
+                    "flow_count": inspection["flow_count"],
+                    "stdio_mcp_started": False,
+                },
+            )
+        )
+
+        p0 = len([f for f in findings if "P0" in f["severity"] or "严重" in f["severity"]])
+        p1 = len([f for f in findings if "P1" in f["severity"] or "高危" in f["severity"]])
+        completed = bool(discovery.mcp_servers)
+        assessment.update(
+            {
+                "stage": "DONE" if completed and not discovery.consents else "WAITING_CONSENT" if completed else "FAILED",
+                "progress": 100,
+                "critical": p0,
+                "high": p1,
+                "status": "部分完成" if discovery.consents else "已完成" if completed else "失败",
+                "finished_at": utc_now(),
+                "files_scanned": 0,
+                "files_skipped": 0,
+                "finding_count": len(findings),
+                "pending_consents": len(discovery.consents),
+                "scan_options": request.scan_options,
+            }
+        )
+        self.store.upsert_record("assessment", assessment, status="COMPLETED" if completed else "FAILED")
+        report = self.reporter.create_report(
+            assessment,
+            findings,
+            evidence,
+            discovery={
+                "run": discovery.run,
+                "hits": discovery.hits,
+                "agents": discovery.agents,
+                "mcp_servers": discovery.mcp_servers,
+                "skills": discovery.skills,
+                "errors": discovery.errors,
+                "scan_options": request.scan_options,
+            },
+        )
+        events.append(
+            self._event(
+                assessment["id"],
+                "report.ready",
+                "HTML/JSON 报告已生成",
+                {"report_id": report["id"], "html_path": report.get("html_path"), "json_path": report.get("json_path")},
+            )
+        )
+        self._sync_state(assessment, discovery, findings, evidence, report, events)
+        return ScanResult(assessment, discovery, findings, evidence, report, 0, 0, events)
+
+    def _discover_mcp_target(self, request: ScanRequest) -> DiscoveryResult:
+        run = {
+            "id": new_id("disc"),
+            "status": "COMPLETED",
+            "scope": "explicit-mcp",
+            "started_at": utc_now(),
+            "finished_at": utc_now(),
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "stdio_mcp_started": False,
+            "agent_runtime_started": False,
+            "note": "单个 MCP 只读静态识别；未启动 stdio MCP Server，未连接 Remote MCP。",
+        }
+        raw = (request.target_ref or "").strip()
+        target = request.target_path.expanduser() if request.target_path else None
+        if raw and looks_like_mcp_url(raw):
+            return self._discovery_from_mcp_records(run, [mcp_server_from_url(raw)])
+        if raw and looks_like_inline_mcp_config(raw):
+            records = mcp_servers_from_text(raw, source_label="inline-mcp-config", source_hash=stable_hash(raw, 64))
+            if records:
+                return self._discovery_from_mcp_records(run, records)
+            result = DiscoveryResult(run=run)
+            result.run["status"] = "FAILED"
+            result.errors.append({"target": "inline-mcp-config", "error": "MCP JSON 无法解析，或未包含 mcpServers/command/url"})
+            return result
+        try:
+            target_exists = bool(target and target.exists())
+        except OSError as exc:
+            result = DiscoveryResult(run=run)
+            result.run["status"] = "FAILED"
+            result.errors.append({"target": raw or "mcp", "error": f"目标路径不可访问：{exc}"})
+            return result
+        if target and target_exists:
+            discovery = self.discovery.discover([target], scope="explicit-mcp", probe_installed=False)
+            discovery.run.update(run)
+            discovery.hits = [hit for hit in discovery.hits if hit.get("type") in {"Config", "MCP"}]
+            discovery.skills = []
+            discovery.scan_paths = []
+            discovery.components = [component for component in discovery.components if component.get("type") in {"Config", "MCP", "MCP Server"}]
+            if discovery.mcp_servers:
+                discovery.run.update(
+                    {
+                        "finished_at": utc_now(),
+                        "hit_count": len(discovery.hits),
+                        "agent_count": len(discovery.agents),
+                        "mcp_count": len(discovery.mcp_servers),
+                        "skill_count": 0,
+                        "error_count": len(discovery.errors),
+                    }
+                )
+                return discovery
+            text = read_text(target) if target.is_file() else None
+            if text:
+                records = mcp_servers_from_text(text, source_label=safe_display_path(target, target.parent), source_hash=file_digest(target))
+                if records:
+                    return self._discovery_from_mcp_records(run, records)
+            discovery.errors.append({"target": safe_display_path(target, target.parent if target_exists else REPO_ROOT), "error": "未从目标中识别到 MCP Server"})
+            discovery.run["status"] = "FAILED"
+            return discovery
+        result = DiscoveryResult(run=run)
+        result.run["status"] = "FAILED"
+        result.errors.append({"target": raw or "mcp", "error": "请填写 Remote MCP URL、.mcp.json 文件路径或 MCP JSON 配置"})
+        return result
+
+    def _discovery_from_mcp_records(self, run: dict[str, Any], records: list[dict[str, Any]]) -> DiscoveryResult:
+        result = DiscoveryResult(run=run)
+        now = utc_now()
+        for server in records:
+            result.mcp_servers.append(server)
+            source = str(server.get("config") or server.get("url") or server.get("name") or "mcp")
+            result.hits.append(
+                {
+                    "id": "hit_" + stable_hash(f"{server.get('id')}:{source}", 20),
+                    "type": "MCP",
+                    "agent": server.get("agent") or "MCP",
+                    "path": source,
+                    "path_hash": stable_hash(source),
+                    "scope": "explicit-mcp",
+                    "source": "quick-scan-mcp",
+                    "sha256": server.get("config_sha256") or stable_hash(source, 64),
+                    "status": "可导入",
+                    "created_at": now,
+                }
+            )
+            result.components.append(
+                {
+                    "id": "cmp_" + stable_hash(str(server.get("id") or source), 20),
+                    "type": "MCP Server",
+                    "name": server.get("name") or server.get("id"),
+                    "source": source,
+                    "trust": "Local" if server.get("transport") == "stdio" else "Remote",
+                    "risk": server.get("risk") or "待检查",
+                    "riskClass": server.get("riskClass") or "medium",
+                }
+            )
+            if server.get("transport") == "stdio":
+                result.consents.append(
+                    {
+                        "id": "consent_" + stable_hash(str(server.get("id")), 20),
+                        "server": server.get("name"),
+                        "mcp_server_id": server.get("id"),
+                        "agent": server.get("agent") or "MCP",
+                        "command": server.get("command") or "",
+                        "args": server.get("args") or [],
+                        "env": {key: "<REDACTED>" for key in server.get("env_keys") or []},
+                        "config": source,
+                        "config_sha256": server.get("config_sha256"),
+                        "status": "待审批",
+                        "scope": "本任务",
+                        "reason": "stdio MCP 默认不启动，需逐项审批",
+                        "created_at": now,
+                    }
+                )
+        result.run.update(
+            {
+                "finished_at": utc_now(),
+                "hit_count": len(result.hits),
+                "agent_count": 0,
+                "mcp_count": len(result.mcp_servers),
+                "skill_count": 0,
+                "error_count": len(result.errors),
+            }
+        )
+        return result
+
+    def _inspect_mcp_discovery_servers(self, assessment: dict[str, Any], discovery: DiscoveryResult) -> dict[str, Any]:
+        findings: list[dict[str, Any]] = []
+        evidence: list[dict[str, Any]] = []
+        updated_servers: list[dict[str, Any]] = []
+        tool_count = 0
+        flow_count = 0
+
+        for server in discovery.mcp_servers:
+            checked_at = utc_now()
+            risks = mcp_static_risks(server)
+            highest = highest_mcp_risk(risks)
+            signature_payload = {
+                "server_id": server.get("id"),
+                "name": server.get("name"),
+                "transport": server.get("transport"),
+                "config_sha256": server.get("config_sha256"),
+                "command": server.get("command"),
+                "args": server.get("args", []),
+                "url": server.get("url"),
+                "risk_rules": [risk["rule"] for risk in risks],
+            }
+            signature_hash = stable_hash(json.dumps(signature_payload, ensure_ascii=False, sort_keys=True), 16)
+            signature = {
+                "id": "sig_" + stable_hash(str(server.get("id")) + signature_hash, 20),
+                "server_id": server.get("id"),
+                "server": server.get("name"),
+                "signature": "static:" + signature_hash,
+                "transport": server.get("transport"),
+                "risk_rules": [risk["rule"] for risk in risks],
+                "safe_mode": "local-readonly",
+                "external_process_started": False,
+                "mcp_started": False,
+                "checked_at": checked_at,
+            }
+            updated_signature = self.store.upsert_record("mcp_signature", signature, status="READY")
+            updated_server = dict(server)
+            updated_server.update(
+                {
+                    "signature": updated_signature["signature"],
+                    "inspection_status": "已检查",
+                    "inspected_at": checked_at,
+                    "risk": highest["label"],
+                    "riskClass": highest["class"],
+                    "status": "待审批" if str(server.get("transport")) == "stdio" else "已静态检查",
+                    "statusClass": "medium" if str(server.get("transport")) == "stdio" else highest["class"],
+                    "safe_mode": "local-readonly",
+                    "external_process_started": False,
+                    "mcp_started": False,
+                }
+            )
+            updated_server = self.store.upsert_record("mcp_server", updated_server, status=str(updated_server.get("status") or "INSPECTED"))
+            updated_servers.append(updated_server)
+
+            updated_tools: list[dict[str, Any]] = []
+            updated_flows: list[dict[str, Any]] = []
+            for tool in derive_mcp_tools(updated_server, risks, checked_at):
+                updated_tool = self.store.upsert_record("mcp_tool", tool, status=str(tool.get("status") or "STATIC_ONLY"))
+                updated_tools.append(updated_tool)
+                for label in updated_tool.get("labels") or []:
+                    self.store.upsert_record(
+                        "tool_label",
+                        {
+                            "id": "tl_" + stable_hash(f"{updated_tool.get('id')}:{label}", 20),
+                            "tool_id": updated_tool.get("id"),
+                            "server_id": updated_tool.get("server_id"),
+                            "server": updated_tool.get("server"),
+                            "label": label,
+                            "source": "quick-scan-mcp-static",
+                            "safe_mode": "local-readonly",
+                            "mutates_installed_agents": False,
+                            "created_at": checked_at,
+                        },
+                        status="ACTIVE",
+                    )
+                for flow in tool_flows(updated_tool, updated_server):
+                    updated_flow = self.store.upsert_record("toxic_flow", flow, status=str(flow.get("status") or "STATIC_ONLY"))
+                    updated_flows.append(updated_flow)
+            tool_count += len(updated_tools)
+            flow_count += len(updated_flows)
+
+            server_findings: list[dict[str, Any]] = []
+            for risk in risks:
+                if risk.get("severity") not in {"严重 P0", "高危 P1", "中危 P2"}:
+                    continue
+                finding = {
+                    "id": "fnd_" + stable_hash(f"{assessment.get('id')}:{server.get('id')}:{risk['rule']}:{signature_hash}", 24),
+                    "assessment_id": assessment["id"],
+                    "title": risk["title"],
+                    "severity": risk["severity"],
+                    "sevClass": risk["class"],
+                    "summary": risk["summary"],
+                    "agent": server.get("agent") or "MCP",
+                    "rule": risk["rule"],
+                    "rule_id": risk["rule"],
+                    "source": "Quick MCP Static Inspect",
+                    "confidence": risk["confidence"],
+                    "component": server.get("name") or server.get("id"),
+                    "evidence": risk["evidence"],
+                    "fix": risk["fix"],
+                    "remediation": risk["fix"],
+                    "status": "待复核",
+                    "priority": priority_for(risk["severity"]),
+                    "safe_mode": "local-readonly",
+                    "created_at": checked_at,
+                }
+                updated_finding = self.store.upsert_record("finding", finding, status="NEEDS_REVIEW")
+                findings.append(updated_finding)
+                server_findings.append(updated_finding)
+
+            evidence_payload = {
+                "schema": "agent-security-quick-mcp-static-scan@4.1",
+                "assessment_id": assessment["id"],
+                "server": sanitize_mcp_server(updated_server),
+                "signature": updated_signature,
+                "risks": risks,
+                "tools": updated_tools,
+                "toxic_flows": updated_flows,
+                "finding_ids": [finding["id"] for finding in server_findings],
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "external_process_started": False,
+                "mcp_started": False,
+                "boundary": "快速扫描单个 MCP 只做静态解析；未启动 stdio MCP Server，未执行命令，未连接 Remote MCP。",
+                "checked_at": checked_at,
+            }
+            artifact = self.store.write_artifact(
+                "quick-mcp-static-inspection",
+                json.dumps(evidence_payload, ensure_ascii=False, indent=2),
+                suffix="json",
+                metadata={"assessment_id": assessment["id"], "server_id": server.get("id"), "safe_mode": "local-readonly"},
+            )
+            ev = {
+                "id": new_id("ev"),
+                "assessment_id": assessment["id"],
+                "type": "quick_mcp_static_inspection",
+                "collector": "quick-mcp-static-inspect",
+                "redaction": "已脱敏",
+                "level": highest["class"],
+                "text": f"MCP 快速静态检查：{server.get('name')} · {highest['label']}",
+                "content": json.dumps({"server": sanitize_mcp_server(updated_server), "risks": risks[:5]}, ensure_ascii=False),
+                "mcp_server_id": server.get("id"),
+                "finding_ids": [finding["id"] for finding in server_findings],
+                "artifact_id": artifact["id"],
+                "artifact_path": artifact["relative_path"],
+                "safe_mode": "local-readonly",
+                "created_at": checked_at,
+            }
+            ev["download"] = f"/api/v1/evidence/{ev['id']}/download"
+            updated_evidence = self.store.upsert_record("evidence", ev, status="READY")
+            evidence.append(updated_evidence)
+            for finding in server_findings:
+                finding["evidence_ids"] = [updated_evidence["id"]]
+                self.store.upsert_record("finding", finding, status="NEEDS_REVIEW")
+
+        discovery.mcp_servers = updated_servers
+        return {"findings": findings, "evidence": evidence, "tool_count": tool_count, "flow_count": flow_count}
 
     def run_discovery(self, payload: dict[str, Any]) -> DiscoveryResult:
         raw_paths = payload.get("paths") or payload.get("additional_paths") or payload.get("path") or payload.get("target_path")
@@ -651,6 +1060,120 @@ def iter_scan_files(target: Path, max_files: int, max_depth: int) -> list[Path]:
             if len(result) >= max_files:
                 return result
     return result
+
+
+def mcp_target_label(request: ScanRequest) -> str:
+    raw = (request.target_ref or "").strip()
+    if raw:
+        if looks_like_mcp_url(raw):
+            return redact_mcp_url(raw)
+        if looks_like_inline_mcp_config(raw):
+            return "inline-mcp-config"
+        return raw
+    if request.target_path:
+        return safe_display_path(request.target_path, request.target_path.parent if request.target_path.exists() else REPO_ROOT)
+    return "MCP Server"
+
+
+def looks_like_mcp_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value.strip())
+    except ValueError:
+        return False
+    return parsed.scheme.lower() in {"http", "https", "ws", "wss"} and bool(parsed.netloc)
+
+
+def looks_like_inline_mcp_config(value: str) -> bool:
+    stripped = value.strip()
+    return stripped.startswith("{") and stripped.endswith("}")
+
+
+def mcp_server_from_url(raw_url: str) -> dict[str, Any]:
+    parsed = urlparse(raw_url.strip())
+    host = parsed.hostname or "remote-mcp"
+    name = host if parsed.path in {"", "/"} else f"{host}{parsed.path}".strip("/")
+    config_hash = stable_hash(raw_url, 64)
+    transport = "http" if parsed.scheme.lower() in {"http", "https"} else parsed.scheme.lower()
+    return {
+        "id": "mcp_remote_" + stable_hash(raw_url, 20),
+        "name": name[:120],
+        "agent": "Remote MCP",
+        "transport": transport,
+        "config": "remote-url",
+        "status": "已静态检查",
+        "statusClass": "medium",
+        "signature": "未握手",
+        "risk": "待检查",
+        "riskClass": "medium",
+        "command": "",
+        "args": [],
+        "env_keys": [],
+        "url": redact_mcp_url(raw_url),
+        "url_has_credentials": bool(parsed.username or parsed.password),
+        "config_sha256": config_hash,
+        "safe_mode": "local-readonly",
+        "external_process_started": False,
+        "mcp_started": False,
+    }
+
+
+def redact_mcp_url(raw_url: str) -> str:
+    try:
+        parsed = urlparse(raw_url.strip())
+    except ValueError:
+        return redact_text(raw_url)
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        netloc = f"{host}:{parsed.port}" if parsed.port else host
+    except ValueError:
+        netloc = host
+    return redact_text(urlunparse(parsed._replace(netloc=netloc)))
+
+
+def mcp_servers_from_text(text: str, source_label: str, source_hash: str) -> list[dict[str, Any]]:
+    try:
+        config = json.loads(strip_json_comments(text))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(config, dict):
+        return []
+    servers = extract_mcp_servers(config)
+    if not servers and any(key in config for key in ("command", "cmd", "url", "endpoint")):
+        servers = {str(config.get("name") or "inline-mcp"): config}
+    return [mcp_server_from_config(name, server, source_label, source_hash) for name, server in servers.items()]
+
+
+def mcp_server_from_config(name: str, server: dict[str, Any], source_label: str, source_hash: str) -> dict[str, Any]:
+    command = str(server.get("command") or server.get("cmd") or "")
+    raw_args = server.get("args") or []
+    args = raw_args if isinstance(raw_args, list) else [raw_args]
+    env = server.get("env") or server.get("environment") or {}
+    url = str(server.get("url") or server.get("endpoint") or "")
+    transport = "stdio" if command else "http" if url else str(server.get("transport") or "unknown")
+    parsed_url = urlparse(url) if url else None
+    return {
+        "id": "mcp_" + stable_hash(source_hash + name, 20),
+        "name": name,
+        "agent": str(server.get("agent") or "MCP"),
+        "transport": transport,
+        "config": source_label,
+        "status": "待审批" if transport == "stdio" else "已静态检查",
+        "statusClass": "medium",
+        "signature": "未握手",
+        "risk": "待审批" if transport == "stdio" else "待检查",
+        "riskClass": "medium",
+        "command": redact_text(command),
+        "args": [redact_text(str(arg)) for arg in args[:20]],
+        "env_keys": sorted(env.keys()) if isinstance(env, dict) else [],
+        "url": redact_mcp_url(url) if url else "",
+        "url_has_credentials": bool(parsed_url and (parsed_url.username or parsed_url.password)),
+        "config_sha256": source_hash,
+        "safe_mode": "local-readonly",
+        "external_process_started": False,
+        "mcp_started": False,
+    }
 
 
 def should_scan_file(path: Path) -> bool:

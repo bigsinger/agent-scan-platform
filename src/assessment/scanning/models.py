@@ -21,6 +21,7 @@ class ScanLimits:
 class ScanRequest:
     mode: str = "path"
     target_path: Path | None = None
+    target_ref: str = ""
     adapter: str = "auto"
     include_skills: bool = True
     include_mcp: bool = True
@@ -45,8 +46,9 @@ class ScanRequest:
             or payload.get("url")
             or payload.get("workspace")
         )
-        if raw_target:
-            target = Path(str(raw_target)).expanduser()
+        target_ref = str(raw_target).strip() if raw_target is not None else ""
+        if target_ref:
+            target = Path(target_ref).expanduser()
         elif mode == "machine":
             target = None
         else:
@@ -57,6 +59,7 @@ class ScanRequest:
         return cls(
             mode=mode,
             target_path=target,
+            target_ref=target_ref,
             adapter=str(payload.get("adapter") or "auto"),
             include_skills=flag(payload, ("include_skills", "scan_skills", "scanSkills"), True),
             include_mcp=flag(payload, ("include_mcp", "scan_mcp", "scanMcp"), True),

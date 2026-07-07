@@ -128,7 +128,7 @@
       <div class="form-grid" style="margin-top:12px">
         <div class="field"><label>扫描模式</label><select v-model="quickMode"><option value="machine">发现本机 Agent</option><option value="path">指定目录/文件</option><option value="mcp">单个 MCP Server</option></select></div>
         <div class="field"><label>Agent 类型提示</label><select v-model="form.adapter"><option>自动识别</option><option>OpenClaw</option><option>Hermes</option><option>Claude Code</option><option>Codex</option><option>通用</option></select></div>
-        <div class="field full"><label>路径 / URL</label><input v-model="form.targetPath" placeholder="machine 模式留空扫描本机 Agent；path 模式填写本机路径、配置文件或 Remote MCP URL"></div>
+        <div class="field full"><label>路径 / URL / MCP JSON</label><input v-model="form.targetPath" placeholder="machine 留空；path 填本机路径；mcp 填 Remote URL、.mcp.json 路径或 JSON 配置"></div>
         <div class="field"><label>用户范围</label><select v-model="form.quickUserScope"><option value="current-user">当前用户</option><option value="readable-users">所有可读用户</option></select><div class="hint">当前本地安全实现会保留请求范围，并将实际扫描范围回写为当前用户。</div></div>
         <div class="field"><label>执行模式</label><select v-model="form.quickExecutionMode"><option value="readonly">只读检查（推荐）</option><option value="mcp-consent">检查 + MCP 逐项审批</option><option value="dry-run-redteam">完整 Dry-run 红队</option></select></div>
         <div class="field"><label class="toggle"><input type="checkbox" v-model="form.scanSkills"> 扫描 Skills</label></div>

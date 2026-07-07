@@ -92,7 +92,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 | --- | --- |
 | 扫描模式 | 本机发现、指定目录/文件、单个 MCP Server |
 | Agent 类型提示 | 可选择 Claude Code、Codex、OpenClaw、Hermes 或自动识别 |
-| 路径 / URL | 留空时扫描当前服务目录；建议填写明确目录或配置文件 |
+| 路径 / URL / MCP JSON | `machine` 留空扫描本机 Agent；`path` 填本机目录或文件；`mcp` 支持 Remote MCP URL、`.mcp.json` 文件路径或 inline MCP JSON 配置 |
 | 用户范围 | 对应 `user_scope`。当前支持 `current-user` 真实扫描；选择 `readable-users` 会记录请求意图，并在结果中回写 `effective_user_scope=current-user` |
 | 执行模式 | 对应 `execution_mode`。`readonly` 仅执行只读发现/静态分析；`mcp-consent` 记录逐 Server 审批策略但不会自动启动 stdio；`dry-run-redteam` 会在快速扫描后执行本地 deterministic dry-run 红队 |
 | 扫描 Skills | 对应 `scan_skills/include_skills`，关闭后发现结果、扫描文件和报告中不纳入 Skill 文件 |
@@ -110,6 +110,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 - Finding 风险。
 - Evidence 证据。
 - HTML/JSON 报告。
+
+选择“单个 MCP Server”时，系统不会把 URL 当作本机路径处理，而是执行真实的 MCP 静态检查链路：解析 Remote URL 或 MCP JSON，写入 `mcp_server`、`mcp_signature`、`mcp_tool`、`tool_label`、`toxic_flow`、`finding`、`evidence` 和报告。Remote URL 只做字符串与边界分析，不发起网络连接；stdio 配置只解析命令、参数和环境变量键，不启动 MCP Server。当前可识别明文 HTTP、localhost/私网 Remote MCP、URL 内嵌凭据、stdio 外壳命令、动态下载执行、敏感环境变量和文件系统边界等风险。
 
 选择“完整 Dry-run 红队”时，同一次请求还会生成 `redteam_run`、`redteam_message`、红队 evidence 和 JSON artifact。该运行使用本地 deterministic 规则，不调用外部模型，不启动 MCP/Tool，不读取敏感路径，也不修改已安装 Codex/Hermes/Claude Code/Cursor。
 
@@ -415,7 +417,7 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 | `powershell` / `cmd` 启动 | 拒绝或要求拆解为固定可审计命令 |
 | `curl | sh` / `iwr | iex` | 拒绝，属于下载即执行 |
 | Env 含 API Key | 移除明文，改为 Secret Reference |
-| Remote MCP 使用 HTTP | 要求 HTTPS、认证和 allowlist |
+| Remote MCP 使用 HTTP、localhost/私网地址或 URL 内嵌凭据 | 要求 HTTPS、认证、allowlist 和显式审批；凭据改用 Secret Reference |
 
 ## 5.1 MCP / Tool 只读静态检查
 
@@ -429,7 +431,7 @@ agent-scan 兼容页的“发现覆盖”来自 `/api/v1/agent-scan/compat.disco
 
 - 对已发现的 MCP Server 做静态签名，不启动 stdio Server，不做真实 handshake。
 - 根据命令、参数、URL、环境变量 Key、配置 Hash 派生 Tool Signature、Tool Label 和 Toxic Flow。
-- 自动识别 shell/powershell/cmd、`npx -y`、远程 URL、敏感环境变量、文件系统能力等风险。
+- 自动识别 shell/powershell/cmd、`npx -y`、远程 URL、localhost/私网目标、URL 内嵌凭据、敏感环境变量、文件系统能力等风险。
 - 生成 `mcp_signature`、`mcp_tool`、`tool_label`、`toxic_flow`、Finding、Evidence 和 `mcp-static-inspection` JSON artifact。
 
 安全边界：
