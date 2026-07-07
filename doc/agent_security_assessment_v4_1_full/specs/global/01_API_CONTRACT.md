@@ -129,9 +129,9 @@
 - `POST /api/v1/rules/{id}/publish`
 - `GET /api/v1/scanners/{id}`
 - `GET /api/v1/embed/context`
-- `POST /api/v1/integrations/runtime-platform/mock`
+- `POST /api/v1/integrations/runtime-platform/events`
 - `GET /api/v1/openapi.json`
-- `POST /api/v1/mock/scenario`
+- `POST /api/v1/diagnostics/scenario`
 
 ## 统一错误码
 

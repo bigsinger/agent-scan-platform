@@ -846,7 +846,7 @@ async def generic_get(resource: str, request: Request) -> dict:
         items = enrich_items(key, combine_items(real_items, state.get(key, [])))
         return page(items, request)
 
-    return {"items": [], "total": 0, "route": path, "status": "implemented-empty"}
+    unsupported_read_operation(get_store(), path)
 
 
 @router.post("/{resource:path}")
@@ -1350,6 +1350,31 @@ def unsupported_write_operation(store: Any, method: str, path: str, body: dict) 
             "message": "该写操作尚未实现，系统没有执行任何动作。",
             "route": path,
             "method": method,
+            "audit_event": audit_event,
+            "mutates_installed_agents": False,
+        },
+    )
+
+
+def unsupported_read_operation(store: Any, path: str) -> None:
+    audit_event = store.audit_event(
+        "unsupported.get." + path.strip("/").replace("/", "."),
+        "api_route",
+        path,
+        {
+            "status": "NOT_IMPLEMENTED",
+            "method": "GET",
+            "path": path,
+            "mutates_installed_agents": False,
+        },
+    )
+    raise HTTPException(
+        status_code=404,
+        detail={
+            "code": "NOT_IMPLEMENTED",
+            "message": "该读取接口尚未实现，系统没有返回伪造空数据。",
+            "route": path,
+            "method": "GET",
             "audit_event": audit_event,
             "mutates_installed_agents": False,
         },

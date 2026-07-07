@@ -81,6 +81,30 @@ def test_unknown_write_routes_do_not_fake_success(monkeypatch, tmp_path):
     assert "<REDACTED_SECRET>" in row["payload_json"]
 
 
+def test_unknown_get_routes_do_not_fake_empty_success(monkeypatch, tmp_path):
+    store = AssessmentStore(tmp_path / "unsupported-read.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    response = client.get("/api/v1/not-a-real-module")
+
+    assert response.status_code == 404
+    body = response.json()
+    detail = body["error"]["details"]
+    assert detail["code"] == "NOT_IMPLEMENTED"
+    assert detail["method"] == "GET"
+    assert detail["route"] == "/not-a-real-module"
+    assert detail["mutates_installed_agents"] is False
+    assert "items" not in json.dumps(body, ensure_ascii=False)
+    assert "implemented-empty" not in json.dumps(body, ensure_ascii=False)
+
+    with store.connect() as conn:
+        row = conn.execute("SELECT action, payload_json FROM audit_event ORDER BY seq DESC LIMIT 1").fetchone()
+    assert row["action"] == "unsupported.get.not-a-real-module"
+    assert "NOT_IMPLEMENTED" in row["payload_json"]
+    assert "mutates_installed_agents" in row["payload_json"]
+
+
 def test_assessment_profile_lifecycle_is_api_backed_and_audited(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "profiles.db")
     store.initialize()

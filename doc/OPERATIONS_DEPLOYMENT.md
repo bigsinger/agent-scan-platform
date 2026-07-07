@@ -7,7 +7,7 @@
 | 路径 | 用途 |
 | --- | --- |
 | `src/assessment/main.py` | FastAPI 应用入口，挂载 `/api/v1` 和 `/assessment` |
-| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 141 个 API 契约；已实现写操作走真实本地逻辑，未实现写操作返回 `501 NOT_IMPLEMENTED` |
+| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 API 契约；已实现操作走真实本地逻辑，未实现写接口返回 `501 NOT_IMPLEMENTED`，未实现读接口返回 `404 NOT_IMPLEMENTED` |
 | `src/assessment/scanning/` | 本地发现、静态规则、证据脱敏、扫描编排 |
 | `src/assessment/scanning/guard.py` | 只读 Guard 防御监测，负责配置哈希基线、变化检测和防御建议 |
 | `src/assessment/reports/` | HTML/JSON 报告渲染器 |
@@ -33,7 +33,7 @@
 9. 动态红队默认为本地 deterministic dry-run，不调用外部模型、不启动真实 Tool、不读取敏感路径。
 10. 新建空库启动后，运行时 API 返回真实空态；前端不会用原型 seed 生成假 Agent、假任务、假风险或假执行队列。静态 `seed.json/seed.js` 仅保留导航、向导、维度和契约矩阵等 UI 配置；后端暂不可用时也不会展示样例 Agent 或固定 fixture 结果。试用数据必须由本机发现、快速扫描或显式 API 写入产生。
 11. 从旧版本升级时，启动初始化会清理本系统 SQLite 中已知原型 seed 记录，例如 `agt_cc_001`、`asm_v4_001`、`claude-code-repo-demo` 等；该迁移只删除本模块数据库内的原型记录，不访问或修改 Agent 安装目录。
-12. 未实现的写操作不会按路径后缀伪造 `PASS`、`QUEUED`、`DONE` 等成功状态；接口返回 `501 NOT_IMPLEMENTED` 并写入脱敏审计事件，表示系统没有执行任何动作。
+12. 未实现的写操作不会按路径后缀伪造 `PASS`、`QUEUED`、`DONE` 等成功状态；未实现读操作不会返回 `items=[]` 伪造空集合。写接口返回 `501 NOT_IMPLEMENTED`，读接口返回 `404 NOT_IMPLEMENTED`，并写入审计事件说明系统没有执行任何功能动作。
 
 ## 3. 环境要求
 
@@ -100,9 +100,16 @@ $response = Invoke-WebRequest `
   -SkipHttpErrorCheck
 $response.StatusCode
 $response.Content
+
+$readResponse = Invoke-WebRequest `
+  -Method Get `
+  -Uri http://127.0.0.1:8000/api/v1/not-a-real-module `
+  -SkipHttpErrorCheck
+$readResponse.StatusCode
+$readResponse.Content
 ```
 
-企业验收时，未知或暂未实现的写接口应返回 `501`，响应中包含 `NOT_IMPLEMENTED` 和 `mutates_installed_agents=false`。系统会把请求摘要脱敏后写入 `audit_event`，不会执行扫描、发布、启动、停止、同步或修改已安装 Agent 的动作。
+企业验收时，未知或暂未实现的写接口应返回 `501`，未知读接口应返回 `404`，响应中都应包含 `NOT_IMPLEMENTED` 和 `mutates_installed_agents=false`。系统会把请求摘要或读取路由写入 `audit_event`，不会执行扫描、发布、启动、停止、同步或修改已安装 Agent 的动作，也不会用 `items=[]` 伪造已实现集合。
 
 诊断场景只生成当前状态快照，不改写运行数据：
 

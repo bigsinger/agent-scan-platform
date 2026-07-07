@@ -744,7 +744,7 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($sync.sync.download)" -OutFile re
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 ```
 
-### 未实现写接口
+### 未实现接口
 
 ```powershell
 $response = Invoke-WebRequest `
@@ -755,9 +755,16 @@ $response = Invoke-WebRequest `
   -SkipHttpErrorCheck
 $response.StatusCode
 $response.Content
+
+$readResponse = Invoke-WebRequest `
+  -Method Get `
+  -Uri http://127.0.0.1:8000/api/v1/not-a-real-module `
+  -SkipHttpErrorCheck
+$readResponse.StatusCode
+$readResponse.Content
 ```
 
-返回 `501 NOT_IMPLEMENTED` 表示该写接口还没有真实实现，系统没有执行任何动作。审计事件会保存脱敏后的请求摘要；不会再因为路径后缀是 `self-test`、`test`、`sync`、`publish`、`run-now` 等就返回固定成功结果。
+未实现写接口返回 `501 NOT_IMPLEMENTED`，未实现读接口返回 `404 NOT_IMPLEMENTED`。两者都表示系统没有执行任何功能动作；写接口会保存脱敏后的请求摘要，读接口只记录路由、方法和安全边界。系统不会再因为路径后缀是 `self-test`、`test`、`sync`、`publish`、`run-now`，或因为读取未知集合，就返回固定成功结果或伪造空列表。
 
 ### 诊断场景
 
