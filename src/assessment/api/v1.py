@@ -31,6 +31,8 @@ from ..store import DATA_DIR, REPO_ROOT, file_sha256, get_store, new_id, utc_now
 router = APIRouter(prefix="/api/v1", tags=["assessment"])
 PUBLIC_QUICK_SCAN_MODES = {"machine", "path", "mcp"}
 INTERNAL_SKILL_PATH_KEYS = {"real_path", "source_path"}
+RETEST_INPUT_LIMIT_BYTES = 512 * 1024
+RETEST_MAX_MATCH_EVIDENCE = 20
 
 
 def request_flag(values: dict[str, Any], keys: tuple[str, ...], default: bool) -> bool:
@@ -1180,7 +1182,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["report"] = report
     elif path == "/retests":
         retest = create_retest(store, state, str(body.get("finding_id") or "finding-local-unspecified"), body)
-        state.setdefault("retests", []).insert(0, retest)
+        merge_state_record(state, "retests", retest)
         result["retest"] = retest
     elif path == "/redteam-runs":
         run = create_redteam_run(store, state, body)
@@ -6165,7 +6167,7 @@ def mark_finding_false_positive(store: Any, state: dict, finding_id: str, body: 
 
 def create_retest(store: Any, state: dict, finding_id: str, body: dict) -> dict:
     finding = store.get_record("finding", finding_id) or find_item(state.get("findings", []), finding_id) or {}
-    linked_evidence = evidence_for_finding(store, state, finding_id) if finding else []
+    linked_evidence = raw_evidence_for_finding(store, state, finding_id) if finding else []
     evidence_ids = []
     for evidence in linked_evidence:
         evidence_id = str(evidence.get("id") or "")
@@ -6194,19 +6196,411 @@ def create_retest(store: Any, state: dict, finding_id: str, body: dict) -> dict:
         "after_evidence_ids": [],
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
         "conclusion": "待执行",
         "status": "QUEUED",
         "created_at": utc_now(),
     }
-    updated = store.upsert_record("retest_run", retest, status="QUEUED")
-    store.upsert_record("retest", updated, status="QUEUED")
-    merge_state_record(state, "retests", updated)
+    queued = store.upsert_record("retest_run", retest, status="QUEUED")
+    store.upsert_record("retest", queued, status="QUEUED")
+    merge_state_record(state, "retests", queued)
     store.audit_event(
         "finding.retest_created",
         "finding",
         finding_id,
-        {"retest_id": updated["id"], "scope": updated.get("scope"), "mutates_installed_agents": False},
+        {"retest_id": queued["id"], "scope": queued.get("scope"), "mutates_installed_agents": False},
     )
+    return execute_finding_retest(store, state, queued, finding, linked_evidence, body)
+
+
+def execute_finding_retest(store: Any, state: dict, retest: dict, finding: dict, linked_evidence: list[dict], body: dict) -> dict:
+    inputs = collect_retest_inputs(finding, linked_evidence, body)
+    raw_matches = []
+    for item in inputs:
+        raw_matches.extend(analyze_text(item["path"], item["text"], item["target_root"]))
+    matches = unique_rule_matches(raw_matches)
+    primary = primary_retest_match(matches, str(retest.get("before_rule") or ""))
+    finding_id = str(retest.get("finding_id") or retest.get("finding") or "")
+    assessment_id = retest.get("assessment_id") or finding.get("assessment_id")
+    after_evidence: list[dict] = []
+
+    if matches:
+        for index, match in enumerate(matches[:RETEST_MAX_MATCH_EVIDENCE], start=1):
+            after_evidence.append(
+                materialize_retest_evidence(store, state, retest, finding, match, assessment_id, index)
+            )
+        after_status = "STILL_REPRODUCIBLE"
+        after_severity = primary.severity if primary else retest.get("before_severity") or "待复核"
+        after_rule = primary.rule_id if primary else retest.get("before_rule") or "未记录"
+        status = "FAILED"
+        conclusion = f"仍可复现：本地规则重新命中 {len(matches)} 条信号"
+    else:
+        summary_status = "NO_REPLAY_INPUT" if not inputs else "NO_REPRODUCTION"
+        summary_text = "未找到可复放输入，无法执行本地规则复测" if not inputs else "固化输入本地规则复测未命中"
+        after_evidence.append(
+            materialize_retest_summary_evidence(
+                store,
+                state,
+                retest,
+                finding,
+                assessment_id,
+                summary_status,
+                summary_text,
+            )
+        )
+        after_status = summary_status
+        after_severity = "未执行" if not inputs else "未复现"
+        after_rule = retest.get("before_rule") or finding.get("rule") or finding.get("rule_id") or "未记录"
+        status = "NEEDS_INPUT" if not inputs else "PASSED"
+        conclusion = "无可复放输入" if not inputs else "未复现：本地规则未再次命中"
+
+    artifact_payload = {
+        "schema": "agent-security-retest-run@4.1",
+        "id": retest.get("id"),
+        "finding_id": finding_id,
+        "assessment_id": assessment_id,
+        "status": status,
+        "after_status": after_status,
+        "conclusion": conclusion,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "input_sources": [item["source"] for item in inputs],
+        "match_count": len(matches),
+        "matches": [
+            {
+                "rule_id": match.rule_id,
+                "title": match.title,
+                "severity": match.severity,
+                "path": match.display_path,
+                "line": match.line,
+                "snippet": match.snippet,
+                "source": match.source,
+            }
+            for match in matches[:RETEST_MAX_MATCH_EVIDENCE]
+        ],
+        "after_evidence_ids": [item["id"] for item in after_evidence],
+        "generated_at": utc_now(),
+    }
+    artifact = store.write_artifact(
+        "retest-run",
+        json.dumps(artifact_payload, ensure_ascii=False, indent=2),
+        suffix="json",
+        metadata={
+            "retest_id": retest.get("id"),
+            "finding_id": finding_id,
+            "assessment_id": assessment_id,
+            "safe_mode": "local-readonly",
+        },
+    )
+    retest.update(
+        {
+            "status": status,
+            "after": after_severity,
+            "after_status": after_status,
+            "after_severity": after_severity,
+            "after_rule": after_rule,
+            "after_evidence_ids": [item["id"] for item in after_evidence],
+            "input_source_count": len(inputs),
+            "match_count": len(matches),
+            "artifact_id": artifact["id"],
+            "artifact_path": artifact["relative_path"],
+            "download": f"/api/v1/artifacts/{artifact['id']}/download",
+            "safe_mode": "local-readonly",
+            "mutates_installed_agents": False,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+            "conclusion": conclusion,
+            "completed_at": utc_now(),
+        }
+    )
+    updated = store.upsert_record("retest_run", retest, status=status)
+    store.upsert_record("retest", updated, status=status)
+    merge_state_record(state, "retests", updated)
+    state["selectedRetest"] = updated
+    store.audit_event(
+        "finding.retest_completed",
+        "finding",
+        finding_id,
+        {
+            "retest_id": updated["id"],
+            "status": status,
+            "after_status": after_status,
+            "match_count": len(matches),
+            "input_source_count": len(inputs),
+            "artifact_id": artifact["id"],
+            "mutates_installed_agents": False,
+        },
+    )
+    return updated
+
+
+def collect_retest_inputs(finding: dict, linked_evidence: list[dict], body: dict) -> list[dict]:
+    inputs: list[dict] = []
+    seen: set[str] = set()
+
+    def add_input(source: dict, text: str, path: Path, target_root: Path | None = None) -> None:
+        sample = text[:RETEST_INPUT_LIMIT_BYTES]
+        if not sample.strip():
+            return
+        digest = stable_hash(sample, 64)
+        if digest in seen:
+            return
+        seen.add(digest)
+        source.update(
+            {
+                "sha256": digest,
+                "size": len(sample.encode("utf-8", errors="replace")),
+                "truncated": len(text.encode("utf-8", errors="replace")) > RETEST_INPUT_LIMIT_BYTES,
+            }
+        )
+        inputs.append({"source": source, "text": sample, "path": path, "target_root": target_root or path.parent or REPO_ROOT})
+
+    request_content = body.get("content") or body.get("test_input") or body.get("input")
+    if request_content:
+        add_input(
+            {"type": "request-body", "label": "显式复测输入"},
+            str(request_content),
+            synthetic_retest_path(str(body.get("filename") or "request-input.txt")),
+            REPO_ROOT,
+        )
+
+    for evidence in linked_evidence:
+        for file_input in read_retest_file_inputs(finding, evidence, body):
+            add_input(file_input["source"], file_input["text"], file_input["path"], file_input["target_root"])
+        evidence_text = str(evidence.get("content") or evidence.get("text") or "")
+        if evidence_text:
+            add_input(
+                {
+                    "type": "evidence",
+                    "evidence_id": evidence.get("id"),
+                    "label": "原 Finding 关联证据",
+                    "redaction": evidence.get("redaction") or "未知",
+                    "path": str(evidence.get("path") or evidence.get("location") or ""),
+                },
+                evidence_text,
+                synthetic_retest_path(str(evidence.get("path") or evidence.get("id") or "evidence.txt")),
+                REPO_ROOT,
+            )
+
+    fallback_text = "\n".join(
+        str(finding.get(key) or "")
+        for key in ("evidence", "summary", "reproduction", "repro_steps", "description")
+        if finding.get(key)
+    )
+    if fallback_text:
+        add_input(
+            {"type": "finding-fields", "finding_id": finding.get("id"), "label": "Finding 固化字段"},
+            fallback_text,
+            synthetic_retest_path(str(finding.get("component") or finding.get("id") or "finding.txt")),
+            REPO_ROOT,
+        )
+    return inputs
+
+
+def read_retest_file_inputs(finding: dict, evidence: dict, body: dict) -> list[dict]:
+    inputs: list[dict] = []
+    for candidate in retest_candidate_paths(finding, evidence, body):
+        try:
+            resolved = candidate.expanduser().resolve()
+            if not resolved.exists() or not resolved.is_file() or not os.access(resolved, os.R_OK):
+                continue
+            data = resolved.read_bytes()[:RETEST_INPUT_LIMIT_BYTES]
+        except OSError:
+            continue
+        if b"\x00" in data[:4096]:
+            continue
+        text = data.decode("utf-8", errors="replace")
+        inputs.append(
+            {
+                "source": {
+                    "type": "local-file",
+                    "label": "原目标只读文件",
+                    "path": safe_display_path(resolved, resolved.parent),
+                    "evidence_id": evidence.get("id"),
+                },
+                "text": text,
+                "path": resolved,
+                "target_root": resolved.parent,
+            }
+        )
+    return inputs
+
+
+def retest_candidate_paths(finding: dict, evidence: dict, body: dict) -> list[Path]:
+    roots: list[Path] = []
+    candidates: list[Path] = []
+    for key in ("target_path", "path", "workspace"):
+        value = body.get(key)
+        if not value:
+            continue
+        path = Path(str(value)).expanduser()
+        if path.exists() and path.is_dir():
+            roots.append(path)
+        candidates.append(path)
+
+    raw_values = [
+        evidence.get("real_path"),
+        evidence.get("source_path"),
+        evidence.get("path"),
+        evidence.get("location"),
+        finding.get("real_path"),
+        finding.get("source_path"),
+        finding.get("component"),
+        finding.get("target"),
+    ]
+    for value in raw_values:
+        text = normalize_retest_path_text(value)
+        if not text:
+            continue
+        if text.startswith("<target>/"):
+            relative = text.removeprefix("<target>/")
+            for root in roots:
+                candidates.append(root / relative)
+            continue
+        if text.startswith("~/"):
+            candidates.append(Path.home() / text[2:])
+            continue
+        path = Path(text).expanduser()
+        if path.is_absolute():
+            candidates.append(path)
+        else:
+            for root in roots:
+                candidates.append(root / path)
+            candidates.append(REPO_ROOT / path)
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def normalize_retest_path_text(value: Any) -> str:
+    text = str(value or "").strip().strip('"').strip("'")
+    if not text:
+        return ""
+    text = re.sub(r":\d+(?::\d+)?$", "", text)
+    if text.startswith("<external>/"):
+        return ""
+    return text.replace("\\", "/")
+
+
+def synthetic_retest_path(label: str) -> Path:
+    basename = Path(label.replace("\\", "/")).name or "input.txt"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", basename).strip("._") or "input.txt"
+    if "." not in safe:
+        safe += ".txt"
+    return REPO_ROOT / ".retest-inputs" / safe[:96]
+
+
+def unique_rule_matches(matches: list[Any]) -> list[Any]:
+    deduped: list[Any] = []
+    seen: set[str] = set()
+    for match in matches:
+        key = f"{match.rule_id}:{match.display_path}:{match.line}:{match.snippet}"
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(match)
+    return deduped
+
+
+def highest_rule_match(matches: list[Any]) -> Any | None:
+    if not matches:
+        return None
+    order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    return max(matches, key=lambda match: order.get(severity_class_from_text(match.severity), 0))
+
+
+def primary_retest_match(matches: list[Any], before_rule: str) -> Any | None:
+    for match in matches:
+        if before_rule and match.rule_id == before_rule:
+            return match
+    return highest_rule_match(matches)
+
+
+def materialize_retest_evidence(
+    store: Any,
+    state: dict,
+    retest: dict,
+    finding: dict,
+    match: Any,
+    assessment_id: str | None,
+    index: int,
+) -> dict:
+    evidence = {
+        "id": new_id("ev"),
+        "assessment_id": assessment_id,
+        "finding_id": finding.get("id") or retest.get("finding_id") or retest.get("finding"),
+        "retest_id": retest.get("id"),
+        "type": "retest-rule-match",
+        "collector": "local-retest",
+        "redaction": "已脱敏",
+        "path": match.display_path,
+        "location": f"{match.display_path}:{match.line}",
+        "line": match.line,
+        "content": f"{match.rule_id} {match.title} {match.display_path}:{match.line} {match.snippet}",
+        "text": f"复测第 {index} 条命中：{match.rule_id}",
+        "level": severity_class_from_text(match.severity),
+        "rule": match.rule_id,
+        "severity": match.severity,
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "status": "READY",
+        "time": utc_now(),
+    }
+    artifact = ensure_evidence_artifact(store, evidence, force_new=True)
+    evidence["download"] = f"/api/v1/evidence/{evidence['id']}/download"
+    evidence["artifact_id"] = artifact["id"]
+    evidence["artifact_path"] = artifact["relative_path"]
+    updated = store.upsert_record("evidence", evidence, status="READY")
+    merge_state_record(state, "evidenceItems", updated)
+    state["selectedEvidence"] = updated
+    return updated
+
+
+def materialize_retest_summary_evidence(
+    store: Any,
+    state: dict,
+    retest: dict,
+    finding: dict,
+    assessment_id: str | None,
+    summary_status: str,
+    summary_text: str,
+) -> dict:
+    evidence = {
+        "id": new_id("ev"),
+        "assessment_id": assessment_id,
+        "finding_id": finding.get("id") or retest.get("finding_id") or retest.get("finding"),
+        "retest_id": retest.get("id"),
+        "type": "retest-summary",
+        "collector": "local-retest",
+        "redaction": "已脱敏",
+        "content": summary_text,
+        "text": summary_text,
+        "level": "low" if summary_status == "NO_REPRODUCTION" else "medium",
+        "safe_mode": "local-readonly",
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "status": "READY",
+        "time": utc_now(),
+    }
+    artifact = ensure_evidence_artifact(store, evidence, force_new=True)
+    evidence["download"] = f"/api/v1/evidence/{evidence['id']}/download"
+    evidence["artifact_id"] = artifact["id"]
+    evidence["artifact_path"] = artifact["relative_path"]
+    updated = store.upsert_record("evidence", evidence, status="READY")
+    merge_state_record(state, "evidenceItems", updated)
+    state["selectedEvidence"] = updated
     return updated
 
 
@@ -6555,16 +6949,19 @@ def artifact_file_response(artifact: dict, filename: str | None = None) -> FileR
     )
 
 
-def evidence_for_finding(store: Any, state: dict, finding_id: str) -> list[dict]:
+def raw_evidence_for_finding(store: Any, state: dict, finding_id: str) -> list[dict]:
     finding = store.get_record("finding", finding_id) or find_item(state.get("findings", []), finding_id) or {}
     evidence_ids = {str(item) for item in finding.get("evidence_ids", [])}
     records = combine_items(store.list_records("evidence"), state.get("evidenceItems", []))
-    matched = [
-        item
+    return [
+        dict(item)
         for item in records
         if item.get("finding_id") == finding_id or (evidence_ids and str(item.get("id")) in evidence_ids)
     ]
-    return [decorate_evidence_item(item) for item in matched]
+
+
+def evidence_for_finding(store: Any, state: dict, finding_id: str) -> list[dict]:
+    return [decorate_evidence_item(item) for item in raw_evidence_for_finding(store, state, finding_id)]
 
 
 def redact_evidence_record(store: Any, state: dict, evidence_id: str, body: dict) -> dict:

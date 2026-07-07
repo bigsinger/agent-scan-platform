@@ -721,7 +721,7 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
-风险详情页的复现步骤、证据链、受影响组件、根因与整改、标准映射和历史均来自当前 Finding/Evidence 记录；没有可执行复现步骤时显示空状态，不注入示例 casepack 或固定证据 ID。企业验收时可用 `GET /api/v1/findings/<finding_id>/evidence` 与页面“证据链”逐项核对。`GET /api/v1/findings/<finding_id>/history` 会从 `finding`、关联 `evidence`、`retest_run` 和 `audit_event` 聚合真实历史，不返回固定 `NEW/NEEDS_REVIEW` 原型状态。误报操作只把 Finding 标记为 `误报待复核` 并写入 `finding.false_positive_candidate` 审计事件，确认风险会写入 `finding.status_changed`，创建复测会写入 `finding.retest_created`；这些动作保留证据和报告链路，不删除数据、不修改已安装 Agent。
+风险详情页的复现步骤、证据链、受影响组件、根因与整改、标准映射和历史均来自当前 Finding/Evidence 记录；没有可执行复现步骤时显示空状态，不注入示例 casepack 或固定证据 ID。企业验收时可用 `GET /api/v1/findings/<finding_id>/evidence` 与页面“证据链”逐项核对。`GET /api/v1/findings/<finding_id>/history` 会从 `finding`、关联 `evidence`、`retest_run` 和 `audit_event` 聚合真实历史，不返回固定 `NEW/NEEDS_REVIEW` 原型状态。误报操作只把 Finding 标记为 `误报待复核` 并写入 `finding.false_positive_candidate` 审计事件，确认风险会写入 `finding.status_changed`，创建复测会先写入 `finding.retest_created`，本地规则复放结束后写入 `finding.retest_completed`；这些动作保留证据和报告链路，不删除数据、不修改已安装 Agent。
 
 复测对比运维验收：
 
@@ -735,9 +735,12 @@ $retest = Invoke-RestMethod `
 $diff = Invoke-RestMethod "http://127.0.0.1:8000/api/v1/retests/$($retest.retest.id)/diff"
 $diff.diff.rows
 $diff.diff.mutates_installed_agents
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($retest.retest.download)" `
+  -OutFile retest-run.json
 ```
 
-`retests/{id}/diff` 只读取本系统 `retest_run`、`finding`、`evidence` 记录并返回 `agent-security-retest-diff@4.1`；排队或待执行时保持“待测 / PENDING_RESCAN”，不会启动本机 Agent、不会修改 Codex/Hermes 配置，也不会伪造修复后通过结果。
+`POST /findings/{id}/retest` 会同步执行本地只读规则复放：优先使用原 Finding 关联 Evidence 的固化内容，只有调用方显式传入 `target_path` / `path` / `workspace` 时才只读补充原目标文件。命中规则返回 `FAILED / STILL_REPRODUCIBLE` 并写入 after evidence；未命中返回 `PASSED / NO_REPRODUCTION`；没有可复放输入返回 `NEEDS_INPUT / NO_REPLAY_INPUT`。`retests/{id}/diff` 只读取本系统 `retest_run`、`finding`、`evidence` 记录并返回 `agent-security-retest-diff@4.1`。复测 artifact schema 为 `agent-security-retest-run@4.1`，必须包含 `mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`；不会启动本机 Agent、不会修改 Codex/Hermes 配置，也不会伪造修复后通过结果。
 
 风险 CSV 导出：
 

@@ -993,7 +993,9 @@ Invoke-RestMethod `
   -ContentType "application/json"
 ```
 
-复测中心的“对比”按钮会读取 `GET /api/v1/retests/<retest_id>/diff`，根据当前 `retest_run`、原 Finding 和关联 Evidence 生成前后对比 rows。待执行或排队状态只显示“待测 / PENDING_RESCAN”，不会伪造已修复结论；接口返回 `mutates_installed_agents=false`，只读取本系统 SQLite 和脱敏证据记录。
+复测会同步执行本地只读规则复放：系统优先使用原 Finding 关联 Evidence 的固化内容，并在调用方显式提供 `target_path` / `path` / `workspace` 时只读补充原目标文件。命中本地规则时返回 `FAILED / STILL_REPRODUCIBLE` 并生成 after evidence；未再次命中时返回 `PASSED / NO_REPRODUCTION`；缺少可复放输入时返回 `NEEDS_INPUT / NO_REPLAY_INPUT`。所有结果都会写入 `retest_run`、`evidence`、`artifact` 和 `audit_event`，接口固定返回 `mutates_installed_agents=false`、`agent_runtime_started=false`、`stdio_mcp_started=false`。
+
+复测中心的“对比”按钮会读取 `GET /api/v1/retests/<retest_id>/diff`，根据当前 `retest_run`、原 Finding、修复前 Evidence 和复测生成的 after Evidence 生成前后对比 rows，不会伪造已修复结论。
 
 ```powershell
 $retest = Invoke-RestMethod `
@@ -1003,6 +1005,9 @@ $retest = Invoke-RestMethod `
   -ContentType "application/json"
 
 Invoke-RestMethod "http://127.0.0.1:8000/api/v1/retests/$($retest.retest.id)/diff"
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8000$($retest.retest.download)" `
+  -OutFile retest-run.json
 ```
 
 ### 攻击路径和策略草案

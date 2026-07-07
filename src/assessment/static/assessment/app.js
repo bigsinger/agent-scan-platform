@@ -2227,7 +2227,8 @@ data(){
         }
         await this.loadFindingHistory(finding, {silent:true});
         this.go('retests');
-        this.toastMsg('复测任务已排队：'+(res.retest&&res.retest.id || 'QUEUED'));
+        const retest=res.retest || {};
+        this.toastMsg('复测已执行：'+(retest.conclusion || retest.after_status || retest.status || '完成')+' · '+(retest.id || 'local'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
