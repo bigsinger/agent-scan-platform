@@ -8,7 +8,7 @@ from assessment.contracts import API_CONTRACTS
 from assessment.main import app
 from assessment.scanning import discovery as discovery_mod
 from assessment.scanning.models import DiscoveryResult
-from assessment.store import AssessmentStore
+from assessment.store import REPO_ROOT, AssessmentStore
 
 
 client = TestClient(app)
@@ -971,6 +971,49 @@ def test_quick_scan_options_are_persisted_without_cloud_execution(monkeypatch, t
     assert audit_body["mutates_installed_agents"] is False
 
 
+def test_self_project_sources_are_excluded_but_test_assets_remain_scannable(monkeypatch, tmp_path):
+    from assessment.scanning.scanner import iter_scan_files
+
+    store = AssessmentStore(tmp_path / "self-project-scope.db")
+    store.initialize()
+    monkeypatch.setattr(api_v1, "get_store", lambda: store)
+
+    assert iter_scan_files(REPO_ROOT / "src", 100, 6) == []
+    assert iter_scan_files(REPO_ROOT / "doc", 100, 6) == []
+    fixture_files = iter_scan_files(REPO_ROOT / "tests", 200, 16)
+    relative_fixture_files = {path.relative_to(REPO_ROOT).as_posix() for path in fixture_files}
+    assert "tests/fixtures/sample_agent_project/.mcp.json" in relative_fixture_files
+    assert "tests/fixtures/sample_agent_project/.agents/skills/danger-skill/SKILL.md" in relative_fixture_files
+    assert all(not item.startswith("tests/test_") for item in relative_fixture_files)
+
+    precheck = client.post(
+        "/api/v1/quick-scans/precheck",
+        json={"mode": "path", "target_path": str(REPO_ROOT / "src"), "max_files": 50},
+    )
+    assert precheck.status_code == 200
+    precheck_body = precheck.json()["precheck"]
+    assert precheck_body["scan_files"] == 0
+    assert precheck_body["self_project_source_excluded"] is True
+    assert precheck_body["self_project_scope"]["policy"] == "skip-agent-scan-platform-source-and-docs"
+
+    scan = client.post(
+        "/api/v1/quick-scans",
+        json={"mode": "path", "target_path": str(REPO_ROOT / "src"), "max_files": 50},
+    )
+    assert scan.status_code == 200
+    payload = scan.json()
+    assert payload["files_scanned"] == 0
+    assert payload["findings"] == []
+    assert payload["assessment"]["self_project_source_excluded"] is True
+    assert "scan.scope.self_project_excluded" in {event["type"] for event in payload["events"]}
+
+    discovery = client.post("/api/v1/discovery-runs", json={"path": str(REPO_ROOT), "scope": "self-project"})
+    assert discovery.status_code == 200
+    hit_paths = [item["path"] for item in discovery.json()["hits"]]
+    assert any("tests/fixtures/sample_agent_project" in path for path in hit_paths)
+    assert all("/src/" not in path.replace("\\", "/") and "/doc/" not in path.replace("\\", "/") for path in hit_paths)
+
+
 def test_quick_scan_scope_execution_mode_and_dry_run_redteam(monkeypatch, tmp_path):
     store = AssessmentStore(tmp_path / "quick-scan-execution-mode.db")
     store.initialize()
@@ -1660,6 +1703,10 @@ def test_report_evidence_and_risk_closure_actions():
     assert preview_body["rendering"]["pdf_status"] == "UNAVAILABLE"
     assert any(row["name"] == "HTML/JSON 制品" and row["status"] == "READY" for row in preview_body["readiness"])
     assert preview_body["counts"]["artifacts"] == 2
+    assert preview_body["findings"]
+    assert preview_body["evidence"]
+    assert {item["id"] for item in preview_body["findings"]} >= {finding["id"] for finding in scan["findings"][:1]}
+    assert {item["id"] for item in preview_body["evidence"]} >= {evidence["id"] for evidence in scan["evidence"][:1]}
     preview_route = client.get(f"/api/v1/reports/{report['id']}/preview")
     assert preview_route.status_code == 200
     assert preview_route.json()["preview"]["rendering"]["html_status"] == "READY"

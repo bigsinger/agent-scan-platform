@@ -4675,6 +4675,8 @@ def report_preview(report: dict | None, store: Any | None = None) -> dict:
             "artifacts": int(html_state["exists"]) + int(json_state["exists"]),
         },
         "summary": summary,
+        "findings": [report_finding_summary(item) for item in findings[:200]],
+        "evidence": [report_evidence_summary(item) for item in evidence[:500]],
         "artifacts": {"html": html_state, "json": json_state},
         "mutates_installed_agents": False,
         "download": f"/api/v1/reports/{(report or {}).get('id', 'unknown')}/download",

@@ -85,6 +85,7 @@
     state.integrationExportDownload = '';
     state.reportSyncLastDownload = '';
     state.reportPackageExport = null;
+    state.reportContext = null;
     state.taskFilterText = '';
     state.taskFilterStatus = '全部状态';
     state.taskFilterAdapter = '全部 Adapter';
@@ -238,6 +239,7 @@ data(){
     initial.reportPreviewData = initial.reportPreviewData || null;
     initial.reportSyncLastDownload = '';
     initial.reportPackageExport = null;
+    initial.reportContext = null;
     initial.taskFilterText = '';
     initial.taskFilterStatus = '全部状态';
     initial.taskFilterAdapter = '全部 Adapter';
@@ -731,6 +733,31 @@ data(){
         const id=String(e.id || '');
         return (findingId && e.finding_id===findingId) || evidenceIds.has(id);
       });
+    },
+    reportPreviewFindings(){
+      const rows=this.reportPreviewData && Array.isArray(this.reportPreviewData.findings) ? this.reportPreviewData.findings : [];
+      if(rows.length) return rows;
+      const report=this.selectedReport || {};
+      const assessmentId=String(report.assessment_id || report.task || '');
+      return (this.findings || []).filter(f=>assessmentId && String(f.assessment_id || f.task_id || '')===assessmentId);
+    },
+    reportPreviewEvidence(){
+      const rows=this.reportPreviewData && Array.isArray(this.reportPreviewData.evidence) ? this.reportPreviewData.evidence : [];
+      if(rows.length) return rows;
+      const findingIds=new Set(this.reportPreviewFindings.map(f=>String(f.id || '')).filter(Boolean));
+      const evidenceIds=new Set(this.reportPreviewFindings.flatMap(f=>Array.isArray(f.evidence_ids) ? f.evidence_ids.map(String) : (f.evidence_ids ? [String(f.evidence_ids)] : [])));
+      const report=this.selectedReport || {};
+      const assessmentId=String(report.assessment_id || report.task || '');
+      return (this.evidenceItems || []).filter(e=>{
+        const id=String(e.id || '');
+        const findingId=String(e.finding_id || '');
+        return (assessmentId && String(e.assessment_id || '')===assessmentId) || findingIds.has(findingId) || evidenceIds.has(id);
+      });
+    },
+    reportSelectedEvidence(){
+      const selectedId=String((this.selectedEvidence || {}).id || '');
+      if(!selectedId) return {};
+      return this.reportPreviewEvidence.find(e=>String(e.id || '')===selectedId) || this.selectedEvidence || {};
     },
     ruleStats(){
       const rules=this.ruleRows || [];
@@ -3000,6 +3027,7 @@ data(){
       if(!report || !report.id) return;
       this.selectedReport=report;
       this.reportPreviewData=null;
+      this.reportContext=null;
     },
     async refreshReportPreview(report, options){
       if(!report || !report.id) return;
@@ -3026,6 +3054,41 @@ data(){
       window.scrollTo({top:0,behavior:'smooth'});
       this.reportPreview=false;
       await this.refreshReportPreview(report);
+    },
+    selectReportEvidence(evidence){
+      if(!evidence || !evidence.id) return;
+      const existing=(this.evidenceItems || []).find(item=>String(item.id || '')===String(evidence.id || ''));
+      this.selectedEvidence=Object.assign({}, existing || {}, evidence);
+    },
+    reportEvidenceForFinding(finding){
+      if(!finding) return [];
+      const findingId=String(finding.id || '');
+      const evidenceIds=new Set(Array.isArray(finding.evidence_ids) ? finding.evidence_ids.map(String) : (finding.evidence_ids ? [String(finding.evidence_ids)] : []));
+      return this.reportPreviewEvidence.filter(e=>{
+        const id=String(e.id || '');
+        return (findingId && String(e.finding_id || '')===findingId) || evidenceIds.has(id);
+      });
+    },
+    openFindingFromReport(finding){
+      if(!finding || !finding.id) return;
+      const existing=(this.findings || []).find(item=>String(item.id || '')===String(finding.id || ''));
+      const merged=Object.assign({}, existing || {}, finding);
+      this.openFinding(merged, {fromReport:true});
+    },
+    returnToReportContext(){
+      const context=this.reportContext || {};
+      if(context.report_id){
+        const found=(this.reports || []).find(r=>String(r.id || '')===String(context.report_id));
+        this.selectedReport=found || {id:context.report_id, name:context.report_name || context.report_id};
+      }
+      this.current='report-preview';
+      this.pushRoute('report-preview');
+      this.refreshReportPreview(this.selectedReport, {silent:true});
+      window.scrollTo({top:0,behavior:'smooth'});
+    },
+    returnFromFindingDetail(){
+      if(this.reportContext && this.reportContext.report_id) return this.returnToReportContext();
+      this.go('findings');
     },
     downloadReport(report){
       if(!report || !report.id) return;
@@ -3913,9 +3976,15 @@ data(){
     openAgent(a){this.selectedAsset=a;this.agentTab='概览';this.current='agent-detail';this.pushRoute('agent-detail');window.scrollTo(0,0);this.loadAgentDetail(a);},
     openTask(t){this.selectedTask=t;this.taskTab='执行概览';this.current='task-detail';this.pushRoute('task-detail');window.scrollTo(0,0);this.refreshTaskEvents(t, true);},
     openSkill(s){this.selectedSkill=s;this.skillTab='概览';this.current='skill-detail';this.pushRoute('skill-detail');window.scrollTo(0,0);this.loadSkillDetail(s);},
-    openFinding(f){
+    openFinding(f, options){
       this.selectedFinding=f || {};
       this.findingTab='概览';
+      if(options && options.fromReport){
+        const report=this.selectedReport || {};
+        this.reportContext={report_id:report.id || '', report_name:report.name || report.id || '', from:'report-preview'};
+      } else {
+        this.reportContext=null;
+      }
       this.current='finding-detail';
       this.pushRoute('finding-detail');
       this.loadFindingHistory(this.selectedFinding, {silent:true});

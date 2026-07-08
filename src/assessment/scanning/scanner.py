@@ -13,6 +13,12 @@ from .mcp_static import derive_mcp_tools, highest_mcp_risk, mcp_static_risks, sa
 from .models import DiscoveryResult, RuleMatch, ScanRequest, ScanResult, effective_user_scope, flag, normalize_user_scope
 from .redaction import file_digest, redact_text, safe_display_path, stable_hash
 from .rules import analyze_text, rule_catalog
+from .scope import (
+    filter_self_project_dirs,
+    may_contain_self_test_asset,
+    self_project_scope,
+    should_skip_self_project_path,
+)
 
 
 SCAN_EXTENSIONS = {
@@ -108,6 +114,7 @@ class LocalScanEngine:
         exists = target.exists()
         readable = os.access(target, os.R_OK) if exists else False
         estimated_files = len(iter_scan_files(target, min(request.limits.max_files, 500), request.limits.max_depth)) if exists and readable else 0
+        project_scope = self_project_scope(target)
         return {
             "status": "PASS" if exists and readable else "FAILED",
             "mode": mode,
@@ -132,6 +139,8 @@ class LocalScanEngine:
             "agent_runtime_started": False,
             "dry_run_redteam_requested": request.scan_options["dry_run_redteam_requested"],
             "dry_run_redteam_executed": False,
+            "self_project_scope": project_scope,
+            "self_project_source_excluded": project_scope.get("source_excluded", False),
             "errors": [] if exists and readable else [{"target": str(target), "error": "路径不存在或无权限"}],
         }
 
@@ -178,6 +187,7 @@ class LocalScanEngine:
         else:
             display_target = safe_display_path(target or REPO_ROOT, target_root if target and target.exists() else REPO_ROOT)
         scan_options = request.scan_options
+        project_scope = self_project_scope(target)
         assessment = {
             "id": new_id("asm"),
             "name": f"{name} · {request.mode}",
@@ -212,6 +222,8 @@ class LocalScanEngine:
             "agent_runtime_started": False,
             "dry_run_redteam_requested": scan_options["dry_run_redteam_requested"],
             "dry_run_redteam_executed": False,
+            "self_project_scope": project_scope,
+            "self_project_source_excluded": project_scope.get("source_excluded", False),
         }
         self.store.upsert_record("assessment", assessment, status="RUNNING")
         events: list[dict[str, Any]] = []
@@ -230,6 +242,15 @@ class LocalScanEngine:
                 },
             )
         )
+        if project_scope.get("source_excluded"):
+            events.append(
+                self._event(
+                    assessment["id"],
+                    "scan.scope.self_project_excluded",
+                    "已跳过本项目源码、文档和运维目录，仅允许显式测试 MCP/Skill 资产进入扫描",
+                    project_scope,
+                )
+            )
 
         if mcp_mode:
             return self._run_mcp_assessment(request, assessment, events)
@@ -345,6 +366,8 @@ class LocalScanEngine:
                 "finding_count": len(findings),
                 "pending_consents": len(discovery.consents),
                 "scan_options": scan_options,
+                "self_project_scope": project_scope,
+                "self_project_source_excluded": project_scope.get("source_excluded", False),
             }
         )
         self.store.upsert_record("assessment", assessment, status="COMPLETED")
@@ -1042,7 +1065,9 @@ class LocalScanEngine:
 
 def iter_scan_files(target: Path, max_files: int, max_depth: int) -> list[Path]:
     if target.is_file():
-        return [target]
+        return [target] if should_scan_file(target) and not should_skip_self_project_path(target) else []
+    if should_skip_self_project_path(target) and not may_contain_self_test_asset(target):
+        return []
     result: list[Path] = []
     for current, dirs, files in os.walk(target):
         current_path = Path(current)
@@ -1051,10 +1076,13 @@ def iter_scan_files(target: Path, max_files: int, max_depth: int) -> list[Path]:
         except ValueError:
             depth = 0
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".cache")]
+        filter_self_project_dirs(current_path, dirs)
         if depth >= max_depth:
             dirs[:] = []
         for filename in files:
             path = current_path / filename
+            if should_skip_self_project_path(path):
+                continue
             if should_scan_file(path):
                 result.append(path)
             if len(result) >= max_files:

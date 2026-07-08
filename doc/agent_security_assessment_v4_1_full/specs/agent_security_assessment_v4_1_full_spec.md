@@ -233,6 +233,8 @@ AI 编码代理实现本页时不得：
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
+当前正式应用实现必须把 `F:\bigsinger\agent-scan-platform` 识别为扫描器自身项目：当 `mode=path` 指向本项目源码、文档或工具目录时，预检和扫描应返回 `self_project_source_excluded=true`、`scan_files=0`，并记录 `scan.scope.self_project_excluded` 事件。`tests/fixtures/**` 和项目 `.agents/**` 等显式 MCP/Skill 测试资产可以继续扫描，用于回归验证；企业测评默认应聚焦本机已安装 Agent、真实 Agent 配置目录或授权的客户 Agent 项目。
+
 ## 2. 页面区域
 
 - 扫描入口卡
@@ -6800,6 +6802,8 @@ AI 编码代理实现本页时不得：
 展示正式报告结构、章节、风险证据、热力图、整改清单和复测结论。
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
+
+当前正式应用实现为 `/assessment/reports/{id}/preview` 深链页面 `report-preview`，进入页面后读取 `GET /api/v1/reports/{id}` 与 `GET /api/v1/reports/{id}/preview`。章节完整性、渲染状态和 artifact 状态必须来自当前报告快照及本地制品，未配置 PDF 渲染器时显示不可用，不伪造 PDF 或外部投递能力。报告预览接口必须返回报告内风险摘要和证据摘要，前端在预览页同页展示 `preview.findings` 与 `preview.evidence`。从报告内进入风险详情时必须保留报告上下文，并提供返回原报告的入口；点击证据时应在报告页内展开脱敏摘要与下载动作，减少报告、风险和证据页面之间的往返跳转。
 
 ## 2. 页面区域
 

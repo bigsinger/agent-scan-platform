@@ -578,6 +578,24 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile quick
 快速扫描历史只读取本系统 SQLite 中的 assessment/report/finding/evidence/scan_event 记录，并生成 `quick-scan-history` artifact；它用于复盘和验收留档，不会重新扫描客户目录、不启动 MCP、不修改 Codex/Hermes。
 前端快速扫描页的“最近快速扫描”表也调用该接口，不再从原型 seed 或当前会话任务数组拼接历史。
 
+自项目扫描保护验收：
+
+```powershell
+$selfProject = @{
+  mode = "path"
+  target_path = "F:\bigsinger\agent-scan-platform\src"
+  execution_mode = "readonly"
+  max_files = 50
+} | ConvertTo-Json
+$selfPrecheck = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans/precheck -Body $selfProject -ContentType "application/json"
+$selfScan = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $selfProject -ContentType "application/json"
+$selfPrecheck.precheck.self_project_source_excluded  # True
+$selfPrecheck.precheck.scan_files                    # 0
+$selfScan.assessment.self_project_source_excluded    # True
+```
+
+该策略只保护扫描器自身源码、文档和工具目录，避免企业验收误把本项目代码当作客户 Agent 风险。显式测试资产仍可扫描，例如 `tests\fixtures\**` 和项目 `.agents\**` 下的 MCP/Skill 样本；正式测评应使用本机发现、真实 Agent 配置或客户授权的 Agent 项目目录。
+
 单个 MCP 快速扫描验收：
 
 ```powershell
@@ -729,11 +747,13 @@ $preview = Invoke-RestMethod "http://127.0.0.1:8000/api/v1/reports/$($report.rep
 $preview.preview.readiness
 $preview.preview.rendering
 $preview.preview.artifacts
+$preview.findings.Count
+$preview.evidence.Count
 ```
 
 `preview.readiness` 按当前报告 JSON snapshot、Finding/Evidence 数量和 HTML/JSON artifact 文件存在性生成；`preview.rendering.pdf_status` 在未配置 PDF 渲染器时保持 `UNAVAILABLE`。该接口只读取本系统 `report`、`artifact` 和 `data/reports` 文件，不启动或修改 Codex/Hermes/Claude Code。
 
-`/assessment/reports/{id}/preview` 是报告独立运行态预览页。验收时应确认页面读取 `GET /api/v1/reports/{id}` 与 `GET /api/v1/reports/{id}/preview`，显示真实章节完整性、HTML/JSON artifact 状态和 PDF 不可用状态；不得接受静态 PDF 图标、固定章节勾选或外部回写成功文案作为交付证据。
+`/assessment/reports/{id}/preview` 是报告独立运行态预览页。验收时应确认页面读取 `GET /api/v1/reports/{id}` 与 `GET /api/v1/reports/{id}/preview`，显示真实章节完整性、HTML/JSON artifact 状态、PDF 不可用状态、报告风险列表和报告证据列表；不得接受静态 PDF 图标、固定章节勾选或外部回写成功文案作为交付证据。点击报告内风险详情后应能用“返回报告”回到原预览上下文；点击报告内证据应在同页展开脱敏摘要并保留下载入口。
 
 `report-delivery-package.json` 的 schema 为 `agent-security-report-delivery-package@4.1`。验收时应检查 `validation.status`、`artifacts.html.status=PASS`、`artifacts.json.status=PASS`、`raw_sensitive_evidence=not-included`、`external_delivery_performed=false`、`mutates_installed_agents=false`、`stdio_mcp_started=false` 和 `agent_runtime_started=false`。该包是本地交付材料，不是外部回写；外部投递仍需走企业 Connector 或人工审批流程。
 

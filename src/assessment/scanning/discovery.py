@@ -12,6 +12,7 @@ from typing import Any
 from ..store import new_id, utc_now
 from .models import DiscoveryResult
 from .redaction import file_digest, redact_text, safe_display_path, stable_hash
+from .scope import filter_self_project_dirs, may_contain_self_test_asset, should_skip_self_project_path
 
 
 SKIP_DIRS = {
@@ -156,19 +157,27 @@ class DiscoveryEngine:
 
     def _iter_candidate_files(self, root: Path) -> list[Path]:
         if root.is_file():
+            if should_skip_self_project_path(root):
+                return []
             return [root] if root.name in CONFIG_NAMES or "mcp" in root.name.lower() else [root]
+        if should_skip_self_project_path(root) and not may_contain_self_test_asset(root):
+            return []
         matches: list[Path] = []
         for current, dirs, files in os.walk(root):
             current_path = Path(current)
             depth = len(current_path.relative_to(root).parts) if current_path != root else 0
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".cache")]
+            filter_self_project_dirs(current_path, dirs)
             if depth > 8:
                 dirs[:] = []
                 continue
             for filename in files:
+                path = current_path / filename
+                if should_skip_self_project_path(path):
+                    continue
                 lower = filename.lower()
                 if filename in CONFIG_NAMES or lower.endswith((".mcp.json", ".toml", ".yaml", ".yml")) or "mcp" in lower:
-                    matches.append(current_path / filename)
+                    matches.append(path)
             if len(matches) >= MAX_DISCOVERY_FILES_PER_ROOT:
                 break
         return matches

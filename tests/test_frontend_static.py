@@ -864,6 +864,24 @@ def test_report_readiness_ui_is_api_backed():
     assert "报告回写包已生成" in app_js
 
 
+def test_report_preview_keeps_finding_and_evidence_context_inline():
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert "reportPreviewFindings" in app_js
+    assert "reportPreviewEvidence" in app_js
+    assert "openFindingFromReport" in app_js
+    assert "returnFromFindingDetail" in app_js
+    assert "reportContext" in app_js
+    assert "报告风险" in html
+    assert "报告证据" in html
+    assert "v-for=\"f in reportPreviewFindings\"" in html
+    assert "v-for=\"e in reportPreviewEvidence\"" in html
+    assert "@click=\"openFindingFromReport(f)\"" in html
+    assert "@click=\"selectReportEvidence(e)\"" in html
+    assert "来自报告上下文" in html
+    assert "reportContext&&reportContext.report_id?'← 返回报告':'← 返回'" in html
+
+
 def test_rule_management_ui_uses_real_rule_state():
     html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
     app_js = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")

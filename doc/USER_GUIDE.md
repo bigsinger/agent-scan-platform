@@ -111,6 +111,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 - Evidence 证据。
 - HTML/JSON 报告。
 
+当扫描目标指向本项目仓库 `F:\bigsinger\agent-scan-platform` 或其 `src/`、`doc/` 等源码/文档目录时，系统会按自项目保护策略跳过这些文件，不把本扫描器自身当作客户 Agent 扫描。只有 `tests/fixtures/**` 和项目 `.agents/**` 等显式测试 MCP/Skill 资产会进入扫描；响应中会返回 `self_project_scope`、`self_project_source_excluded=true`，并写入 `scan.scope.self_project_excluded` 事件。企业验收应优先使用“发现本机 Agent”、真实 Agent 配置目录或明确测试资产作为扫描目标。
+
 选择“单个 MCP Server”时，系统不会把 URL 当作本机路径处理，而是执行真实的 MCP 静态检查链路：解析 Remote URL 或 MCP JSON，写入 `mcp_server`、`mcp_signature`、`mcp_tool`、`tool_label`、`toxic_flow`、`finding`、`evidence` 和报告。Remote URL 只做字符串与边界分析，不发起网络连接；stdio 配置只解析命令、参数和环境变量键，不启动 MCP Server。当前可识别明文 HTTP、localhost/私网 Remote MCP、URL 内嵌凭据、stdio 外壳命令、动态下载执行、敏感环境变量和文件系统边界等风险。
 
 选择“完整 Dry-run 红队”时，同一次请求还会生成 `redteam_run`、`redteam_message`、红队 evidence 和 JSON artifact。该运行使用本地 deterministic 规则，不调用外部模型，不启动 MCP/Tool，不读取敏感路径，也不修改已安装 Codex/Hermes/Claude Code/Cursor。
@@ -743,6 +745,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($preflight.download)" -OutFile po
 报告中心的“章节完整性”和“渲染能力”来自 `GET /api/v1/reports/{report_id}` 的 `preview.readiness`、`preview.rendering` 和 artifact 状态。系统只展示本地已生成 HTML/JSON 制品的真实存在性、大小和模板版本；当前本地版本未配置 PDF 渲染器时会显示 `UNAVAILABLE`，不会伪造 Chromium 或 PDF 可用状态。
 
 点击报告“预览”或访问 `/assessment/reports/{report_id}/preview` 会进入独立报告预览页。该页读取 `GET /api/v1/reports/{id}` 与 `GET /api/v1/reports/{id}/preview` 展示章节完整性、渲染能力、制品状态和交付边界；页面不会生成虚假 PDF，也不会向外部平台投递报告。
+
+报告预览页同页展示 `preview.findings` 和 `preview.evidence`。从报告内点击风险详情时会保留 `reportContext`，返回按钮回到原报告预览；点击证据会在报告页内展开脱敏证据摘要并保留下载入口，避免在报告、风险中心和证据中心之间反复重新定位。
 
 报告交付包：
 

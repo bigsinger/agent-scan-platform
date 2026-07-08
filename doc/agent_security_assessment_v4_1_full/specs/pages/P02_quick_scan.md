@@ -11,6 +11,8 @@
 
 该页面必须作为独立 HTML 原型存在，并且正式开发时必须保留独立路由、加载状态、空状态、错误状态、权限/禁用状态和审计事件映射。不得只在总览页中以局部卡片替代。
 
+当前正式应用实现必须把 `F:\bigsinger\agent-scan-platform` 识别为扫描器自身项目：当 `mode=path` 指向本项目源码、文档或工具目录时，预检和扫描应返回 `self_project_source_excluded=true`、`scan_files=0`，并记录 `scan.scope.self_project_excluded` 事件。`tests/fixtures/**` 和项目 `.agents/**` 等显式 MCP/Skill 测试资产可以继续扫描，用于回归验证；企业测评默认应聚焦本机已安装 Agent、真实 Agent 配置目录或授权的客户 Agent 项目。
+
 ## 2. 页面区域
 
 - 扫描入口卡

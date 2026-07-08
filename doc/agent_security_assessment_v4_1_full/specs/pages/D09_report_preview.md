@@ -13,6 +13,8 @@
 
 当前正式应用实现为 `/assessment/reports/{id}/preview` 深链页面 `report-preview`，进入页面后读取 `GET /api/v1/reports/{id}` 与 `GET /api/v1/reports/{id}/preview`。章节完整性、渲染状态和 artifact 状态必须来自当前报告快照及本地制品，未配置 PDF 渲染器时显示不可用，不伪造 PDF 或外部投递能力。
 
+报告预览接口必须返回报告内风险摘要和证据摘要，前端在预览页同页展示 `preview.findings` 与 `preview.evidence`。从报告内进入风险详情时必须保留报告上下文，并提供返回原报告的入口；点击证据时应在报告页内展开脱敏摘要与下载动作，减少报告、风险和证据页面之间的往返跳转。
+
 ## 2. 页面区域
 
 - 封面
