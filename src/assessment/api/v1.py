@@ -18,6 +18,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 from ..contracts import API_CONTRACTS, completeness_rows
+from ..observability.api import router as observability_router
 from ..reports import ReportRenderer
 from ..scanning import DiscoveryEngine, LocalScanEngine, PassiveGuard
 from ..scanning.mcp_static import derive_mcp_tools, highest_mcp_risk, mcp_static_risks, sanitize_mcp_server, tool_flows
@@ -29,6 +30,7 @@ from ..store import DATA_DIR, REPO_ROOT, file_sha256, get_store, new_id, utc_now
 
 
 router = APIRouter(prefix="/api/v1", tags=["assessment"])
+router.include_router(observability_router)
 PUBLIC_QUICK_SCAN_MODES = {"machine", "path", "mcp"}
 INTERNAL_SKILL_PATH_KEYS = {"real_path", "source_path"}
 RETEST_INPUT_LIMIT_BYTES = 512 * 1024

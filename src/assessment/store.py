@@ -258,6 +258,11 @@ GENERIC_TABLES = [
     "defense_recommendation",
     "module_setting",
     "system_health_check",
+    # v4.2 探针与行为分析表
+    "probe_adapter",
+    "probe_install_plan",
+    "behavior_chain",
+    "behavior_anomaly",
 ]
 
 ALLOWED_TABLES = set(GENERIC_TABLES)
@@ -351,6 +356,8 @@ class AssessmentStore:
         conn.execute("CREATE INDEX IF NOT EXISTS ix_scan_event_assessment_seq ON scan_event(assessment_id, seq)")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_audit_event_object ON audit_event(object_type, object_id, seq)")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_feature_requirement_status ON feature_requirement(status, created_at)")
+        # v4.2 探针与 OTel 结构化表
+        self._migrate_observability(conn)
         conn.commit()
 
     def _seed_if_needed(self, conn: sqlite3.Connection) -> None:
@@ -434,6 +441,14 @@ class AssessmentStore:
                 """,
                 (row["id"], "已验收", json.dumps(row, ensure_ascii=False), now, now),
             )
+
+    def _migrate_observability(self, conn: sqlite3.Connection) -> None:
+        """v4.2 探针与 OTel 结构化表迁移."""
+        from .observability.storage import OBSERVABILITY_DDL
+        for statement in OBSERVABILITY_DDL.split(";"):
+            stmt = statement.strip()
+            if stmt:
+                conn.execute(stmt)
 
     def get_state(self) -> dict:
         with self.connect() as conn:

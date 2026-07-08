@@ -66,6 +66,16 @@ D11|规则详情|/assessment/rules/{id}|详情页|prototype/pages/D11_rule_detai
 D12|扫描器详情|/assessment/scanners/{id}|详情页|prototype/pages/D12_scanner_detail.html|specs/pages/D12_scanner_detail.md
 D13|主平台嵌入联调|/assessment/platform-embed|详情页|prototype/pages/D13_platform_embed.html|specs/pages/D13_platform_embed.md
 D14|API / 状态调试台|/assessment/api-debug|详情页|prototype/pages/D14_api_debug.html|specs/pages/D14_api_debug.md
+P49|探针管理|/assessment/probes|可观测性|prototype/pages/P49_probes.html|specs/pages/P49_probes.md
+P50|OTel 接收服务|/assessment/observability|可观测性|prototype/pages/P50_observability.html|specs/pages/P50_observability.md
+P51|行为链时间线|/assessment/behavior/chains|可观测性|prototype/pages/P51_behavior_chains.html|specs/pages/P51_behavior_chains.md
+P52|异常分析|/assessment/behavior/anomalies|可观测性|prototype/pages/P52_behavior_anomalies.html|specs/pages/P52_behavior_anomalies.md
+P53|OTel Explorer|/assessment/otel/explorer|可观测性|prototype/pages/P53_otel_explorer.html|specs/pages/P53_otel_explorer.md
+P54|探针安装向导|/assessment/probes/install|可观测性|prototype/pages/P54_probe_install.html|specs/pages/P54_probe_install.md
+D19|探针详情|/assessment/probes/{id}|详情页|prototype/pages/D19_probe_detail.html|specs/pages/D19_probe_detail.md
+D20|行为链详情|/assessment/behavior/chains/{id}|详情页|prototype/pages/D20_behavior_chain_detail.html|specs/pages/D20_behavior_chain_detail.md
+D21|OTel Span 详情|/assessment/otel/spans/{id}|详情页|prototype/pages/D21_otel_span_detail.html|specs/pages/D21_otel_span_detail.md
+D22|探针安装计划详情|/assessment/probes/plans/{id}|详情页|prototype/pages/D22_probe_install_plan_detail.html|specs/pages/D22_probe_install_plan_detail.md
 """.strip()
 
 
@@ -279,6 +289,17 @@ PAGE_API_MAP = {
     "D12": ["GET /api/v1/scanners/{id}", "POST /api/v1/scanners/{id}/self-test"],
     "D13": ["GET /api/v1/embed/context", "POST /api/v1/integrations/runtime-platform/events"],
     "D14": ["GET /api/v1/openapi.json", "POST /api/v1/diagnostics/scenario"],
+    # v4.2 探针与 OTel
+    "P49": ["GET /api/v1/probes", "POST /api/v1/probes/events"],
+    "P50": ["GET /api/v1/observability/health"],
+    "P51": ["GET /api/v1/behavior/chains", "GET /api/v1/behavior/chains/{chain_id}"],
+    "P52": ["GET /api/v1/behavior/anomalies", "GET /api/v1/behavior/rules"],
+    "P53": ["GET /api/v1/observability/health", "GET /api/v1/probes/events"],
+    "P54": ["POST /api/v1/probes/install-plan"],
+    "D19": ["GET /api/v1/probes/{probe_id}"],
+    "D20": ["GET /api/v1/behavior/chains/{chain_id}"],
+    "D21": ["GET /api/v1/observability/health"],
+    "D22": ["GET /api/v1/probes/install-plan/{id}"],
 }
 
 
@@ -362,6 +383,13 @@ def entity_for_page(page_id: str) -> str:
         "P32": "database_backup",
         "P33": "third_party_component",
         "P34": "feature_requirement",
+        # v4.2 探针与 OTel
+        "P49": "probe_adapter, probe_event",
+        "P50": "probe_event, otel_span, otel_log, otel_metric_point",
+        "P51": "behavior_chain, behavior_edge",
+        "P52": "behavior_anomaly",
+        "P53": "otel_span, otel_log, otel_metric_point",
+        "P54": "probe_install_plan",
     }
     return mapping.get(page_id, "详情实体, audit_event")
 
