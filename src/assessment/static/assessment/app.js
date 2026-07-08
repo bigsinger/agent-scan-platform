@@ -1818,6 +1818,8 @@ data(){
     },
     describeError(err){ return err && err.error ? err.error.message+' · '+err.error.correlation_id : String(err && err.message || err || '未知错误'); },
 
+    formatTime(t){ if(!t) return '-'; try{ const d=new Date(t); if(isNaN(d.getTime())) return String(t).slice(0,19); const pad=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); }catch(e){ return String(t).slice(0,19); } },
+
     applyExecutionSupervisor(res){
       if(!res) return;
       this.supervisorStatus=res.supervisor || res;
