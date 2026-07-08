@@ -296,7 +296,6 @@ class DiscoveryEngine:
                         "created_at": utc_now(),
                     }
                 )
-
     def _finalize_agents(self, result: DiscoveryResult) -> None:
         by_product: dict[str, list[dict[str, Any]]] = {}
         for hit in result.hits:
@@ -312,9 +311,22 @@ class DiscoveryEngine:
             probe_source = next((h.get("probe_source") for h in installed_hits if h.get("probe_source")), "")
             probe_method = next((h.get("probe_method") for h in installed_hits if h.get("probe_method")), "config-path")
             command_started = any(bool(h.get("command_started")) for h in installed_hits)
+            # 判断是否为活跃安装
+            is_running = any(h.get("command_started") for h in installed_hits)
+            has_verified = any(h.get("verified") for h in installed_hits)
+            has_config = any(h.get("type") in {"Config", "MCP"} for h in hits)
+            has_skill = any(h.get("type") == "Skill" for h in hits)
+            is_active = has_verified or (is_running and has_config)
+            install_status = "已安装" if is_active else "残留" if installed_hits else ("配置命中" if has_config else "探测命中")
+            notes = ""
+            if not is_active and installed_hits:
+                notes = "仅探测到程序存在，未发现活跃配置或运行态证据"
+            elif not has_config and not has_skill and not is_active:
+                notes = "仅有配置文件残留，Agent 可能已卸载"
             result.agents.append(
                 {
-                    "id": "agt_" + stable_hash(product + "".join(h["path_hash"] for h in hits)),
+                    "id": "agt_"
+                    + stable_hash(product + "".join(h["path_hash"] for h in hits)),
                     "name": product + " · Local",
                     "adapter": product,
                     "coverage": "完整" if product in {"Claude Code", "Codex", "Hermes"} else "扩展",
@@ -325,18 +337,15 @@ class DiscoveryEngine:
                     "score": 100,
                     "p0": 0,
                     "p1": 0,
-                    "probe": "正常",
+                    "probe": "正常" if is_active else ("探测" if installed_hits else "配置"),
                     "caps": ["Discovery", "MCP", "Skill", "Local Rules"],
                     "version": version,
                     "probe_source": probe_source,
                     "probe_method": probe_method,
                     "command_started": command_started,
-                    "install_status": "已安装"
-                    if any(h.get("verified") for h in installed_hits)
-                    else "残留"
-                    if installed_hits
-                    else "配置命中",
-                    "status": "ACTIVE",
+                    "install_status": install_status,
+                    "notes": notes,
+                    "status": "ACTIVE" if is_active else "RESIDUAL",
                     "created_at": utc_now(),
                 }
             )
