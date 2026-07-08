@@ -1805,6 +1805,64 @@ data(){
         this.probeStatusText = '获取失败';
       }
     },
+    // ── 探针/可观测性页面方法 ──
+    async loadProbes() {
+      try {
+        this.probes = await this.apiGet('/api/v1/probes');
+      } catch(e) { this.probes = []; }
+    },
+    async loadProbeEvents() {
+      try {
+        const d = await this.apiGet('/api/v1/probes/events?limit=50');
+        this.probeEvents = d.items || [];
+      } catch(e) { this.probeEvents = []; }
+    },
+    async installProbe(probe) {
+      try {
+        const plan = await this.apiPost('/api/v1/probes/install-plan', {
+          agent_type: probe.agent_type || 'unknown',
+          target_config_path: '',
+          steps: [{action:'backup'},{action:'hook_script'},{action:'config_modify'}],
+          rollback: [{action:'restore'}],
+        });
+        this.probeInstallPlan = plan;
+      } catch(e) { this.apiError = this.describeError(e); }
+    },
+    async loadBehaviorChains() {
+      try {
+        const d = await this.apiGet('/api/v1/behavior/chains?limit=100');
+        this.behaviorChains = d.items || [];
+      } catch(e) { this.behaviorChains = []; }
+    },
+    async loadChainDetail(chain) {
+      const cid = chain.chain_id || chain.id;
+      if(!cid) return;
+      try {
+        const d = await this.apiGet('/api/v1/behavior/chains/'+encodeURIComponent(cid));
+        this.chainEvents = d.events || [];
+      } catch(e) { this.chainEvents = []; }
+    },
+    async runChainBuild() {
+      this.obsBusy = true;
+      try {
+        await this.apiPost('/api/v1/behavior/chains', {action:'build'});
+        await this.loadBehaviorChains();
+        this.toastMsg = '链重建完成';
+      } catch(e) { this.apiError = this.describeError(e); }
+      this.obsBusy = false;
+    },
+    async loadBehaviorAnomalies() {
+      try {
+        const d = await this.apiGet('/api/v1/behavior/anomalies?limit=100');
+        this.behaviorAnomalies = d.items || [];
+      } catch(e) { this.behaviorAnomalies = []; }
+    },
+    async loadAnomalyRules() {
+      try {
+        const d = await this.apiGet('/api/v1/behavior/rules');
+        this.anomalyRules = d.items || [];
+      } catch(e) { this.anomalyRules = []; }
+    },
     async apiGet(path){ return this.apiRequest(path); },
     async apiPost(path, body){ return this.apiRequest(path, {method:'POST', body:JSON.stringify(body||{})}); },
     async apiPatch(path, body){ return this.apiRequest(path, {method:'PATCH', body:JSON.stringify(body||{})}); },

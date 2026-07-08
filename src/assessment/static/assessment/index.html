@@ -1148,6 +1148,111 @@ safe_mode: local-readonly</div></div>
     <div class="card"><h2>OpenAPI 契约</h2><div class="kv"><div>Title</div><div>{{apiDebugSummary.title||'-'}}</div><div>Version</div><div>{{apiDebugSummary.version||'-'}}</div><div>Path Count</div><div>{{apiDebugPathRows.length}}</div><div>Schema Count</div><div>{{apiDebugSchemaCount}}</div></div><div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Path</th><th>Methods</th></tr></thead><tbody><tr v-for="row in apiDebugPathRows.slice(0,24)" :key="row.path"><td class="mono">{{row.path}}</td><td>{{row.methods}}</td></tr><tr v-if="!apiDebugPathRows.length"><td colspan="2" class="muted">尚未读取 OpenAPI；点击刷新后展示当前后端契约。</td></tr></tbody></table></div></div>
     <div class="card"><h2>诊断结果</h2><div v-if="apiDebugDiagnostic" class="kv"><div>Schema</div><div class="mono">{{apiDebugDiagnostic.schema}}</div><div>Scenario</div><div>{{apiDebugDiagnostic.name}}</div><div>Status</div><div><span :class="['badge',statusClass(apiDebugDiagnostic.status)]">{{apiDebugDiagnostic.status}}</span></div><div>Artifact</div><div><a v-if="apiDebugDiagnosticDownload" :href="apiDebugDiagnosticDownload" target="_blank" rel="noopener">下载 JSON</a><span v-else>-</span></div></div><div v-else class="empty">尚未运行诊断场景。</div><table style="margin-top:12px"><thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead><tbody><tr v-for="row in apiDebugCheckRows" :key="row.id"><td>{{row.title||row.id}}</td><td><span :class="['badge',statusClass(row.status)]">{{row.status}}</span></td><td>{{row.detail}}</td></tr><tr v-if="!apiDebugCheckRows.length"><td colspan="3" class="muted">诊断后展示 SQLite、静态资源、规则目录和 Agent 安全边界检查。</td></tr></tbody></table></div>
   </div>
+</div>  <!-- end api-debug -->
+
+<!-- P49 PROBES -->
+<div v-if="current==='probes'">
+  <div class="card">
+    <div class="card-head"><div><h2>探针管理</h2><div class="desc">Agent 运行时探针的安装、启用、健康监控和事件采集。探针通过官方 hook/plugin 低侵入采集行为数据。</div></div><button class="btn primary" :disabled="obsBusy" @click="fetchObservabilityStatus();loadProbes()">刷新探针状态</button></div>
+    <div class="grid g4">
+      <div class="metric"><div class="metric-label">📡 OTel Receiver</div><div class="metric-value" style="font-size:18px">{{otelReceiverStatus}}</div></div>
+      <div class="metric"><div class="metric-label">🔍 探针事件</div><div class="metric-value">{{observabilityEvents}}</div></div>
+      <div class="metric"><div class="metric-label">🛡 已注册探针</div><div class="metric-value">{{probes.length}}</div></div>
+      <div class="metric"><div class="metric-label">📊 最近上报</div><div class="metric-value" style="font-size:14px">{{lastProbeEventTime}}</div></div>
+    </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table><thead><tr><th>探针 ID</th><th>Agent 类型</th><th>状态</th><th>启用</th><th>最后心跳</th><th>丢弃事件</th><th>操作</th></tr></thead>
+        <tbody><tr v-for="p in probes" :key="p.adapter_id||p.id"><td class="mono">{{p.adapter_id||p.id}}</td><td>{{p.agent_type}}</td><td><span :class="['badge',p.status==='ACTIVE'?'low':p.status==='INSTALLED'?'low':'medium']">{{p.status}}</span></td><td><span :class="['badge',p.enabled?'low':'gray']">{{p.enabled?'是':'否'}}</span></td><td class="tiny">{{p.last_heartbeat_at||'-'}}</td><td>{{p.dropped_events||0}}</td><td><button class="btn sm" :disabled="opsBusy" @click="installProbe(p)">安装向导</button></td></tr>
+          <tr v-if="!probes.length"><td colspan="7" class="muted">尚无探针注册。点击"刷新探针状态"或通过 POST /api/v1/probes 注册探针。</td></tr>
+        </tbody></table></div>
+    <div class="callout green" style="margin-top:12px">探针默认 fail-open，Collector 不可用时不会阻塞 Agent 正常使用。原始数据默认脱敏。</div>
+  </div>
+  <div class="card" v-if="probeInstallPlan">
+    <div class="card-head"><h2>安装计划预览</h2><span class="badge low">dry-run</span></div>
+    <div class="kv"><div>目标 Agent</div><div>{{probeInstallPlan.agent_type}}</div><div>安装状态</div><div>{{probeInstallPlan.install_status}}</div><div>目标配置</div><div class="mono">{{probeInstallPlan.target_config_path||'-'}}</div><div>备份路径</div><div class="mono">{{probeInstallPlan.backup_path||'-'}}</div></div>
+    <div v-if="probeInstallPlan.steps&&probeInstallPlan.steps.length" class="table-wrap" style="margin-top:10px">
+      <table><thead><tr><th>步骤</th><th>操作</th><th>描述</th></tr></thead>
+        <tbody><tr v-for="(s,i) in probeInstallPlan.steps" :key="i"><td>{{i+1}}</td><td>{{s.action}}</td><td>{{s.description}}</td></tr></tbody></table></div>
+    <div class="callout amber" style="margin-top:10px">当前为 dry-run 模式，不会修改任何 Agent 配置。</div>
+  </div>
+</div>
+
+<!-- P50 OBSERVABILITY -->
+<div v-if="current==='observability'">
+  <div class="card">
+    <div class="card-head"><div><h2>OTel 接收服务</h2><div class="desc">本地 OTLP HTTP JSON Receiver，接收来自探针的 traces/logs/metrics 和规范化事件。</div></div>
+      <div><button class="btn" :disabled="obsBusy" @click="fetchObservabilityStatus()">刷新</button><button class="btn" @click="loadProbeEvents()">加载事件</button></div></div>
+    <div class="grid g4">
+      <div class="metric"><div class="metric-label">Recevier 状态</div><div class="metric-value" style="font-size:18px"><span :class="['status-dot',otelReceiverStatus==='正常运行'?'ok':'err']"></span>{{otelReceiverStatus}}</div></div>
+      <div class="metric"><div class="metric-label">监听地址</div><div class="metric-value" style="font-size:14px">127.0.0.1:4318</div></div>
+      <div class="metric"><div class="metric-label">协议</div><div class="metric-value" style="font-size:14px">OTLP HTTP JSON</div></div>
+      <div class="metric"><div class="metric-label">总事件数</div><div class="metric-value">{{observabilityEvents}}</div></div>
+    </div>
+    <div class="callout">Receiver 默认只监听 127.0.0.1，不上传云端。支持 POST /v1/traces, /v1/logs, /v1/metrics, GET /healthz</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>探针事件</h2><span class="badge blue">{{probeEvents.length}}</span></div>
+    <div class="table-wrap"><table><thead><tr><th>事件 ID</th><th>类型</th><th>Agent</th><th>工具</th><th>阶段</th><th>状态</th><th>风险</th><th>时间</th></tr></thead>
+      <tbody><tr v-for="e in probeEvents.slice(0,50)" :key="e.event_id"><td class="tiny mono">{{String(e.event_id).slice(0,16)}}..</td><td><span class="badge blue">{{e.event_type}}</span></td><td>{{e.source_agent}}</td><td>{{e.tool_name||'-'}}</td><td>{{e.phase}}</td><td><span :class="['badge',e.status==='ok'?'low':e.status==='error'?'critical':'gray']">{{e.status}}</span></td><td><span v-if="e.risk_score>50" class="badge critical">{{e.risk_score}}</span><span v-else-if="e.risk_score>20" class="badge medium">{{e.risk_score}}</span><span v-else class="badge low">{{e.risk_score}}</span></td><td class="tiny muted">{{formatTime(e.timestamp)}}</td></tr>
+        <tr v-if="!probeEvents.length"><td colspan="8" class="muted">尚无探针事件。请通过 POST /api/v1/probes/events 发送测试事件。</td></tr>
+      </tbody></table></div>
+  </div>
+</div>
+
+<!-- P51 BEHAVIOR CHAINS -->
+<div v-if="current==='behavior-chains'">
+  <div class="card">
+    <div class="card-head"><div><h2>行为链时间线</h2><div class="desc">按 trace/session/time 归并的 Agent 行为链路，展示从用户输入到工具调用到结果输出的完整过程。</div></div>
+      <div><button class="btn" :disabled="opsBusy" @click="loadBehaviorChains()">刷新</button><button class="btn primary" :disabled="opsBusy" @click="runChainBuild()">运行链重建</button></div></div>
+    <div class="toolbar"><select v-model="chainAgentFilter"><option value="">全部 Agent</option><option>codex</option><option>hermes</option></select><span class="muted">{{behaviorChains.length}} 条链</span></div>
+    <div v-for="c in filteredChains" :key="c.chain_id||c.id" class="finding-row" @click="selectedChain=c;loadChainDetail(c)">
+      <div style="display:flex;justify-content:space-between"><span><b>{{c.summary||'行为链'}}</b></span><span :class="['badge',(c.risk_score||0)>50?'critical':(c.risk_score||0)>20?'medium':'low']">风险 {{c.risk_score}}</span></div>
+      <div class="finding-meta"><span>{{c.source_agent}} · {{c.session_id?'session: '+String(c.session_id).slice(0,12):''}}</span><span>{{formatTime(c.first_event_at)}} → {{formatTime(c.last_event_at)}}</span></div>
+    </div>
+    <div v-if="!behaviorChains.length" class="empty">尚无行为链。请先发送探针事件，然后点击"运行链重建"。</div>
+  </div>
+  <div v-if="selectedChain" class="card">
+    <div class="card-head"><h2>链详情</h2><button class="btn sm" @click="selectedChain=null">关闭</button></div>
+    <div class="kv"><div>链 ID</div><div class="mono">{{selectedChain.chain_id||selectedChain.id}}</div><div>Trace</div><div class="mono">{{selectedChain.root_trace_id||'-'}}</div><div>Session</div><div>{{selectedChain.session_id||'-'}}</div></div>
+    <div class="timeline" style="margin-top:12px">
+      <div v-for="e in chainEvents" :key="e.event_id" class="event">
+        <div class="event-time">{{e.event_type}} · {{formatTime(e.timestamp)}}</div>
+        <div class="event-text">{{e.tool_name||'-'}} · {{e.phase}} · {{e.status}} <span v-if="e.risk_score>0" :class="['badge',e.risk_score>50?'critical':'medium']">{{e.risk_score}}</span></div>
+      </div>
+      <div v-if="!chainEvents.length" class="muted">暂无关联事件。</div>
+    </div>
+  </div>
+</div>
+
+<!-- P52 BEHAVIOR ANOMALIES -->
+<div v-if="current==='behavior-anomalies'">
+  <div class="card">
+    <div class="card-head"><div><h2>异常分析</h2><div class="desc">基于 P0 异常规则对探针事件进行检测，识别敏感信息泄露、危险命令、数据外传等风险。</div></div>
+      <div><button class="btn" :disabled="opsBusy" @click="loadBehaviorAnomalies()">刷新</button><button class="btn soft" @click="loadAnomalyRules()">查看规则</button></div></div>
+    <div class="grid g4">
+      <div class="metric"><div class="metric-label">待处理异常</div><div class="metric-value">{{openAnomalyCount}}</div></div>
+      <div class="metric"><div class="metric-label">高危</div><div class="metric-value">{{highAnomalyCount}}</div></div>
+      <div class="metric"><div class="metric-label">中危</div><div class="metric-value">{{mediumAnomalyCount}}</div></div>
+      <div class="metric"><div class="metric-label">规则条数</div><div class="metric-value">{{anomalyRules.length}}</div></div>
+    </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table><thead><tr><th>规则</th><th>严重度</th><th>标题</th><th>状态</th><th>描述</th><th>时间</th></tr></thead>
+        <tbody><tr v-for="a in behaviorAnomalies" :key="a.id"><td class="mono tiny">{{a.rule_id}}</td><td><span :class="['badge',a.severity==='high'?'critical':a.severity==='medium'?'medium':'low']">{{a.severity}}</span></td><td>{{a.title}}</td><td><span :class="['badge',a.status==='open'?'medium':'low']">{{a.status}}</span></td><td class="small">{{(a.description||'').slice(0,80)}}</td><td class="tiny muted">{{formatTime(a.created_at)}}</td></tr>
+          <tr v-if="!behaviorAnomalies.length"><td colspan="6" class="muted">尚无行为异常。发送探针事件并运行链重建后自动触发异常检测。</td></tr>
+        </tbody></table></div>
+  </div>
+  <div class="card" v-if="anomalyRules.length">
+    <div class="card-head"><h2>P0 异常规则定义</h2><span class="badge blue">{{anomalyRules.length}} 条</span></div>
+    <table><thead><tr><th>规则 ID</th><th>严重度</th><th>标题</th><th>描述</th></tr></thead>
+      <tbody><tr v-for="r in anomalyRules" :key="r.rule_id"><td class="mono tiny">{{r.rule_id}}</td><td><span :class="['badge',r.severity==='high'?'critical':r.severity==='medium'?'medium':'low']">{{r.severity}}</span></td><td>{{r.title}}</td><td class="small">{{r.description}}</td></tr></tbody></table></div>
+</div>
+    <div class="form-grid" style="margin-top:12px"><div class="field"><label>诊断场景</label><select v-model="apiDebugScenario"><option value="empty">空态观察</option><option value="normal">运行态观察</option></select></div><div class="field"><label>写入边界</label><input value="diagnostic_event + artifact" disabled></div><div class="field"><label>Agent 影响</label><input value="mutates_installed_agents=false" disabled></div><div class="field"><label>证据</label><button class="btn" :disabled="!apiDebugDiagnosticDownload" @click="downloadApiDiagnostic">下载诊断 JSON</button></div></div>
+    <div class="callout green" style="margin-top:12px">调试台不会注入错误、不会清空运行态、不会启动或修改 Codex/Hermes/MCP；诊断只读取本系统 SQLite、静态资源和规则目录。</div>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h2>OpenAPI 契约</h2><div class="kv"><div>Title</div><div>{{apiDebugSummary.title||'-'}}</div><div>Version</div><div>{{apiDebugSummary.version||'-'}}</div><div>Path Count</div><div>{{apiDebugPathRows.length}}</div><div>Schema Count</div><div>{{apiDebugSchemaCount}}</div></div><div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Path</th><th>Methods</th></tr></thead><tbody><tr v-for="row in apiDebugPathRows.slice(0,24)" :key="row.path"><td class="mono">{{row.path}}</td><td>{{row.methods}}</td></tr><tr v-if="!apiDebugPathRows.length"><td colspan="2" class="muted">尚未读取 OpenAPI；点击刷新后展示当前后端契约。</td></tr></tbody></table></div></div>
+    <div class="card"><h2>诊断结果</h2><div v-if="apiDebugDiagnostic" class="kv"><div>Schema</div><div class="mono">{{apiDebugDiagnostic.schema}}</div><div>Scenario</div><div>{{apiDebugDiagnostic.name}}</div><div>Status</div><div><span :class="['badge',statusClass(apiDebugDiagnostic.status)]">{{apiDebugDiagnostic.status}}</span></div><div>Artifact</div><div><a v-if="apiDebugDiagnosticDownload" :href="apiDebugDiagnosticDownload" target="_blank" rel="noopener">下载 JSON</a><span v-else>-</span></div></div><div v-else class="empty">尚未运行诊断场景。</div><table style="margin-top:12px"><thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead><tbody><tr v-for="row in apiDebugCheckRows" :key="row.id"><td>{{row.title||row.id}}</td><td><span :class="['badge',statusClass(row.status)]">{{row.status}}</span></td><td>{{row.detail}}</td></tr><tr v-if="!apiDebugCheckRows.length"><td colspan="3" class="muted">诊断后展示 SQLite、静态资源、规则目录和 Agent 安全边界检查。</td></tr></tbody></table></div>
+  </div>
 </div>
 
 <div v-if="showModal==='mcp'" class="modal-mask" @click.self="showModal=null">
