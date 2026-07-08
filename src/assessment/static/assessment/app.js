@@ -1769,6 +1769,8 @@ data(){
         const payload=await this.apiGet('/api/v1/bootstrap');
         if(payload && payload.state){
           Object.assign(this, payload.state);
+          this.appVersion = payload.version || '4.2.0';
+          this.gitShortHash = payload.git_short_hash || '';
           this.form=Object.assign({}, defaultFormState, this.form || {});
           this.quickModes=(this.quickModes || []).filter(mode => mode.id !== 'fixture');
           if(this.quickMode==='fixture') this.quickMode='machine';
@@ -1782,9 +1784,25 @@ data(){
           this.settingsValidation=(this.settingsState && this.settingsState.validation_errors) || [];
           await this.refreshExecutionCenter({silent:true});
           this.syncRouteFromLocation();
+          // 主动拉取可观测性数据
+          this.fetchObservabilityStatus();
         }
       } catch (err) {
         this.apiError='后端 API 暂不可用，当前显示本地空态配置；不会展示原型样例数据。';
+      }
+    },
+    async fetchObservabilityStatus() {
+      try {
+        const obs = await this.apiGet('/api/v1/observability/health');
+        this.observabilityEvents = (obs.database && obs.database.total_probe_events) || 0;
+        this.otelReceiverStatus = (obs.receiver && obs.receiver.status === 'ok') ? '正常运行' : '未启动';
+        this.probeCount = (obs.probes && obs.probes.length) || 0;
+        this.probeStatusText = this.probeCount > 0 ? this.probeCount + ' 个已注册' : '无探针';
+      } catch(e) {
+        this.observabilityEvents = this.observabilityEvents || 0;
+        this.otelReceiverStatus = '不可用';
+        this.probeCount = this.probeCount || 0;
+        this.probeStatusText = '获取失败';
       }
     },
     async apiGet(path){ return this.apiRequest(path); },

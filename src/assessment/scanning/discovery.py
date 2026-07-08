@@ -331,7 +331,11 @@ class DiscoveryEngine:
                     "probe_source": probe_source,
                     "probe_method": probe_method,
                     "command_started": command_started,
-                    "install_status": "已安装" if installed_hits else "配置命中",
+                    "install_status": "已安装"
+                    if any(h.get("verified") for h in installed_hits)
+                    else "残留"
+                    if installed_hits
+                    else "配置命中",
                     "status": "ACTIVE",
                     "created_at": utc_now(),
                 }
@@ -348,6 +352,7 @@ class DiscoveryEngine:
                 path,
                 version=parse_first_version_line(hermes.get("stdout", "")),
                 source="hermes --version",
+                verified=True,
                 details={
                     "python": parse_line_value(hermes.get("stdout", ""), "Python"),
                     "openai_sdk": parse_line_value(hermes.get("stdout", ""), "OpenAI SDK"),
@@ -368,6 +373,7 @@ class DiscoveryEngine:
                 codex_path,
                 version=codex_version,
                 source="WindowsApps package",
+                verified=True,
                 details={
                     "file": codex_path.name,
                     "probe_method": "package-metadata",
@@ -404,6 +410,8 @@ class DiscoveryEngine:
         version: str = "",
         source: str = "installed-probe",
         details: dict[str, Any] | None = None,
+        *,
+        verified: bool = False,
     ) -> None:
         resolved_text = str(path)
         try:
@@ -428,6 +436,7 @@ class DiscoveryEngine:
             "probe_source": source,
             "probe_method": str((details or {}).get("probe_method") or ("version-command" if "--version" in source else "package-metadata")),
             "command_started": bool((details or {}).get("command_started") or "--version" in source),
+            "verified": verified,
             "mutates_installed_agents": False,
             "created_at": utc_now(),
         }

@@ -257,7 +257,20 @@ TABLE_KEYS = {
 
 @router.get("/bootstrap")
 async def bootstrap() -> dict:
-    return {"state": runtime_state(), "version": "4.1.0"}
+    git_hash = ""
+    try:
+        git_hash = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=REPO_ROOT,
+        ).stdout.strip()
+    except Exception:
+        git_hash = ""
+    return {
+        "state": runtime_state(),
+        "version": "4.2.0",
+        "git_short_hash": git_hash,
+    }
 
 
 @router.get("/health")
@@ -291,9 +304,9 @@ async def health_self_test() -> dict:
 @router.get("/version")
 async def version() -> dict:
     return {
-        "app": "4.1.0",
-        "spec": "V4.1",
-        "rules": "baseline@4.1.0",
+        "app": "4.2.0",
+        "spec": "V4.2",
+        "rules": "baseline@4.2.0",
         "agent_scan": {"version": "0.5.12", "mode": "vendored-compatible"},
     }
 
@@ -306,6 +319,18 @@ async def api_openapi(request: Request) -> dict:
 @router.get("/dashboard")
 async def dashboard() -> dict:
     state = runtime_state()
+    # 接入可观测性健康数据
+    obs_health = {}
+    try:
+        from assessment.observability.storage import probe_event_stats, probe_adapter_health
+        obs_health = {
+            "observability": {
+                "total_events": probe_event_stats(get_store())["total_events"],
+                "probes": probe_adapter_health(get_store()),
+            }
+        }
+    except Exception:
+        obs_health = {"observability": {"total_events": 0, "probes": []}}
     return {
         "metrics": state.get("dashboardMetrics", {}),
         "agents": state.get("agentAssets", [])[:4],
@@ -313,6 +338,7 @@ async def dashboard() -> dict:
         "heatmap": state.get("heatmap", []),
         "health": await health(),
         "guard": state.get("guardStatus", {}),
+        **obs_health,
     }
 
 

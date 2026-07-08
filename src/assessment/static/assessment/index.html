@@ -12,7 +12,7 @@
 <div id="app" class="layout" v-cloak>
 <aside class="sidebar">
   <div class="brand">
-    <div class="brand-line"><div class="logo">AS</div><div><h1>Agent 安全测评</h1><p>V4 本地可用能力模块</p></div></div>
+    <div class="brand-line"><div class="logo">AS</div><div><h1>Agent 安全测评</h1><p>V4 {{appVersion || '4.2.0'}} · {{agentScanCompat.version || ''}} <span class="muted" style="font-size:11px">修订 {{gitShortHash || '?'}}</span></p></div></div>
     <div class="mode-badge">Python + FastAPI + Vue + SQLite</div>
   </div>
   <div v-for="group in navGroups" :key="group.label" class="nav-group">
@@ -40,7 +40,7 @@
 <div v-if="current==='dashboard'">
   <div class="notice success"><b>V4 本地可用架构：</b>核心能力全部使用 Python；FastAPI 提供 API 与静态页面，SQLite WAL 保存任务和事件，Vue 3 负责轻量交互。agent-scan 的本地发现、MCP/Skill 检查与脱敏能力已纳入兼容层，远程分析默认关闭。</div>
   <div class="grid g5">
-    <div class="metric"><div class="metric-label">已发现 Agent</div><div class="metric-value">{{agentAssets.length}}</div><div class="metric-foot"><span class="up">{{new Set(agentAssets.map(a=>a.adapter)).size}} 类本机 Agent</span></div></div>
+    <div class="metric" style="cursor:pointer" @click="go('agents')"><div class="metric-label">已发现 Agent</div><div class="metric-value link-style">{{agentAssets.length}}</div><div class="metric-foot"><span class="up">{{new Set(agentAssets.map(a=>a.adapter)).size}} 类本机 Agent →</span></div></div>
     <div class="metric"><div class="metric-label">运行中测评</div><div class="metric-value">{{runningTaskCount}}</div><div class="metric-foot">真实任务记录</div></div>
     <div class="metric"><div class="metric-label">待审批 MCP</div><div class="metric-value">{{pendingConsentCount}}</div><div class="metric-foot"><span class="down">默认拒绝启动</span></div></div>
     <div class="metric"><div class="metric-label">开放 P0/P1</div><div class="metric-value">{{p0Count+p1Count}}</div><div class="metric-foot">{{p0Count}} P0 · {{p1Count}} P1</div></div>
@@ -48,12 +48,18 @@
   </div>
 
   <div class="card">
-    <div class="card-head"><div><h2>只读防御监测</h2><div class="desc">对已发现 Agent 配置、MCP 和 Skill 做哈希基线与变化检测；只写本系统 SQLite，不修改 Codex、Hermes 或任何已安装 Agent。</div></div><div class="actions"><button class="btn" :disabled="opsBusy" @click="refreshDefenseRecommendations()">刷新建议</button><button class="btn" :disabled="opsBusy" @click="exportDefenseRecommendations">导出整改包</button><button class="btn" v-if="guardLastDownload || guardStatus.last_download" @click="downloadGuardEvidence">下载证据</button><button class="btn primary" :disabled="quickBusy" @click="runGuardCheck">运行 Guard 检查</button></div></div>
+    <div class="card-head"><div><h2>只读防御监测与探针状态</h2><div class="desc">对已发现 Agent 配置、MCP 和 Skill 做哈希基线与变化检测；只写本系统 SQLite，不修改 Codex、Hermes 或任何已安装 Agent。</div></div><div class="actions"><button class="btn" :disabled="opsBusy" @click="refreshDefenseRecommendations()">刷新建议</button><button class="btn" :disabled="opsBusy" @click="exportDefenseRecommendations">导出整改包</button><button class="btn" v-if="guardLastDownload || guardStatus.last_download" @click="downloadGuardEvidence">下载证据</button><button class="btn primary" :disabled="quickBusy" @click="runGuardCheck">运行 Guard 检查</button></div></div>
     <div class="grid g4">
       <div class="metric"><div class="metric-label">Guard 状态</div><div class="metric-value" style="font-size:18px">{{guardStatus.state}}</div></div>
       <div class="metric"><div class="metric-label">监测文件</div><div class="metric-value">{{guardStatus.watched_files||0}}</div></div>
       <div class="metric"><div class="metric-label">待处理建议</div><div class="metric-value">{{guardStatus.open_recommendations||0}}</div></div>
       <div class="metric"><div class="metric-label">最近检查</div><div class="metric-value" style="font-size:14px">{{guardLastCheckDisplay}}</div></div>
+    </div>
+    <div class="grid g4" style="margin-top:8px">
+      <div class="metric"><div class="metric-label">🔍 探针事件数</div><div class="metric-value">{{observabilityEvents||0}}</div></div>
+      <div class="metric"><div class="metric-label">📡 OTel Receiver</div><div class="metric-value" style="font-size:14px">{{otelReceiverStatus}}</div></div>
+      <div class="metric"><div class="metric-label">🛡 已安装探针</div><div class="metric-value">{{probeCount||0}}</div></div>
+      <div class="metric"><div class="metric-label" style="cursor:pointer" @click="go('observability')">探针管理 →</div><div class="metric-value" style="font-size:14px">{{probeStatusText}}</div></div>
     </div>
     <div class="callout green">防御策略：不启动 stdio MCP、不注入 Hook、不改写配置，只进行本地只读发现、哈希比对、审批建议和报告留痕。</div>
     <div class="form-grid" style="margin-top:12px">
