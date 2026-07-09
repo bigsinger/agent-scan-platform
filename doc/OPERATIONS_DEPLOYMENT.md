@@ -1235,3 +1235,29 @@ Invoke-RestMethod http://127.0.0.1:4318/healthz
 关键表：`probe_event`、`otel_span`、`otel_log`、`otel_metric_point`、`behavior_edge`、`behavior_chain`、`behavior_anomaly`、`probe_install_plan`。
 
 故障处理：Collector 不可达时探针应 fail-open；SQLite 锁需停止重复 receiver；重复链通过 `chain_key` 幂等 upsert 避免重复创建。
+
+## v4.2.6 运维补充
+
+### OTel Receiver 单独启动
+
+```powershell
+$env:PYTHONPATH='src'
+python -m assessment.observability.receiver --host 127.0.0.1 --port 4318
+```
+
+### OTLP HTTP JSON 健康检查
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:4318/healthz
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/observability/health
+```
+
+`/api/v1/observability/health` 区分 `platform_api` 与独立 `receiver`。未启动独立 receiver 时不得把 receiver 误报为 ok。
+
+### 验收脚本
+
+```powershell
+powershell -ExecutionPolicy Bypass -File toolserify_v426_acceptance.ps1
+```
+
+脚本优先使用 `uv run --with pytest --with httpx2` 隔离 pytest 环境，并清空外部 `PYTHONPATH`，避免宿主 Hermes venv 污染。

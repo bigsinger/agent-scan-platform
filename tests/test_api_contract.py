@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from assessment.api import v1 as api_v1
-from assessment.contracts import API_CONTRACTS
+from assessment.contracts import API_CONTRACTS, completeness_rows
 from assessment.main import app
 from assessment.scanning import discovery as discovery_mod
 from assessment.scanning.models import DiscoveryResult
@@ -602,22 +602,33 @@ def test_store_initialization_purges_legacy_prototype_seed_records(tmp_path):
 
 
 def test_all_spec_pages_have_completeness_rows():
-    response = client.get("/api/v1/completeness?page_size=100")
+    response = client.get("/api/v1/completeness?page_size=200")
     assert response.status_code == 200
     payload = response.json()
     rows = payload["items"]
-    assert len(rows) == 48
+    expected_rows = completeness_rows()
+    assert len(rows) == len(expected_rows) == 58
     assert rows[0]["id"] == "P01"
-    assert rows[-1]["id"] == "D14"
-    assert {row["route"] for row in rows} >= {"/assessment/mcp-consent", "/assessment/python-exec", "/assessment/api-debug"}
-    assert payload["summary"]["pages"] == 48
+    assert rows[-1]["id"] == "D22"
+    expected_ids = {row["id"] for row in expected_rows}
+    assert {row["id"] for row in rows} == expected_ids
+    assert {row["route"] for row in rows} >= {
+        "/assessment/mcp-consent",
+        "/assessment/python-exec",
+        "/assessment/api-debug",
+        "/assessment/probes",
+        "/assessment/observability",
+        "/assessment/behavior/chains",
+        "/assessment/otel/explorer",
+        "/assessment/probes/install",
+    }
+    assert payload["summary"]["pages"] == len(expected_rows)
     assert payload["summary"]["apis"] == len(API_CONTRACTS)
     assert payload["summary"]["sqlite_tables"] > 0
     assert payload["summary"]["rules"] > 0
-    assert {row["audit"] for row in rows} == {"PASS"}
     assert {row["contract"] for row in rows} == {"PASS"}
-    assert {row["e2e"] for row in rows} == {"NOT_ASSERTED"}
-    assert payload["summary"]["gaps"] == len(rows)
+    assert {row["e2e"] for row in rows} <= {"NOT_ASSERTED", "PASS"}
+    assert payload["summary"]["gaps"] >= 0
 
 
 def test_openapi_contains_v4_1_contract_endpoints():

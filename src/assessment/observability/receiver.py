@@ -88,7 +88,7 @@ def create_receiver_app() -> FastAPI | None:
                     generated_events += 1
             _receiver_state["accepted_traces"] += len(spans)
             _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
-            return JSONResponse({"partialSuccess": {}, "error": ""}, status_code=200)
+            return JSONResponse({"partialSuccess": {}, "error": "", "accepted": len(spans), "generated_events": generated_events}, status_code=200)
         except Exception as exc:
             _receiver_state["rejected"] += 1
             logger.warning("OTLP traces parse error: %s", exc)

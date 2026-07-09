@@ -23,6 +23,8 @@ from typing import Any
 from uuid import uuid4
 
 from ..store import AssessmentStore, get_store, new_id, utc_now
+from .normalizer import attributes_to_dict
+from .redaction import redact_payload
 
 
 # ── 结构化表 DDL (由 store._create_schema 通过 _OBSERVABILITY_DDL 注入) ──
@@ -133,6 +135,25 @@ def migrate_observability(store: AssessmentStore) -> None:
             if stmt:
                 conn.execute(stmt)
         conn.commit()
+
+
+# ── Probe Event CRUD ──────────────────────────────────────────
+
+def _otel_nano_to_iso(value: Any) -> str | None:
+    try:
+        nano = int(value)
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(nano / 1_000_000_000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _json_loads_or_value(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return value
+    return value
 
 
 # ── Probe Event CRUD ──────────────────────────────────────────
@@ -269,6 +290,9 @@ def _decode_probe_event(row: sqlite3.Row) -> dict[str, Any]:
 # ── OTel Span CRUD ────────────────────────────────────────────
 
 def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, Any]:
+    attrs = attributes_to_dict(span.get("attributes"))
+    resource = span.get("resource", {})
+    scope = span.get("scope", {})
     now = utc_now()
     row = {
         "span_id": span.get("spanId") or span.get("span_id", f"span_{uuid4().hex[:12]}"),
@@ -276,14 +300,14 @@ def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, 
         "parent_span_id": span.get("parentSpanId") or span.get("parent_span_id"),
         "name": span.get("name", "unknown"),
         "kind": span.get("kind"),
-        "start_time": span.get("startTime") or span.get("start_time"),
-        "end_time": span.get("endTime") or span.get("end_time"),
+        "start_time": span.get("startTime") or span.get("start_time") or _otel_nano_to_iso(span.get("startTimeUnixNano")),
+        "end_time": span.get("endTime") or span.get("end_time") or _otel_nano_to_iso(span.get("endTimeUnixNano")),
         "duration_ms": span.get("duration_ms") or span.get("durationMs"),
         "status_code": span.get("status", {}).get("code") if isinstance(span.get("status"), dict) else span.get("status_code"),
         "status_message": span.get("status", {}).get("message") if isinstance(span.get("status"), dict) else span.get("status_message"),
-        "resource_json": json.dumps(span.get("resource", {}), ensure_ascii=False),
-        "scope_json": json.dumps(span.get("scope", {}), ensure_ascii=False),
-        "attrs_json": json.dumps(span.get("attributes", {}), ensure_ascii=False),
+        "resource_json": json.dumps(resource, ensure_ascii=False),
+        "scope_json": json.dumps(scope, ensure_ascii=False),
+        "attrs_json": json.dumps(attrs, ensure_ascii=False),
         "created_at": now,
     }
     with store.connect() as conn:
@@ -303,16 +327,17 @@ def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, 
 # ── Behavior Chain ────────────────────────────────────────────
 
 def insert_otel_log(store: AssessmentStore, log: dict[str, Any]) -> dict[str, Any]:
+    attrs = attributes_to_dict(log.get("attributes"))
     now = utc_now()
     row = {
         "id": log.get("id") or new_id("olg"),
         "trace_id": log.get("traceId") or log.get("trace_id"),
         "span_id": log.get("spanId") or log.get("span_id"),
-        "timestamp": log.get("timeUnixNano") or log.get("timestamp") or now,
+        "timestamp": _otel_nano_to_iso(log.get("timeUnixNano")) or log.get("timestamp") or now,
         "severity_text": log.get("severityText") or log.get("severity_text"),
-        "body_redacted": str(log.get("body_redacted") or log.get("body") or ""),
+        "body_redacted": str(log.get("body_redacted") or redact_payload({"body": log.get("body")}).get("body") or ""),
         "resource_json": json.dumps(log.get("resource", {}), ensure_ascii=False),
-        "attrs_json": json.dumps(log.get("attributes", {}), ensure_ascii=False),
+        "attrs_json": json.dumps(attrs, ensure_ascii=False),
         "created_at": now,
     }
     with store.connect() as conn:
@@ -326,16 +351,17 @@ def insert_otel_log(store: AssessmentStore, log: dict[str, Any]) -> dict[str, An
 
 
 def insert_otel_metric_point(store: AssessmentStore, point: dict[str, Any]) -> dict[str, Any]:
+    attrs = attributes_to_dict(point.get("attributes"))
     now = utc_now()
     row = {
         "id": point.get("id") or new_id("omp"),
         "metric_name": point.get("metric_name") or point.get("name") or "unknown",
         "metric_type": point.get("metric_type") or point.get("type") or "gauge",
-        "timestamp": point.get("timeUnixNano") or point.get("timestamp") or now,
+        "timestamp": _otel_nano_to_iso(point.get("timeUnixNano")) or _otel_nano_to_iso(point.get("timestamp")) or point.get("timestamp") or now,
         "value": point.get("value"),
         "unit": point.get("unit"),
         "resource_json": json.dumps(point.get("resource", {}), ensure_ascii=False),
-        "attrs_json": json.dumps(point.get("attributes", {}), ensure_ascii=False),
+        "attrs_json": json.dumps(attrs, ensure_ascii=False),
         "created_at": now,
     }
     with store.connect() as conn:

@@ -255,6 +255,7 @@ GET /api/v1/observability/health
 GET /api/v1/otel/spans
 GET /api/v1/otel/logs
 GET /api/v1/otel/metrics
+GET /api/v1/otel/traces/{trace_id}
 """.strip()
 
 
@@ -312,7 +313,7 @@ PAGE_API_MAP = {
     "P50": ["GET /api/v1/observability/health"],
     "P51": ["POST /api/v1/behavior/chains", "GET /api/v1/behavior/chains", "GET /api/v1/behavior/chains/{chain_id}"],
     "P52": ["GET /api/v1/behavior/anomalies", "GET /api/v1/behavior/rules"],
-    "P53": ["GET /api/v1/otel/spans", "GET /api/v1/otel/logs", "GET /api/v1/otel/metrics"],
+    "P53": ["GET /api/v1/otel/spans", "GET /api/v1/otel/logs", "GET /api/v1/otel/metrics", "GET /api/v1/otel/traces/{trace_id}"],
     "P54": ["POST /api/v1/probes/install-plan", "GET /api/v1/probes/install-plan/{plan_id}"],
     "D19": ["GET /api/v1/probes/{probe_id}"],
     "D20": ["GET /api/v1/behavior/chains/{chain_id}"],

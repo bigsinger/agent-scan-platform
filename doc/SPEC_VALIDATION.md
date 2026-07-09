@@ -57,3 +57,27 @@ PY
 ```
 
 页面检查：`/assessment/probes`、`/assessment/observability`、`/assessment/behavior/chains`、`/assessment/behavior/anomalies`、`/assessment/otel/explorer`、`/assessment/probes/install` 均不能回落 dashboard。
+
+## v4.2.6 验收结果（2026-07-09）
+
+执行命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File toolserify_v426_acceptance.ps1
+```
+
+实际输出摘要：
+
+```text
+frontend offline check passed: pages=58
+v4.2.6 otel receiver ingestion: 2 passed
+v4.2.6 behavior anomaly rules: 2 passed
+v4.2.6 probe install safety: 1 passed
+v4.2.6 scan scope policy: 2 passed
+v4.2.6 observability pages: 2 passed
+legacy 48/58 regression tests: 2 passed
+full test suite: 129 passed in 193.12s
+v4.2.6 acceptance verification passed
+```
+
+完整性矩阵期望：58 页；P49-P54/D19-D22 文档、原型、契约、E2E manifest 均已映射。未在 manifest 中覆盖的旧页面保持 `NOT_ASSERTED`，不伪造 PASS。

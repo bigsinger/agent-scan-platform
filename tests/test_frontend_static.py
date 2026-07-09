@@ -3,6 +3,8 @@ import json
 import re
 from pathlib import Path
 
+from assessment.contracts import completeness_rows
+
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "src" / "assessment" / "static"
@@ -91,7 +93,9 @@ def test_frontend_seed_fallback_does_not_ship_prototype_runtime_data():
     ]:
         assert seed[key] == {}, key
     assert [mode["id"] for mode in seed["quickModes"]] == ["machine", "path", "mcp"]
-    assert len(seed["completeness"]) == 48
+    assert len(seed["completeness"]) == len(completeness_rows()) == 58
+    assert all(row.get("e2e") != "PASS" for row in seed["completeness"])
+    assert all(row.get("status") != "已验收" for row in seed["completeness"])
     assert "后端 API 暂不可用，当前显示本地种子数据。" not in app_js
     assert "当前显示本地空态配置" in app_js
     combined = json.dumps(seed, ensure_ascii=False) + seed_js

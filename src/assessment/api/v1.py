@@ -268,7 +268,7 @@ async def bootstrap() -> dict:
         git_hash = ""
     return {
         "state": runtime_state(),
-        "version": "4.2.5",
+        "version": "4.2.6",
         "git_short_hash": git_hash,
     }
 
@@ -304,9 +304,9 @@ async def health_self_test() -> dict:
 @router.get("/version")
 async def version() -> dict:
     return {
-        "app": "4.2.5",
-        "spec": "V4.2.5",
-        "rules": "baseline@4.2.5",
+        "app": "4.2.6",
+        "spec": "V4.2.6",
+        "rules": "baseline@4.2.6",
         "agent_scan": {"version": "0.5.12", "mode": "vendored-compatible"},
     }
 
@@ -1928,8 +1928,29 @@ def completeness_doc_root() -> Path:
     return candidate if candidate.exists() else REPO_ROOT / "doc"
 
 
+def completeness_e2e_manifest(doc_root: Path | None = None) -> dict[str, dict]:
+    root = doc_root or completeness_doc_root()
+    path = root / "e2e_manifest.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    result: dict[str, dict] = {}
+    for item in payload.get("items", []):
+        if not isinstance(item, dict) or not item.get("page_id"):
+            continue
+        evidence = dict(item)
+        test_file = REPO_ROOT / str(item.get("test_file", ""))
+        evidence["test_file_exists"] = test_file.exists()
+        result[str(item["page_id"])] = evidence
+    return result
+
+
 def completeness_runtime_rows() -> list[dict]:
     doc_root = completeness_doc_root()
+    e2e_manifest = completeness_e2e_manifest(doc_root)
     contract_pairs = {(method, path) for method, path in API_CONTRACTS}
     contract_pairs.update((method, path.split("?", 1)[0]) for method, path in API_CONTRACTS)
     rows: list[dict] = []
@@ -1952,7 +1973,9 @@ def completeness_runtime_rows() -> list[dict]:
                 missing_api.append(ref)
         item["audit"] = "PASS" if audit_ok else "MISSING_DOC"
         item["contract"] = "PASS" if contract_ok else "MISSING_API"
-        item["e2e"] = "NOT_ASSERTED"
+        evidence = e2e_manifest.get(str(item.get("id")))
+        item["e2e"] = "PASS" if evidence and evidence.get("test_file_exists") and evidence.get("status") == "PASS" else "NOT_ASSERTED"
+        item["e2e_evidence"] = evidence or {}
         item["status"] = "待验证" if item["e2e"] != "PASS" else "已验收"
         item["prototype_exists"] = prototype_path.exists()
         item["spec_exists"] = spec_path.exists()

@@ -1500,3 +1500,12 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 6. 打开 `http://127.0.0.1:8000/assessment/probes/install` 生成 dry-run 安装计划。
 
 安全边界：本轮只生成 dry-run 计划，不修改 Codex/Hermes 配置，不写 hook/plugin 文件，不启动 stdio MCP，不保存 raw prompt/result。
+
+## v4.2.6 使用补充
+
+- 探针管理：打开 `/assessment/probes`，查看探针状态和最近事件。
+- OTel Explorer：打开 `/assessment/otel/explorer`，查看 spans/logs/metrics，并从 span 进入 trace 详情。
+- 行为链：打开 `/assessment/behavior/chains`，点击「运行链重建」。重复运行是幂等的。
+- 异常分析：打开 `/assessment/behavior/anomalies`，查看 P0 规则结果；证据字段默认脱敏。
+- 报告证据：在报告预览中点击证据会打开右侧抽屉，不离开报告上下文。
+- 探针安装：打开 `/assessment/probes/install` 只生成 dry-run 安装计划；不会写入 Codex/Hermes 配置。

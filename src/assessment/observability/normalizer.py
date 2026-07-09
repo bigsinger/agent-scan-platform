@@ -66,6 +66,9 @@ def span_to_probe_event(span: dict[str, Any], resource: dict[str, Any] | None = 
     if not event_type:
         return None
     source_agent = normalize_agent_name(attrs.get("agent.name") or attrs.get("gen_ai.system") or res_attrs.get("service.name"))
+    session_id = attrs.get("agent.session_id") or attrs.get("session.id")
+    if source_agent == "unknown" and not session_id:
+        return None
     tool_name = attrs.get("agent.tool_name") or attrs.get("tool.name") or attrs.get("gen_ai.tool.name")
     command = attrs.get("agent.command") or attrs.get("process.command_line") or attrs.get("shell.command")
     payload = redact_payload({
@@ -82,7 +85,7 @@ def span_to_probe_event(span: dict[str, Any], resource: dict[str, Any] | None = 
         "parent_span_id": span.get("parentSpanId") or span.get("parent_span_id"),
         "source_agent": source_agent,
         "adapter_id": "otel-receiver",
-        "session_id": attrs.get("agent.session_id") or attrs.get("session.id"),
+        "session_id": session_id,
         "run_id": attrs.get("agent.run_id"),
         "turn_id": attrs.get("agent.turn_id"),
         "tool_call_id": attrs.get("agent.tool_call_id") or attrs.get("tool.call.id"),
@@ -109,6 +112,9 @@ def log_to_probe_event(log: dict[str, Any], resource: dict[str, Any] | None = No
     body = _otel_value(log.get("body"))
     payload = redact_payload({"body": body, "attributes": attrs})
     source_agent = normalize_agent_name(attrs.get("agent.name") or res_attrs.get("service.name"))
+    session_id = attrs.get("agent.session_id") or attrs.get("session.id")
+    if source_agent == "unknown" and not session_id:
+        return None
     log_id_seed = f"{log.get('traceId','')}:{log.get('spanId','')}:{log.get('timeUnixNano','')}:{event_type}"
     return {
         "event_id": f"otel_log_{stable_hash(log_id_seed)[:16]}",
@@ -118,7 +124,7 @@ def log_to_probe_event(log: dict[str, Any], resource: dict[str, Any] | None = No
         "span_id": log.get("spanId") or attrs.get("span_id"),
         "source_agent": source_agent,
         "adapter_id": "otel-receiver",
-        "session_id": attrs.get("agent.session_id") or attrs.get("session.id"),
+        "session_id": session_id,
         "turn_id": attrs.get("agent.turn_id"),
         "tool_call_id": attrs.get("agent.tool_call_id"),
         "tool_name": attrs.get("agent.tool_name") or attrs.get("tool.name"),

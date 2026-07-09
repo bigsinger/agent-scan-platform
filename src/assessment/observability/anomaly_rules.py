@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from datetime import datetime, timezone
 
 from ..store import AssessmentStore, new_id, utc_now
+from .redaction import redact_payload, stable_hash
 from .storage import (
     create_behavior_anomaly,
 )
@@ -218,6 +220,26 @@ def _save_and_collect(store: AssessmentStore, anomaly: dict[str, Any], collectio
 
 # ── 规则实现 ────────────────────────────────────────────────
 
+def _parse_ts(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _within_seconds(after: Any, before: Any, seconds: int) -> bool:
+    a = _parse_ts(after)
+    b = _parse_ts(before)
+    if not a or not b:
+        return True
+    delta = (a - b).total_seconds()
+    return 0 <= delta <= seconds
+
+
+# ── 规则实现 ────────────────────────────────────────────────
+
 def _check_secret_in_prompt(events: list[dict[str, Any]], chain_id: str | None) -> dict[str, Any] | None:
     """ANOM-SECRET-IN-PROMPT: 检查事件 payload 中是否含 secret 字段名."""
     for ev in events:
@@ -227,12 +249,13 @@ def _check_secret_in_prompt(events: list[dict[str, Any]], chain_id: str | None) 
         for key, value in payload.items():
             key_lower = key.lower()
             for pattern in ["token", "secret", "password", "key", "credential", "authorization", "bearer"]:
-                if pattern in key_lower and value and str(value) != "[REDACTED]":
-                    # 非脱敏的敏感字段：证据只保存字段名和哈希，不保存明文
+                if pattern in key_lower and value:
+                    # 敏感字段即使已在入库前脱敏，也保留“出现过敏感字段”的非明文信号
                     return _make_anomaly("ANOM-SECRET-IN-PROMPT", chain_id, ev, {
                         "sensitive_field": key,
-                        "value_hash": __import__("hashlib").sha256(str(value).encode()).hexdigest(),
-                        "value_state": "redacted_required",
+                        "value_hash": stable_hash(str(value)),
+                        "value_state": "already_redacted" if str(value) == "[REDACTED]" else "redacted_required",
+                        "secret_like_detected": True,
                         "event_id": ev["event_id"],
                     })
     return None
@@ -249,9 +272,10 @@ def _check_dangerous_shell(events: list[dict[str, Any]], chain_id: str | None) -
         command = str(payload.get("command") or payload.get("cmd") or "")
         for pattern, description in DANGEROUS_SHELL_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
+                safe_command = redact_payload({"command": command}).get("command", "[REDACTED]")
                 return _make_anomaly("ANOM-DANGEROUS-SHELL", chain_id, ev, {
                     "dangerous_pattern": description,
-                    "command_preview": command[:200],
+                    "command_preview": str(safe_command)[:200],
                     "event_id": ev["event_id"],
                 })
     return None
@@ -281,6 +305,8 @@ def _check_sensitive_read_then_network(events: list[dict[str, Any]], chain_id: s
             if ev["event_id"] == read_ev["event_id"]:
                 continue
             if read_session and ev.get("session_id") != read_session:
+                continue
+            if not _within_seconds(ev.get("timestamp"), read_time, 300):
                 continue
             tool_name = ev.get("tool_name", "")
             if any(re.match(p, tool_name, re.IGNORECASE) for p in NETWORK_TOOL_PATTERNS):
@@ -402,17 +428,25 @@ def _make_anomaly(
 ) -> dict[str, Any]:
     """构造异常记录."""
     rule_def = next((r for r in ANOMALY_RULES if r["rule_id"] == rule_id), {})
+    evidence = redact_payload(evidence)
+    evidence_json = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+    event_id = (source_event or {}).get("event_id", "")
+    dedupe_key = stable_hash(f"{rule_id}|{chain_id or ''}|{event_id}|{evidence_json}")
     return {
-        "id": new_id("ano"),
+        "id": f"ano_{dedupe_key[:16]}",
+        "dedupe_key": dedupe_key,
         "chain_id": chain_id or "",
-        "event_id": (source_event or {}).get("event_id", ""),
+        "event_id": event_id,
         "rule_id": rule_id,
         "severity": rule_def.get("severity", "medium"),
+        "confidence": rule_def.get("confidence", "medium"),
         "title": rule_def.get("title", rule_id),
         "description": rule_def.get("description", ""),
-        "evidence_json": json.dumps(evidence, ensure_ascii=False),
+        "evidence_json": evidence_json,
         "status": "open",
         "fix": rule_def.get("fix", ""),
+        "recommendation": rule_def.get("fix", ""),
+        "false_positive_guidance": rule_def.get("false_positive_guidance", "需要人工复核上下文和授权状态。"),
         "owasp_llm": rule_def.get("owasp_llm", ""),
         "mitre_atlas": rule_def.get("mitre_atlas", ""),
     }

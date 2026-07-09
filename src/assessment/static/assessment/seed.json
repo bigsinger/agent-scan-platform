@@ -351,10 +351,10 @@
       "spec": "specs/pages/P01_dashboard.md",
       "api": "GET /api/v1/dashboard；GET /api/v1/health；GET /api/v1/tasks?limit=5",
       "entity": "dashboard, assessment, finding",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P02",
@@ -365,10 +365,10 @@
       "spec": "specs/pages/P02_quick_scan.md",
       "api": "POST /api/v1/quick-scans；POST /api/v1/uploads；GET /api/v1/quick-scans/recent",
       "entity": "assessment, evidence, report",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P03",
@@ -379,10 +379,10 @@
       "spec": "specs/pages/P03_new_assessment.md",
       "api": "POST /api/v1/assessments/drafts；POST /api/v1/assessments/plan；POST /api/v1/assessments",
       "entity": "assessment, assessment_scope, assessment_profile",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P04",
@@ -393,10 +393,10 @@
       "spec": "specs/pages/P04_discovery.md",
       "api": "POST /api/v1/discovery-runs；GET /api/v1/discovery-runs/{id}；GET /api/v1/discovery-hits/export；POST /api/v1/discovery-hits/{id}/import；POST /api/v1/discovery-hits/{id}/ignore",
       "entity": "discovery_run, discovery_hit",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P05",
@@ -407,10 +407,10 @@
       "spec": "specs/pages/P05_agents.md",
       "api": "GET /api/v1/agents；GET /api/v1/agents/{id}；POST /api/v1/agents/{id}/probe",
       "entity": "agent_instance",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P06",
@@ -421,10 +421,10 @@
       "spec": "specs/pages/P06_agent_detail.md",
       "api": "GET /api/v1/agents/{id}；GET /api/v1/agents/{id}/components；GET /api/v1/agents/{id}/snapshots",
       "entity": "agent_instance, component, config_snapshot",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P07",
@@ -435,10 +435,10 @@
       "spec": "specs/pages/P07_abom.md",
       "api": "GET /api/v1/agents/{id}/abom；GET /api/v1/agents/{id}/abom/diff；GET /api/v1/agents/{id}/abom/export",
       "entity": "component, component_relation",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P08",
@@ -449,10 +449,10 @@
       "spec": "specs/pages/P08_adapters.md",
       "api": "GET /api/v1/adapters；POST /api/v1/adapters/{id}/self-test",
       "entity": "adapter",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P09",
@@ -463,10 +463,10 @@
       "spec": "specs/pages/P09_profiles.md",
       "api": "GET /api/v1/profiles；POST /api/v1/profiles；POST /api/v1/profiles/{id}/publish",
       "entity": "assessment_profile",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P10",
@@ -477,10 +477,10 @@
       "spec": "specs/pages/P10_agent_scan.md",
       "api": "GET /api/v1/agent-scan/compat；POST /api/v1/agent-scan/self-test",
       "entity": "issue_mapping, scanner_plugin",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P11",
@@ -491,10 +491,10 @@
       "spec": "specs/pages/P11_mcp_tool.md",
       "api": "GET /api/v1/mcp-servers；POST /api/v1/mcp-servers/{id}/inspect；GET /api/v1/mcp-servers/{id}/tools；GET /api/v1/tools；GET /api/v1/tools/{id}/flows",
       "entity": "mcp_server, mcp_tool, tool_label, toxic_flow, mcp_signature, finding, evidence",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P12",
@@ -505,10 +505,10 @@
       "spec": "specs/pages/P12_mcp_consent.md",
       "api": "GET /api/v1/mcp-consents；POST /api/v1/mcp-consents/{id}/approve；POST /api/v1/mcp-consents/{id}/decline",
       "entity": "mcp_consent, consent_request, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P13",
@@ -519,10 +519,10 @@
       "spec": "specs/pages/P13_skill_scan.md",
       "api": "GET /api/v1/skills；POST /api/v1/skill-scans；GET /api/v1/skills/{id}/findings",
       "entity": "skill, finding",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P14",
@@ -533,10 +533,10 @@
       "spec": "specs/pages/P14_skill_detail.md",
       "api": "GET /api/v1/skills/{id}；GET /api/v1/skills/{id}/files；GET /api/v1/skills/{id}/render-diff；GET /api/v1/skills/{id}/export；POST /api/v1/skills/{id}/quarantine",
       "entity": "skill, skill_file",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P15",
@@ -547,10 +547,10 @@
       "spec": "specs/pages/P15_tasks.md",
       "api": "GET /api/v1/tasks；POST /api/v1/tasks/{id}/cancel；POST /api/v1/tasks/{id}/retry；POST /api/v1/tasks/{id}/clone",
       "entity": "task",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P16",
@@ -561,10 +561,10 @@
       "spec": "specs/pages/P16_task_detail.md",
       "api": "GET /api/v1/tasks/{id}；GET /api/v1/tasks/{id}/events；GET /api/v1/tasks/{id}/artifacts；POST /api/v1/jobs/{id}/logs",
       "entity": "task, task_event, artifact",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P17",
@@ -575,10 +575,10 @@
       "spec": "specs/pages/P17_redteam.md",
       "api": "POST /api/v1/redteam-runs；GET /api/v1/redteam-runs/{id}；PATCH /api/v1/redteam-runs/{id}；POST /api/v1/redteam-runs/{id}/stop",
       "entity": "redteam_run, redteam_message, finding, evidence",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P18",
@@ -589,10 +589,10 @@
       "spec": "specs/pages/P18_redteam_cases.md",
       "api": "GET /api/v1/redteam-cases；POST /api/v1/redteam-cases；POST /api/v1/redteam-cases/{id}/validate；POST /api/v1/redteam-cases/{id}/dry-run",
       "entity": "redteam_case, judge_rule, payload_template",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P19",
@@ -603,10 +603,10 @@
       "spec": "specs/pages/P19_python_exec.md",
       "api": "GET /api/v1/executor/health；GET /api/v1/execution-supervisor；POST /api/v1/execution-supervisor/refresh；POST /api/v1/executions/{id}/logs；POST /api/v1/executions/{id}/terminate；GET /api/v1/scanners；POST /api/v1/scanners/{id}/self-test",
       "entity": "scanner_plugin, process_execution",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P20",
@@ -617,10 +617,10 @@
       "spec": "specs/pages/P20_sandbox.md",
       "api": "GET /api/v1/sandbox-policy；PUT /api/v1/sandbox-policy；POST /api/v1/sandbox-policy/test；GET /api/v1/sandbox-policy/export",
       "entity": "sandbox_policy, policy_decision, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P21",
@@ -631,10 +631,10 @@
       "spec": "specs/pages/P21_findings.md",
       "api": "GET /api/v1/findings；GET /api/v1/findings/export；PATCH /api/v1/findings/{id}；POST /api/v1/findings/{id}/accept",
       "entity": "finding",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P22",
@@ -645,10 +645,10 @@
       "spec": "specs/pages/P22_finding_detail.md",
       "api": "GET /api/v1/findings/{id}；GET /api/v1/findings/{id}/evidence；POST /api/v1/findings/{id}/retest",
       "entity": "finding, evidence, retest_run",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P23",
@@ -659,10 +659,10 @@
       "spec": "specs/pages/P23_evidence.md",
       "api": "GET /api/v1/evidence；GET /api/v1/evidence/export；GET /api/v1/evidence/{id}；GET /api/v1/evidence/{id}/download；POST /api/v1/evidence/{id}/redact；GET /api/v1/artifacts/{id}/download",
       "entity": "evidence, artifact",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P24",
@@ -673,10 +673,10 @@
       "spec": "specs/pages/P24_attack_path.md",
       "api": "GET /api/v1/attack-paths；POST /api/v1/attack-paths/build；POST /api/v1/attack-paths/{id}/confirm；POST /api/v1/attack-paths/{id}/policy-drafts；PATCH /api/v1/attack-paths/{id}；GET /api/v1/policy-drafts；PATCH /api/v1/policy-drafts/{id}；GET /api/v1/defense-recommendations；GET /api/v1/defense-recommendations/export；POST /api/v1/defense-recommendations/{id}/acknowledge；POST /api/v1/defense-recommendations/{id}/dismiss；POST /api/v1/defense-recommendations/{id}/reopen",
       "entity": "attack_path, policy_draft, defense_recommendation",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P25",
@@ -687,10 +687,10 @@
       "spec": "specs/pages/P25_reports.md",
       "api": "GET /api/v1/reports；POST /api/v1/reports；GET /api/v1/reports/{id}/download",
       "entity": "report",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P26",
@@ -701,10 +701,10 @@
       "spec": "specs/pages/P26_retest.md",
       "api": "GET /api/v1/retests；POST /api/v1/retests；GET /api/v1/retests/{id}/diff",
       "entity": "retest_run",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P27",
@@ -715,10 +715,10 @@
       "spec": "specs/pages/P27_rules.md",
       "api": "GET /api/v1/rules；POST /api/v1/rules；POST /api/v1/rules/{id}/test",
       "entity": "rule",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P28",
@@ -729,10 +729,10 @@
       "spec": "specs/pages/P28_scanners.md",
       "api": "GET /api/v1/scanners；POST /api/v1/scanners；POST /api/v1/scanners/{id}/self-test",
       "entity": "scanner_plugin",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P29",
@@ -743,10 +743,10 @@
       "spec": "specs/pages/P29_schedules.md",
       "api": "GET /api/v1/schedules；POST /api/v1/schedules；POST /api/v1/schedules/{id}/run-now；POST /api/v1/schedules/run-due；GET /api/v1/schedules/export",
       "entity": "schedule",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P30",
@@ -757,10 +757,10 @@
       "spec": "specs/pages/P30_integrations.md",
       "api": "GET /api/v1/integrations；GET /api/v1/integrations/export；POST /api/v1/integrations/{id}/test；POST /api/v1/integrations/{id}/sync",
       "entity": "integration",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P31",
@@ -771,10 +771,10 @@
       "spec": "specs/pages/P31_settings.md",
       "api": "GET /api/v1/settings；PUT /api/v1/settings；POST /api/v1/settings/test；GET /api/v1/settings/export；POST /api/v1/settings/import",
       "entity": "app_setting",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P32",
@@ -785,10 +785,10 @@
       "spec": "specs/pages/P32_sqlite.md",
       "api": "GET /api/v1/sqlite/status；POST /api/v1/sqlite/backup；POST /api/v1/backups/{id}/restore-drill；POST /api/v1/sqlite/vacuum",
       "entity": "database_backup",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P33",
@@ -799,10 +799,10 @@
       "spec": "specs/pages/P33_licenses.md",
       "api": "GET /api/v1/licenses；GET /api/v1/licenses/export",
       "entity": "third_party_component",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P34",
@@ -813,10 +813,10 @@
       "spec": "specs/pages/P34_completeness.md",
       "api": "GET /api/v1/completeness；GET /api/v1/completeness/export",
       "entity": "feature_requirement",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D01",
@@ -827,10 +827,10 @@
       "spec": "specs/pages/D01_adapter_openclaw.md",
       "api": "GET /api/v1/adapters/openclaw；POST /api/v1/adapters/openclaw/self-test",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D02",
@@ -841,10 +841,10 @@
       "spec": "specs/pages/D02_adapter_hermes.md",
       "api": "GET /api/v1/adapters/hermes；POST /api/v1/adapters/hermes/self-test",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D03",
@@ -855,10 +855,10 @@
       "spec": "specs/pages/D03_adapter_claude_code.md",
       "api": "GET /api/v1/adapters/claude-code；POST /api/v1/adapters/claude-code/self-test",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D04",
@@ -869,10 +869,10 @@
       "spec": "specs/pages/D04_adapter_codex.md",
       "api": "GET /api/v1/adapters/codex；POST /api/v1/adapters/codex/self-test",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D05",
@@ -883,10 +883,10 @@
       "spec": "specs/pages/D05_agent_scan_mapping.md",
       "api": "GET /api/v1/agent-scan/issues；PUT /api/v1/agent-scan/issues/{code}",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D06",
@@ -897,10 +897,10 @@
       "spec": "specs/pages/D06_mcp_server_detail.md",
       "api": "GET /api/v1/mcp-servers/{id}；GET /api/v1/mcp-servers/{id}/tools",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D07",
@@ -911,10 +911,10 @@
       "spec": "specs/pages/D07_tool_detail.md",
       "api": "GET /api/v1/tools/{id}；GET /api/v1/tools/{id}/similar；GET /api/v1/tools/{id}/flows",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D08",
@@ -925,10 +925,10 @@
       "spec": "specs/pages/D08_redteam_case_detail.md",
       "api": "GET /api/v1/redteam-cases/{id}；POST /api/v1/redteam-cases/{id}/dry-run",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D09",
@@ -939,10 +939,10 @@
       "spec": "specs/pages/D09_report_preview.md",
       "api": "GET /api/v1/reports/{id}；GET /api/v1/reports/{id}/preview",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D10",
@@ -953,10 +953,10 @@
       "spec": "specs/pages/D10_template_detail.md",
       "api": "GET /api/v1/profiles/{id}；POST /api/v1/profiles/{id}/validate",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D11",
@@ -967,10 +967,10 @@
       "spec": "specs/pages/D11_rule_detail.md",
       "api": "GET /api/v1/rules/{id}；POST /api/v1/rules/{id}/test；POST /api/v1/rules/{id}/publish",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D12",
@@ -981,10 +981,10 @@
       "spec": "specs/pages/D12_scanner_detail.md",
       "api": "GET /api/v1/scanners/{id}；POST /api/v1/scanners/{id}/self-test",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D13",
@@ -995,10 +995,10 @@
       "spec": "specs/pages/D13_platform_embed.md",
       "api": "GET /api/v1/embed/context；POST /api/v1/integrations/runtime-platform/events",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D14",
@@ -1009,10 +1009,10 @@
       "spec": "specs/pages/D14_api_debug.md",
       "api": "GET /api/v1/openapi.json；POST /api/v1/diagnostics/scenario",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P49",
@@ -1023,10 +1023,10 @@
       "spec": "specs/pages/P49_probes.md",
       "api": "GET /api/v1/probes；POST /api/v1/probes；GET /api/v1/probes/{probe_id}；POST /api/v1/probes/events；GET /api/v1/probes/events；GET /api/v1/probes/events/{event_id}",
       "entity": "probe_adapter, probe_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P50",
@@ -1037,10 +1037,10 @@
       "spec": "specs/pages/P50_observability.md",
       "api": "GET /api/v1/observability/health",
       "entity": "probe_event, otel_span, otel_log, otel_metric_point",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P51",
@@ -1051,10 +1051,10 @@
       "spec": "specs/pages/P51_behavior_chains.md",
       "api": "POST /api/v1/behavior/chains；GET /api/v1/behavior/chains；GET /api/v1/behavior/chains/{chain_id}",
       "entity": "behavior_chain, behavior_edge",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P52",
@@ -1065,10 +1065,10 @@
       "spec": "specs/pages/P52_behavior_anomalies.md",
       "api": "GET /api/v1/behavior/anomalies；GET /api/v1/behavior/rules",
       "entity": "behavior_anomaly",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P53",
@@ -1079,10 +1079,10 @@
       "spec": "specs/pages/P53_otel_explorer.md",
       "api": "GET /api/v1/otel/spans；GET /api/v1/otel/logs；GET /api/v1/otel/metrics",
       "entity": "otel_span, otel_log, otel_metric_point",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "P54",
@@ -1093,10 +1093,10 @@
       "spec": "specs/pages/P54_probe_install.md",
       "api": "POST /api/v1/probes/install-plan；GET /api/v1/probes/install-plan/{plan_id}",
       "entity": "probe_install_plan",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D19",
@@ -1107,10 +1107,10 @@
       "spec": "specs/pages/D19_probe_detail.md",
       "api": "GET /api/v1/probes/{probe_id}",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D20",
@@ -1121,10 +1121,10 @@
       "spec": "specs/pages/D20_behavior_chain_detail.md",
       "api": "GET /api/v1/behavior/chains/{chain_id}",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D21",
@@ -1135,10 +1135,10 @@
       "spec": "specs/pages/D21_otel_span_detail.md",
       "api": "GET /api/v1/otel/spans",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     },
     {
       "id": "D22",
@@ -1149,10 +1149,10 @@
       "spec": "specs/pages/D22_probe_install_plan_detail.md",
       "api": "GET /api/v1/probes/install-plan/{plan_id}",
       "entity": "详情实体, audit_event",
-      "audit": "已覆盖",
-      "contract": "已覆盖",
-      "e2e": "已覆盖",
-      "status": "已验收"
+      "audit": "UNKNOWN",
+      "contract": "STATIC_DECLARED",
+      "e2e": "NOT_ASSERTED",
+      "status": "待验证"
     }
   ],
   "selectedAsset": {},

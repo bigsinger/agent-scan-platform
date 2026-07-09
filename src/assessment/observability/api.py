@@ -8,6 +8,9 @@
 from __future__ import annotations
 
 from typing import Any
+import json
+from urllib.request import urlopen
+from urllib.error import URLError
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
@@ -253,12 +256,27 @@ async def observability_health() -> dict:
         span_count = conn.execute("SELECT COUNT(*) AS c FROM otel_span").fetchone()["c"]
         log_count = conn.execute("SELECT COUNT(*) AS c FROM otel_log").fetchone()["c"]
         metric_count = conn.execute("SELECT COUNT(*) AS c FROM otel_metric_point").fetchone()["c"]
+        chain_count = len(store.list_records("behavior_chain"))
+        anomaly_count = len(store.list_records("behavior_anomaly"))
+    receiver_endpoint = "http://127.0.0.1:4318/healthz"
+    receiver_status = "unknown"
+    receiver_error = None
+    receiver_probed = False
+    try:
+        receiver_probed = True
+        with urlopen(receiver_endpoint, timeout=0.25) as resp:
+            receiver_status = "ok" if resp.status == 200 else "down"
+    except Exception as exc:
+        receiver_status = "down"
+        receiver_error = type(exc).__name__
     return {
+        "platform_api": {"status": "ok", "embedded_api": True},
         "receiver": {
-            "status": "ok", "listen": "127.0.0.1:4318",
+            "status": receiver_status,
+            "configured_endpoint": "http://127.0.0.1:4318",
+            "probed": receiver_probed,
             "protocols": ["otlp_http_json", "normalized_json"],
-            "receiver_state": "embedded-api-ok",
-            "last_error": None,
+            "last_error": receiver_error,
         },
         "database": {
             "status": "ok",
@@ -267,6 +285,8 @@ async def observability_health() -> dict:
             "otel_spans": span_count,
             "otel_logs": log_count,
             "otel_metric_points": metric_count,
+            "behavior_chains": chain_count,
+            "behavior_anomalies": anomaly_count,
         },
         "probes": adapters,
     }
@@ -287,7 +307,7 @@ async def list_otel_spans(trace_id: str | None = Query(None), limit: int = Query
             f"SELECT * FROM otel_span WHERE {' AND '.join(clauses)} ORDER BY COALESCE(start_time, created_at) DESC LIMIT ?",
             tuple(params),
         ).fetchall()
-    return {"items": [dict(r) for r in rows], "total": len(rows)}
+    return {"items": [_decode_otel_row(dict(r), ["resource_json", "scope_json", "attrs_json"]) for r in rows], "total": len(rows)}
 
 
 @router.get("/otel/logs")
@@ -305,7 +325,7 @@ async def list_otel_logs(trace_id: str | None = Query(None), limit: int = Query(
             f"SELECT * FROM otel_log WHERE {' AND '.join(clauses)} ORDER BY timestamp DESC LIMIT ?",
             tuple(params),
         ).fetchall()
-    return {"items": [dict(r) for r in rows], "total": len(rows)}
+    return {"items": [_decode_otel_row(dict(r), ["resource_json", "attrs_json"]) for r in rows], "total": len(rows)}
 
 
 @router.get("/otel/metrics")
@@ -323,7 +343,40 @@ async def list_otel_metrics(metric_name: str | None = Query(None), limit: int = 
             f"SELECT * FROM otel_metric_point WHERE {' AND '.join(clauses)} ORDER BY timestamp DESC LIMIT ?",
             tuple(params),
         ).fetchall()
-    return {"items": [dict(r) for r in rows], "total": len(rows)}
+    return {"items": [_decode_otel_row(dict(r), ["resource_json", "attrs_json"]) for r in rows], "total": len(rows)}
+
+
+def _decode_otel_row(row: dict[str, Any], json_fields: list[str]) -> dict[str, Any]:
+    for field in json_fields:
+        raw = row.get(field)
+        target = field.replace("_json", "")
+        try:
+            row[target] = json.loads(raw or "{}")
+        except Exception:
+            row[target] = {}
+        row.pop(field, None)
+    return row
+
+
+@router.get("/otel/traces/{trace_id}")
+async def get_otel_trace(trace_id: str) -> dict:
+    """查询单个 trace 的 spans/logs/metrics/probe_events/behavior_chains."""
+    store = get_store()
+    with store.connect() as conn:
+        spans = conn.execute("SELECT * FROM otel_span WHERE trace_id=? ORDER BY COALESCE(start_time, created_at)", (trace_id,)).fetchall()
+        logs = conn.execute("SELECT * FROM otel_log WHERE trace_id=? ORDER BY timestamp", (trace_id,)).fetchall()
+        metrics = conn.execute("SELECT * FROM otel_metric_point ORDER BY timestamp DESC LIMIT 100").fetchall()
+    events = list_probe_events(store, trace_id=trace_id, limit=200)
+    chains = [c for c in store.list_records("behavior_chain") if c.get("root_trace_id") == trace_id]
+    return {
+        "trace_id": trace_id,
+        "spans": [_decode_otel_row(dict(r), ["resource_json", "scope_json", "attrs_json"]) for r in spans],
+        "logs": [_decode_otel_row(dict(r), ["resource_json", "attrs_json"]) for r in logs],
+        "metrics": [_decode_otel_row(dict(r), ["resource_json", "attrs_json"]) for r in metrics],
+        "probe_events": events,
+        "behavior_chains": chains,
+        "total": {"spans": len(spans), "logs": len(logs), "metrics": len(metrics), "probe_events": len(events), "behavior_chains": len(chains)},
+    }
 
 
 # ── Install Plan ──────────────────────────────────────────────
