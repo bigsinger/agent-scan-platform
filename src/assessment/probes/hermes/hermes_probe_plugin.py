@@ -147,6 +147,7 @@ Hermes Security Probe Plugin — 自动生成, 只读上报, fail-open.
 import hashlib, json, os
 from uuid import uuid4
 from datetime import datetime, timezone
+from pathlib import Path
 
 try:
     from hermes_sdk import register_hook

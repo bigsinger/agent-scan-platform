@@ -237,6 +237,24 @@ GET /api/v1/embed/context
 POST /api/v1/integrations/runtime-platform/events
 GET /api/v1/openapi.json
 POST /api/v1/diagnostics/scenario
+GET /api/v1/probes
+POST /api/v1/probes
+GET /api/v1/probes/{probe_id}
+POST /api/v1/probes/events
+GET /api/v1/probes/events
+GET /api/v1/probes/events/{event_id}
+POST /api/v1/probes/install-plan
+GET /api/v1/probes/install-plan/{plan_id}
+GET /api/v1/probe-sessions
+POST /api/v1/behavior/chains
+GET /api/v1/behavior/chains
+GET /api/v1/behavior/chains/{chain_id}
+GET /api/v1/behavior/anomalies
+GET /api/v1/behavior/rules
+GET /api/v1/observability/health
+GET /api/v1/otel/spans
+GET /api/v1/otel/logs
+GET /api/v1/otel/metrics
 """.strip()
 
 
@@ -290,16 +308,16 @@ PAGE_API_MAP = {
     "D13": ["GET /api/v1/embed/context", "POST /api/v1/integrations/runtime-platform/events"],
     "D14": ["GET /api/v1/openapi.json", "POST /api/v1/diagnostics/scenario"],
     # v4.2 探针与 OTel
-    "P49": ["GET /api/v1/probes", "POST /api/v1/probes/events"],
+    "P49": ["GET /api/v1/probes", "POST /api/v1/probes", "GET /api/v1/probes/{probe_id}", "POST /api/v1/probes/events", "GET /api/v1/probes/events", "GET /api/v1/probes/events/{event_id}"],
     "P50": ["GET /api/v1/observability/health"],
-    "P51": ["GET /api/v1/behavior/chains", "GET /api/v1/behavior/chains/{chain_id}"],
+    "P51": ["POST /api/v1/behavior/chains", "GET /api/v1/behavior/chains", "GET /api/v1/behavior/chains/{chain_id}"],
     "P52": ["GET /api/v1/behavior/anomalies", "GET /api/v1/behavior/rules"],
-    "P53": ["GET /api/v1/observability/health", "GET /api/v1/probes/events"],
-    "P54": ["POST /api/v1/probes/install-plan"],
+    "P53": ["GET /api/v1/otel/spans", "GET /api/v1/otel/logs", "GET /api/v1/otel/metrics"],
+    "P54": ["POST /api/v1/probes/install-plan", "GET /api/v1/probes/install-plan/{plan_id}"],
     "D19": ["GET /api/v1/probes/{probe_id}"],
     "D20": ["GET /api/v1/behavior/chains/{chain_id}"],
-    "D21": ["GET /api/v1/observability/health"],
-    "D22": ["GET /api/v1/probes/install-plan/{id}"],
+    "D21": ["GET /api/v1/otel/spans"],
+    "D22": ["GET /api/v1/probes/install-plan/{plan_id}"],
 }
 
 

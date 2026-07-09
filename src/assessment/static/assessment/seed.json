@@ -150,6 +150,41 @@
       ]
     },
     {
+      "label": "运行时监控",
+      "items": [
+        {
+          "key": "probes",
+          "name": "探针管理",
+          "icon": "◎"
+        },
+        {
+          "key": "observability",
+          "name": "OTel 接收服务",
+          "icon": "OT"
+        },
+        {
+          "key": "behavior-chains",
+          "name": "行为链时间线",
+          "icon": "⤳"
+        },
+        {
+          "key": "behavior-anomalies",
+          "name": "异常分析",
+          "icon": "⚠"
+        },
+        {
+          "key": "otel-explorer",
+          "name": "OTel Explorer",
+          "icon": "∑"
+        },
+        {
+          "key": "probe-install",
+          "name": "探针安装向导",
+          "icon": "＋"
+        }
+      ]
+    },
+    {
       "label": "结果与闭环",
       "items": [
         {
@@ -455,7 +490,7 @@
       "prototype": "prototype/pages/P11_mcp_tool.html",
       "spec": "specs/pages/P11_mcp_tool.md",
       "api": "GET /api/v1/mcp-servers；POST /api/v1/mcp-servers/{id}/inspect；GET /api/v1/mcp-servers/{id}/tools；GET /api/v1/tools；GET /api/v1/tools/{id}/flows",
-      "entity": "mcp_server, mcp_tool, mcp_signature, finding, evidence",
+      "entity": "mcp_server, mcp_tool, tool_label, toxic_flow, mcp_signature, finding, evidence",
       "audit": "已覆盖",
       "contract": "已覆盖",
       "e2e": "已覆盖",
@@ -636,7 +671,7 @@
       "group": "风险",
       "prototype": "prototype/pages/P24_attack_path.html",
       "spec": "specs/pages/P24_attack_path.md",
-      "api": "GET /api/v1/attack-paths；POST /api/v1/attack-paths/build；POST /api/v1/attack-paths/{id}/confirm；POST /api/v1/attack-paths/{id}/policy-drafts；PATCH /api/v1/attack-paths/{id}；GET /api/v1/policy-drafts；PATCH /api/v1/policy-drafts/{id}",
+      "api": "GET /api/v1/attack-paths；POST /api/v1/attack-paths/build；POST /api/v1/attack-paths/{id}/confirm；POST /api/v1/attack-paths/{id}/policy-drafts；PATCH /api/v1/attack-paths/{id}；GET /api/v1/policy-drafts；PATCH /api/v1/policy-drafts/{id}；GET /api/v1/defense-recommendations；GET /api/v1/defense-recommendations/export；POST /api/v1/defense-recommendations/{id}/acknowledge；POST /api/v1/defense-recommendations/{id}/dismiss；POST /api/v1/defense-recommendations/{id}/reopen",
       "entity": "attack_path, policy_draft, defense_recommendation",
       "audit": "已覆盖",
       "contract": "已覆盖",
@@ -706,7 +741,7 @@
       "group": "配置",
       "prototype": "prototype/pages/P29_schedules.html",
       "spec": "specs/pages/P29_schedules.md",
-      "api": "GET /api/v1/schedules；POST /api/v1/schedules；POST /api/v1/schedules/{id}/run-now",
+      "api": "GET /api/v1/schedules；POST /api/v1/schedules；POST /api/v1/schedules/{id}/run-now；POST /api/v1/schedules/run-due；GET /api/v1/schedules/export",
       "entity": "schedule",
       "audit": "已覆盖",
       "contract": "已覆盖",
@@ -720,7 +755,7 @@
       "group": "集成",
       "prototype": "prototype/pages/P30_integrations.html",
       "spec": "specs/pages/P30_integrations.md",
-      "api": "GET /api/v1/integrations；POST /api/v1/integrations/{id}/test；POST /api/v1/integrations/{id}/sync",
+      "api": "GET /api/v1/integrations；GET /api/v1/integrations/export；POST /api/v1/integrations/{id}/test；POST /api/v1/integrations/{id}/sync",
       "entity": "integration",
       "audit": "已覆盖",
       "contract": "已覆盖",
@@ -973,6 +1008,146 @@
       "prototype": "prototype/pages/D14_api_debug.html",
       "spec": "specs/pages/D14_api_debug.md",
       "api": "GET /api/v1/openapi.json；POST /api/v1/diagnostics/scenario",
+      "entity": "详情实体, audit_event",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "P49",
+      "page": "探针管理",
+      "route": "/assessment/probes",
+      "group": "可观测性",
+      "prototype": "prototype/pages/P49_probes.html",
+      "spec": "specs/pages/P49_probes.md",
+      "api": "GET /api/v1/probes；POST /api/v1/probes；GET /api/v1/probes/{probe_id}；POST /api/v1/probes/events；GET /api/v1/probes/events；GET /api/v1/probes/events/{event_id}",
+      "entity": "probe_adapter, probe_event",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "P50",
+      "page": "OTel 接收服务",
+      "route": "/assessment/observability",
+      "group": "可观测性",
+      "prototype": "prototype/pages/P50_observability.html",
+      "spec": "specs/pages/P50_observability.md",
+      "api": "GET /api/v1/observability/health",
+      "entity": "probe_event, otel_span, otel_log, otel_metric_point",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "P51",
+      "page": "行为链时间线",
+      "route": "/assessment/behavior/chains",
+      "group": "可观测性",
+      "prototype": "prototype/pages/P51_behavior_chains.html",
+      "spec": "specs/pages/P51_behavior_chains.md",
+      "api": "POST /api/v1/behavior/chains；GET /api/v1/behavior/chains；GET /api/v1/behavior/chains/{chain_id}",
+      "entity": "behavior_chain, behavior_edge",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "P52",
+      "page": "异常分析",
+      "route": "/assessment/behavior/anomalies",
+      "group": "可观测性",
+      "prototype": "prototype/pages/P52_behavior_anomalies.html",
+      "spec": "specs/pages/P52_behavior_anomalies.md",
+      "api": "GET /api/v1/behavior/anomalies；GET /api/v1/behavior/rules",
+      "entity": "behavior_anomaly",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "P53",
+      "page": "OTel Explorer",
+      "route": "/assessment/otel/explorer",
+      "group": "可观测性",
+      "prototype": "prototype/pages/P53_otel_explorer.html",
+      "spec": "specs/pages/P53_otel_explorer.md",
+      "api": "GET /api/v1/otel/spans；GET /api/v1/otel/logs；GET /api/v1/otel/metrics",
+      "entity": "otel_span, otel_log, otel_metric_point",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "P54",
+      "page": "探针安装向导",
+      "route": "/assessment/probes/install",
+      "group": "可观测性",
+      "prototype": "prototype/pages/P54_probe_install.html",
+      "spec": "specs/pages/P54_probe_install.md",
+      "api": "POST /api/v1/probes/install-plan；GET /api/v1/probes/install-plan/{plan_id}",
+      "entity": "probe_install_plan",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "D19",
+      "page": "探针详情",
+      "route": "/assessment/probes/{id}",
+      "group": "详情页",
+      "prototype": "prototype/pages/D19_probe_detail.html",
+      "spec": "specs/pages/D19_probe_detail.md",
+      "api": "GET /api/v1/probes/{probe_id}",
+      "entity": "详情实体, audit_event",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "D20",
+      "page": "行为链详情",
+      "route": "/assessment/behavior/chains/{id}",
+      "group": "详情页",
+      "prototype": "prototype/pages/D20_behavior_chain_detail.html",
+      "spec": "specs/pages/D20_behavior_chain_detail.md",
+      "api": "GET /api/v1/behavior/chains/{chain_id}",
+      "entity": "详情实体, audit_event",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "D21",
+      "page": "OTel Span 详情",
+      "route": "/assessment/otel/spans/{id}",
+      "group": "详情页",
+      "prototype": "prototype/pages/D21_otel_span_detail.html",
+      "spec": "specs/pages/D21_otel_span_detail.md",
+      "api": "GET /api/v1/otel/spans",
+      "entity": "详情实体, audit_event",
+      "audit": "已覆盖",
+      "contract": "已覆盖",
+      "e2e": "已覆盖",
+      "status": "已验收"
+    },
+    {
+      "id": "D22",
+      "page": "探针安装计划详情",
+      "route": "/assessment/probes/plans/{id}",
+      "group": "详情页",
+      "prototype": "prototype/pages/D22_probe_install_plan_detail.html",
+      "spec": "specs/pages/D22_probe_install_plan_detail.md",
+      "api": "GET /api/v1/probes/install-plan/{plan_id}",
       "entity": "详情实体, audit_event",
       "audit": "已覆盖",
       "contract": "已覆盖",

@@ -23,10 +23,15 @@ except ImportError:
 from ..store import get_store
 from .storage import (
     insert_otel_span,
+    insert_otel_log,
+    insert_otel_metric_point,
+    insert_probe_event,
     migrate_observability,
     probe_event_stats,
     probe_adapter_health,
 )
+from .normalizer import attributes_to_dict, span_to_probe_event, log_to_probe_event
+from .redaction import redact_payload
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +79,14 @@ def create_receiver_app() -> FastAPI | None:
             body = await request.json()
             spans = _extract_spans_from_otlp(body)
             store = get_store()
+            generated_events = 0
             for span in spans:
                 insert_otel_span(store, span)
-            _receiver_state["accepted_traces"] += 1
+                event = span_to_probe_event(span, span.get("resource"), span.get("scope"))
+                if event:
+                    insert_probe_event(store, event)
+                    generated_events += 1
+            _receiver_state["accepted_traces"] += len(spans)
             _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
             return JSONResponse({"partialSuccess": {}, "error": ""}, status_code=200)
         except Exception as exc:
@@ -89,9 +99,18 @@ def create_receiver_app() -> FastAPI | None:
         """接收 OTLP/HTTP JSON logs."""
         try:
             body = await request.json()
-            _receiver_state["accepted_logs"] += 1
+            logs = _extract_logs_from_otlp(body)
+            store = get_store()
+            for log in logs:
+                body_obj = log.get("body")
+                log["body_redacted"] = str(redact_payload({"body": body_obj}).get("body"))
+                insert_otel_log(store, log)
+                event = log_to_probe_event(log, log.get("resource"), log.get("scope"))
+                if event:
+                    insert_probe_event(store, event)
+            _receiver_state["accepted_logs"] += len(logs)
             _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
-            return JSONResponse({"partialSuccess": {}, "error": ""}, status_code=200)
+            return JSONResponse({"partialSuccess": {}, "error": "", "accepted": len(logs)}, status_code=200)
         except Exception as exc:
             _receiver_state["rejected"] += 1
             return JSONResponse({"partialSuccess": {"rejectedLogRecords": []}, "error": str(exc)}, status_code=400)
@@ -101,9 +120,13 @@ def create_receiver_app() -> FastAPI | None:
         """接收 OTLP/HTTP JSON metrics."""
         try:
             body = await request.json()
-            _receiver_state["accepted_metrics"] += 1
+            points = _extract_metric_points_from_otlp(body)
+            store = get_store()
+            for point in points:
+                insert_otel_metric_point(store, point)
+            _receiver_state["accepted_metrics"] += len(points)
             _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
-            return JSONResponse({"partialSuccess": {}, "error": ""}, status_code=200)
+            return JSONResponse({"partialSuccess": {}, "error": "", "accepted": len(points)}, status_code=200)
         except Exception as exc:
             _receiver_state["rejected"] += 1
             return JSONResponse({"partialSuccess": {"rejectedDataPoints": []}, "error": str(exc)}, status_code=400)
@@ -129,6 +152,48 @@ def _extract_spans_from_otlp(body: dict[str, Any]) -> list[dict[str, Any]]:
     except Exception:
         pass
     return spans
+
+
+def _extract_logs_from_otlp(body: dict[str, Any]) -> list[dict[str, Any]]:
+    logs: list[dict[str, Any]] = []
+    for rl in body.get("resourceLogs", []):
+        resource = rl.get("resource", {})
+        for sl in rl.get("scopeLogs", []):
+            scope = sl.get("scope", {})
+            for rec in sl.get("logRecords", []):
+                rec["resource"] = resource
+                rec["scope"] = scope
+                logs.append(rec)
+    return logs
+
+
+def _extract_metric_points_from_otlp(body: dict[str, Any]) -> list[dict[str, Any]]:
+    points: list[dict[str, Any]] = []
+    for rm in body.get("resourceMetrics", []):
+        resource = rm.get("resource", {})
+        for sm in rm.get("scopeMetrics", []):
+            scope = sm.get("scope", {})
+            for metric in sm.get("metrics", []):
+                name = metric.get("name", "unknown")
+                unit = metric.get("unit")
+                for mtype in ("gauge", "sum", "histogram"):
+                    if mtype not in metric:
+                        continue
+                    data = metric.get(mtype) or {}
+                    for dp in data.get("dataPoints", []):
+                        value = dp.get("asDouble") if dp.get("asDouble") is not None else dp.get("asInt")
+                        points.append({
+                            "name": name,
+                            "metric_name": name,
+                            "metric_type": mtype,
+                            "unit": unit,
+                            "value": value,
+                            "timestamp": dp.get("timeUnixNano") or dp.get("startTimeUnixNano"),
+                            "attributes": attributes_to_dict(dp.get("attributes")),
+                            "resource": resource,
+                            "scope": scope,
+                        })
+    return points
 
 
 # ── CLI 入口 ──────────────────────────────────────────────────

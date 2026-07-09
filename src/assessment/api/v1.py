@@ -268,7 +268,7 @@ async def bootstrap() -> dict:
         git_hash = ""
     return {
         "state": runtime_state(),
-        "version": "4.2.0",
+        "version": "4.2.5",
         "git_short_hash": git_hash,
     }
 
@@ -304,9 +304,9 @@ async def health_self_test() -> dict:
 @router.get("/version")
 async def version() -> dict:
     return {
-        "app": "4.2.0",
-        "spec": "V4.2",
-        "rules": "baseline@4.2.0",
+        "app": "4.2.5",
+        "spec": "V4.2.5",
+        "rules": "baseline@4.2.5",
         "agent_scan": {"version": "0.5.12", "mode": "vendored-compatible"},
     }
 

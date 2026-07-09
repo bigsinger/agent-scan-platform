@@ -283,6 +283,31 @@ data(){
     initial.assessmentPlanBusy = false;
     initial.assessmentPlanStatus = '';
     initial.assessmentPlanSnapshot = null;
+    // v4.2 探针/可观测性数据
+    initial.probes = [];
+    initial.probeEvents = [];
+    initial.behaviorChains = [];
+    initial.behaviorAnomalies = [];
+    initial.anomalyRules = [];
+    initial.chainAgentFilter = '';
+    initial.selectedChain = null;
+    initial.chainEvents = [];
+    initial.probeInstallPlan = null;
+    initial.probeInstallAgentType = 'codex';
+    initial.probeInstallCollectorUrl = '/api/v1/probes/events';
+    initial.detailDrawerOpen = false;
+    initial.detailDrawerType = '';
+    initial.detailDrawerPayload = null;
+    initial.detailDrawerReturnTo = '';
+    initial.otelSpans = [];
+    initial.otelLogs = [];
+    initial.otelMetrics = [];
+    initial.lastProbeEventTime = '-';
+    initial.obsBusy = false;
+    initial.observabilityEvents = 0;
+    initial.otelReceiverStatus = '检查中';
+    initial.probeCount = 0;
+    initial.probeStatusText = '检查中';
     return initial;
   },
   computed:{
@@ -302,6 +327,14 @@ data(){
     p1Count(){
       return this.findings.filter(f=>String(f.severity||'').includes('P1') || String(f.severity||'').includes('高危')).length;
     },
+    filteredChains(){
+      const agent=String(this.chainAgentFilter || '').trim().toLowerCase();
+      const rows=this.behaviorChains || [];
+      return agent ? rows.filter(c=>String(c.source_agent||'').toLowerCase()===agent) : rows;
+    },
+    openAnomalyCount(){ return (this.behaviorAnomalies || []).filter(a=>String(a.status||'open')==='open').length; },
+    highAnomalyCount(){ return (this.behaviorAnomalies || []).filter(a=>String(a.severity||'')==='high').length; },
+    mediumAnomalyCount(){ return (this.behaviorAnomalies || []).filter(a=>String(a.severity||'')==='medium').length; },
     filteredFindings(){
       const keyword=String(this.findingFilterText || '').trim().toLowerCase();
       const severity=String(this.findingFilterSeverity || '全部严重度');
@@ -1615,13 +1648,20 @@ data(){
       const profileDetailPath=this.selectedProfile&&(this.selectedProfile.id||this.selectedProfile.name)?'/assessment/profiles/'+encodeURIComponent(this.selectedProfile.id||this.selectedProfile.name):'/assessment/profiles';
       const ruleDetailPath=this.selectedRule&&this.selectedRule.id?'/assessment/rules/'+encodeURIComponent(this.selectedRule.id):'/assessment/rules';
       const scannerDetailPath=this.selectedScanner&&this.selectedScanner.id?'/assessment/scanners/'+encodeURIComponent(this.selectedScanner.id):'/assessment/scanners';
-      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','profile-detail':profileDetailPath,'agent-scan':'/assessment/agent-scan','agent-scan-issues':'/assessment/agent-scan/issues',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp','mcp-detail':mcpDetailPath,'tool-detail':toolDetailPath,consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases','case-detail':caseDetailPath,execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports','report-preview':reportPreviewPath,retests:'/assessment/retests',rules:'/assessment/rules','rule-detail':ruleDetailPath,scanners:'/assessment/scanners','scanner-detail':scannerDetailPath,schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug'};
+      const chainDetailPath=this.selectedChain&&(this.selectedChain.chain_id||this.selectedChain.id)?'/assessment/behavior/chains/'+encodeURIComponent(this.selectedChain.chain_id||this.selectedChain.id):'/assessment/behavior/chains';
+      const probePlanDetailPath=this.probeInstallPlan&&this.probeInstallPlan.id?'/assessment/probes/plans/'+encodeURIComponent(this.probeInstallPlan.id):'/assessment/probes/install';
+      const map={dashboard:'/assessment','quick-scan':'/assessment/quick-scan',create:'/assessment/new',discovery:'/assessment/discovery',agents:'/assessment/agents','agent-detail':agentDetailPath,abom:'/assessment/abom',adapters:'/assessment/adapters','adapter-detail':adapterDetailPath,profiles:'/assessment/profiles','profile-detail':profileDetailPath,'agent-scan':'/assessment/agent-scan','agent-scan-issues':'/assessment/agent-scan/issues',tasks:'/assessment/tasks','task-detail':taskDetailPath,mcp:'/assessment/mcp','mcp-detail':mcpDetailPath,'tool-detail':toolDetailPath,consents:'/assessment/mcp-consent',skills:'/assessment/skills','skill-detail':skillDetailPath,redteam:'/assessment/redteam',cases:'/assessment/redteam-cases','case-detail':caseDetailPath,execution:'/assessment/python-exec',sandbox:'/assessment/sandbox',findings:'/assessment/findings','finding-detail':findingDetailPath,evidence:'/assessment/evidence','attack-paths':'/assessment/attack-paths',reports:'/assessment/reports','report-preview':reportPreviewPath,retests:'/assessment/retests',rules:'/assessment/rules','rule-detail':ruleDetailPath,scanners:'/assessment/scanners','scanner-detail':scannerDetailPath,schedules:'/assessment/schedules',integrations:'/assessment/integrations','platform-embed':'/assessment/platform-embed',settings:'/assessment/settings',sqlite:'/assessment/sqlite',licenses:'/assessment/licenses',completeness:'/assessment/completeness','api-debug':'/assessment/api-debug',probes:'/assessment/probes',observability:'/assessment/observability','behavior-chains':'/assessment/behavior/chains','behavior-chain-detail':chainDetailPath,'behavior-anomalies':'/assessment/behavior/anomalies','otel-explorer':'/assessment/otel/explorer','probe-install':'/assessment/probes/install','probe-plan-detail':probePlanDetailPath};
       return map[key]||'/assessment';
     },
     keyForPath(path){
       if(!path || path==='/' || path==='/assessment') return 'dashboard';
-      const exact={'/assessment/quick-scan':'quick-scan','/assessment/new':'create','/assessment/discovery':'discovery','/assessment/agents':'agents','/assessment/abom':'abom','/assessment/adapters':'adapters','/assessment/profiles':'profiles','/assessment/agent-scan':'agent-scan','/assessment/tasks':'tasks','/assessment/mcp':'mcp','/assessment/mcp-consent':'consents','/assessment/consents':'consents','/assessment/skills':'skills','/assessment/redteam':'redteam','/assessment/redteam-cases':'cases','/assessment/cases':'cases','/assessment/python-exec':'execution','/assessment/execution':'execution','/assessment/sandbox':'sandbox','/assessment/findings':'findings','/assessment/evidence':'evidence','/assessment/attack-paths':'attack-paths','/assessment/reports':'reports','/assessment/retests':'retests','/assessment/rules':'rules','/assessment/scanners':'scanners','/assessment/schedules':'schedules','/assessment/integrations':'integrations','/assessment/settings':'settings','/assessment/sqlite':'sqlite','/assessment/licenses':'licenses','/assessment/completeness':'completeness','/assessment/platform-embed':'platform-embed','/assessment/api-debug':'api-debug'};
+      const exact={'/assessment/quick-scan':'quick-scan','/assessment/new':'create','/assessment/discovery':'discovery','/assessment/agents':'agents','/assessment/abom':'abom','/assessment/adapters':'adapters','/assessment/profiles':'profiles','/assessment/agent-scan':'agent-scan','/assessment/tasks':'tasks','/assessment/mcp':'mcp','/assessment/mcp-consent':'consents','/assessment/consents':'consents','/assessment/skills':'skills','/assessment/redteam':'redteam','/assessment/redteam-cases':'cases','/assessment/cases':'cases','/assessment/python-exec':'execution','/assessment/execution':'execution','/assessment/sandbox':'sandbox','/assessment/findings':'findings','/assessment/evidence':'evidence','/assessment/attack-paths':'attack-paths','/assessment/reports':'reports','/assessment/retests':'retests','/assessment/rules':'rules','/assessment/scanners':'scanners','/assessment/schedules':'schedules','/assessment/integrations':'integrations','/assessment/settings':'settings','/assessment/sqlite':'sqlite','/assessment/licenses':'licenses','/assessment/completeness':'completeness','/assessment/platform-embed':'platform-embed','/assessment/api-debug':'api-debug','/assessment/probes':'probes','/assessment/observability':'observability','/assessment/behavior/chains':'behavior-chains','/assessment/behavior/anomalies':'behavior-anomalies','/assessment/otel/explorer':'otel-explorer','/assessment/probes/install':'probe-install'};
       if(exact[path]) return exact[path];
+      if(path.startsWith('/assessment/probes/plans/')) return 'probe-plan-detail';
+      if(path.startsWith('/assessment/probes/install')) return 'probe-install';
+      if(path.startsWith('/assessment/behavior/chains/')) return 'behavior-chain-detail';
+      if(path.startsWith('/assessment/otel/spans/')) return 'otel-span-detail';
+      if(path.startsWith('/assessment/probes/')) return 'probe-detail';
       if(path.startsWith('/assessment/agents/')) return 'agent-detail';
       if(path.startsWith('/assessment/tasks/')) return 'task-detail';
       if(path.startsWith('/assessment/skills/')) return 'skill-detail';
@@ -1647,6 +1687,12 @@ data(){
       const path=location.protocol==='file:' && location.hash ? location.hash.slice(1) : location.pathname;
       this.current=this.keyForPath(path);
       if(this.current==='integrations') this.refreshIntegrations({silent:true});
+      if(this.current==='probes') { this.fetchObservabilityStatus(); this.loadProbes(); }
+      if(this.current==='observability') { this.fetchObservabilityStatus(); this.loadProbeEvents(); }
+      if(this.current==='behavior-chains') this.loadBehaviorChains();
+      if(this.current==='behavior-anomalies') { this.loadBehaviorAnomalies(); this.loadAnomalyRules(); }
+      if(this.current==='otel-explorer') { this.loadOtelSpans(); this.loadOtelLogs(); this.loadOtelMetrics(); }
+      if(this.current==='probe-install') this.loadProbes();
       const skillMatch=path.match(/^\/assessment\/skills\/([^/]+)/);
       if(skillMatch){
         const skillId=decodeURIComponent(skillMatch[1]);
@@ -1820,10 +1866,9 @@ data(){
     async installProbe(probe) {
       try {
         const plan = await this.apiPost('/api/v1/probes/install-plan', {
-          agent_type: probe.agent_type || 'unknown',
-          target_config_path: '',
-          steps: [{action:'backup'},{action:'hook_script'},{action:'config_modify'}],
-          rollback: [{action:'restore'}],
+          agent_type: probe.agent_type || probe.adapter_id || 'codex',
+          dry_run: true,
+          collector_url: '/api/v1/probes/events',
         });
         this.probeInstallPlan = plan;
       } catch(e) { this.apiError = this.describeError(e); }
@@ -1845,9 +1890,11 @@ data(){
     async runChainBuild() {
       this.obsBusy = true;
       try {
-        await this.apiPost('/api/v1/behavior/chains', {action:'build'});
+        const result = await this.apiPost('/api/v1/behavior/chains', {action:'build', dry_run:false, limit:5000});
         await this.loadBehaviorChains();
-        this.toastMsg = '链重建完成';
+        await this.loadBehaviorAnomalies();
+        await this.fetchObservabilityStatus();
+        this.toastMsg('链重建完成：新增 '+(result.created||0)+'，更新 '+(result.updated||0));
       } catch(e) { this.apiError = this.describeError(e); }
       this.obsBusy = false;
     },
@@ -1862,6 +1909,31 @@ data(){
         const d = await this.apiGet('/api/v1/behavior/rules');
         this.anomalyRules = d.items || [];
       } catch(e) { this.anomalyRules = []; }
+    },
+    async loadOtelSpans() {
+      try { const d = await this.apiGet('/api/v1/otel/spans?limit=50'); this.otelSpans = d.items || []; }
+      catch(e) { this.otelSpans = []; }
+    },
+    async loadOtelLogs() {
+      try { const d = await this.apiGet('/api/v1/otel/logs?limit=50'); this.otelLogs = d.items || []; }
+      catch(e) { this.otelLogs = []; }
+    },
+    async loadOtelMetrics() {
+      try { const d = await this.apiGet('/api/v1/otel/metrics?limit=50'); this.otelMetrics = d.items || []; }
+      catch(e) { this.otelMetrics = []; }
+    },
+    async createProbeInstallPlan() {
+      this.opsBusy = true;
+      try {
+        const plan = await this.apiPost('/api/v1/probes/install-plan', {
+          agent_type: this.probeInstallAgentType || 'codex',
+          dry_run: true,
+          collector_url: this.probeInstallCollectorUrl || '/api/v1/probes/events',
+        });
+        this.probeInstallPlan = plan;
+        this.toastMsg('dry-run 安装计划已生成：'+(plan.id||''));
+      } catch(e) { this.apiError = this.describeError(e); }
+      this.opsBusy = false;
     },
     async apiGet(path){ return this.apiRequest(path); },
     async apiPost(path, body){ return this.apiRequest(path, {method:'POST', body:JSON.stringify(body||{})}); },
@@ -1973,6 +2045,27 @@ data(){
       finally { this.opsBusy=false; }
     },
 
+    openDetailDrawer(type, payload, returnTo){
+      this.detailDrawerType = type;
+      this.detailDrawerPayload = payload || {};
+      this.detailDrawerReturnTo = returnTo || (this.reportPreview ? 'report-preview' : this.current);
+      this.detailDrawerOpen = true;
+    },
+    closeDetailDrawer(){
+      this.detailDrawerOpen = false;
+      this.detailDrawerType = '';
+      this.detailDrawerPayload = null;
+    },
+    openEvidenceDrawer(evidence){
+      this.selectedEvidence = evidence || {};
+      this.openDetailDrawer('evidence', this.selectedEvidence, 'report-preview');
+    },
+    openAnomalyDrawer(anomaly){
+      this.openDetailDrawer('anomaly', anomaly || {}, 'behavior-anomalies');
+    },
+    openEventDrawer(event){
+      this.openDetailDrawer('event', event || {}, 'behavior-chains');
+    },
     go(key){
       this.current=key;
       this.pushRoute(key);

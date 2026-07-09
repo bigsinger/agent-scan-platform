@@ -20,6 +20,7 @@ from ..observability.storage import (
     probe_event_stats,
 )
 from ..observability.redaction import redact_payload, stable_hash
+from ..observability.chain_builder import build_chains, get_chain_detail
 from ..store import get_store, new_id, utc_now
 
 router = APIRouter(tags=["observability"])
@@ -167,24 +168,36 @@ async def list_chains(
     return {"items": chains, "total": len(chains)}
 
 
+@router.post("/behavior/chains")
+async def post_build_chains(body: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    """触发行为链重建, 支持 dry-run 和幂等 upsert."""
+    action = str(body.get("action") or "build")
+    if action != "build":
+        raise HTTPException(status_code=400, detail="Unsupported action; expected 'build'")
+    store = get_store()
+    result = build_chains(
+        store,
+        since=body.get("since"),
+        source_agent=body.get("source_agent"),
+        limit=int(body.get("limit") or 5000),
+        dry_run=bool(body.get("dry_run", False)),
+    )
+    store.audit_event(
+        "post.behavior.chains.build",
+        "behavior_chain",
+        f"build_{result.get('created', 0)}_{result.get('updated', 0)}",
+        {k: result.get(k) for k in ("status", "created", "updated", "skipped", "errors", "mutates_installed_agents")},
+    )
+    return result
+
+
 @router.get("/behavior/chains/{chain_id}")
 async def get_chain(chain_id: str) -> dict:
-    """获取行为链详情 (含关联事件)."""
-    store = get_store()
-    chain = store.get_record("behavior_chain", chain_id)
-    if not chain:
+    """获取行为链详情 (含完整 from/to 事件、边和异常)."""
+    detail = get_chain_detail(get_store(), chain_id)
+    if not detail:
         raise HTTPException(status_code=404, detail="Chain not found")
-    with store.connect() as conn:
-        edges = conn.execute(
-            "SELECT * FROM behavior_edge WHERE chain_id=? ORDER BY created_at",
-            (chain_id,),
-        ).fetchall()
-    events = []
-    for edge in edges:
-        ev = get_probe_event(store, edge["from_event_id"])
-        if ev:
-            events.append(ev)
-    return {"chain": chain, "events": events, "edge_count": len(edges)}
+    return detail
 
 
 # ── Anomalies ─────────────────────────────────────────────────
@@ -238,39 +251,123 @@ async def observability_health() -> dict:
     adapters = probe_adapter_health(store)
     with store.connect() as conn:
         span_count = conn.execute("SELECT COUNT(*) AS c FROM otel_span").fetchone()["c"]
+        log_count = conn.execute("SELECT COUNT(*) AS c FROM otel_log").fetchone()["c"]
+        metric_count = conn.execute("SELECT COUNT(*) AS c FROM otel_metric_point").fetchone()["c"]
     return {
         "receiver": {
             "status": "ok", "listen": "127.0.0.1:4318",
             "protocols": ["otlp_http_json", "normalized_json"],
+            "receiver_state": "embedded-api-ok",
+            "last_error": None,
         },
         "database": {
             "status": "ok",
             "total_probe_events": stats["total_events"],
             "last_event_at": stats["last_event_at"],
             "otel_spans": span_count,
+            "otel_logs": log_count,
+            "otel_metric_points": metric_count,
         },
         "probes": adapters,
     }
+
+
+@router.get("/otel/spans")
+async def list_otel_spans(trace_id: str | None = Query(None), limit: int = Query(50, ge=1, le=500)) -> dict:
+    """查询 OTel spans."""
+    store = get_store()
+    clauses = ["1=1"]
+    params: list[Any] = []
+    if trace_id:
+        clauses.append("trace_id=?")
+        params.append(trace_id)
+    params.append(limit)
+    with store.connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM otel_span WHERE {' AND '.join(clauses)} ORDER BY COALESCE(start_time, created_at) DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+    return {"items": [dict(r) for r in rows], "total": len(rows)}
+
+
+@router.get("/otel/logs")
+async def list_otel_logs(trace_id: str | None = Query(None), limit: int = Query(50, ge=1, le=500)) -> dict:
+    """查询 OTel logs."""
+    store = get_store()
+    clauses = ["1=1"]
+    params: list[Any] = []
+    if trace_id:
+        clauses.append("trace_id=?")
+        params.append(trace_id)
+    params.append(limit)
+    with store.connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM otel_log WHERE {' AND '.join(clauses)} ORDER BY timestamp DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+    return {"items": [dict(r) for r in rows], "total": len(rows)}
+
+
+@router.get("/otel/metrics")
+async def list_otel_metrics(metric_name: str | None = Query(None), limit: int = Query(50, ge=1, le=500)) -> dict:
+    """查询 OTel metric points."""
+    store = get_store()
+    clauses = ["1=1"]
+    params: list[Any] = []
+    if metric_name:
+        clauses.append("metric_name=?")
+        params.append(metric_name)
+    params.append(limit)
+    with store.connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM otel_metric_point WHERE {' AND '.join(clauses)} ORDER BY timestamp DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+    return {"items": [dict(r) for r in rows], "total": len(rows)}
 
 
 # ── Install Plan ──────────────────────────────────────────────
 
 @router.post("/probes/install-plan")
 async def create_install_plan(body: dict[str, Any] = Body(...)) -> dict:
-    """创建探针安装计划 (dry-run 模式)."""
+    """创建探针 dry-run 安装计划: 后端真实探测配置, 不写文件不修改 Agent."""
     store = get_store()
-    agent_type = body.get("agent_type", "unknown")
-    plan = store.upsert_record("probe_install_plan", {
+    agent_type = str(body.get("agent_type", "unknown")).lower()
+    dry_run = bool(body.get("dry_run", True))
+    if not dry_run:
+        raise HTTPException(status_code=400, detail="v4.2.5 only supports dry_run=true install plans")
+    if agent_type == "codex":
+        from ..probes.codex.codex_probe_hook import generate_install_plan
+        generated = generate_install_plan(dry_run=True)
+    elif agent_type == "hermes":
+        from ..probes.hermes.hermes_probe_plugin import generate_install_plan
+        generated = generate_install_plan(dry_run=True)
+    else:
+        generated = {
+            "agent_type": agent_type,
+            "install_status": "unsupported",
+            "note": "仅支持 codex/hermes dry-run 安装计划",
+            "steps": [],
+            "rollback": [],
+        }
+    record = {
+        "id": new_id("pln"),
+        **generated,
         "agent_type": agent_type,
         "plan_status": "dry_run",
-        "dry_run": 1,
-        "target_config_path": body.get("target_config_path"),
-        "steps_json": str(body.get("steps", [])),
-        "rollback_json": str(body.get("rollback", [])),
+        "dry_run": True,
+        "steps_json": __import__("json").dumps(generated.get("steps", []), ensure_ascii=False),
+        "rollback_json": __import__("json").dumps(generated.get("rollback", []), ensure_ascii=False),
+        "mutates_installed_agents": False,
+        "agent_runtime_started": False,
+        "stdio_mcp_started": False,
+        "requires_confirmation": True,
+        "collector_url": body.get("collector_url") or "http://127.0.0.1:8000/api/v1/probes/events",
         "created_at": utc_now(),
-    })
+    }
+    plan = store.upsert_record("probe_install_plan", record, status="dry_run")
     store.audit_event("post.probes.install_plan", "probe_install_plan", plan["id"],
-                       {"agent_type": agent_type, "dry_run": True})
+                       {"agent_type": agent_type, "dry_run": True, "mutates_installed_agents": False})
     return plan
 
 

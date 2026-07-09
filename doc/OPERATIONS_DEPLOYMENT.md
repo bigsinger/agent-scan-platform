@@ -1217,3 +1217,21 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($licenses.download)" -OutFile thi
 - Snyk agent-scan：Agent/MCP/Skill 发现、stdio MCP 启动前审批、本地分析与可选云分析边界。
 
 本仓库没有复制上述项目源码；当前交付以本地规则和自有 FastAPI/SQLite 管线为主。
+
+## v4.2.5 本地可观测性组件
+
+| 组件 | 地址 | 用途 |
+|---|---|---|
+| 主平台 API | `127.0.0.1:8000` | FastAPI + SPA |
+| OTel Receiver | `127.0.0.1:4318` | OTLP HTTP JSON traces/logs/metrics |
+
+健康检查：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/observability/health
+Invoke-RestMethod http://127.0.0.1:4318/healthz
+```
+
+关键表：`probe_event`、`otel_span`、`otel_log`、`otel_metric_point`、`behavior_edge`、`behavior_chain`、`behavior_anomaly`、`probe_install_plan`。
+
+故障处理：Collector 不可达时探针应 fail-open；SQLite 锁需停止重复 receiver；重复链通过 `chain_key` 幂等 upsert 避免重复创建。

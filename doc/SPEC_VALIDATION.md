@@ -29,3 +29,31 @@ V4.1 是 V4.0 的完整整合版开发规范，不是补丁文档。它保留 V4
 - 已包含完整 V4.0 主体内容
 - 已新增附录 C：V4.1 前端防空白页验收清单
 - 已新增附录 D：V4.1 与 V4.0 差异追踪
+
+## v4.2.5 SPEC 验收清单
+
+必跑命令：
+
+```powershell
+node --check src\assessment\static\assessment\app.js
+python tools\check_frontend_offline.py --html src\assessment\static\assessment\index.html --expect-pages 58
+```
+
+当前环境若未安装 pytest，可直接执行：
+
+```powershell
+$env:PYTHONPATH='src'
+python - <<'PY'
+from tests.test_v425_observability_e2e import (
+    test_v425_behavior_chain_build_is_idempotent,
+    test_v425_otlp_normalizer_and_query_api,
+    test_v425_probe_install_plan_and_generated_code_compile,
+)
+test_v425_behavior_chain_build_is_idempotent()
+test_v425_otlp_normalizer_and_query_api()
+test_v425_probe_install_plan_and_generated_code_compile()
+print('direct-v425-tests-ok')
+PY
+```
+
+页面检查：`/assessment/probes`、`/assessment/observability`、`/assessment/behavior/chains`、`/assessment/behavior/anomalies`、`/assessment/otel/explorer`、`/assessment/probes/install` 均不能回落 dashboard。

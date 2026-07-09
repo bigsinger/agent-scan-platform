@@ -302,6 +302,54 @@ def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, 
 
 # ── Behavior Chain ────────────────────────────────────────────
 
+def insert_otel_log(store: AssessmentStore, log: dict[str, Any]) -> dict[str, Any]:
+    now = utc_now()
+    row = {
+        "id": log.get("id") or new_id("olg"),
+        "trace_id": log.get("traceId") or log.get("trace_id"),
+        "span_id": log.get("spanId") or log.get("span_id"),
+        "timestamp": log.get("timeUnixNano") or log.get("timestamp") or now,
+        "severity_text": log.get("severityText") or log.get("severity_text"),
+        "body_redacted": str(log.get("body_redacted") or log.get("body") or ""),
+        "resource_json": json.dumps(log.get("resource", {}), ensure_ascii=False),
+        "attrs_json": json.dumps(log.get("attributes", {}), ensure_ascii=False),
+        "created_at": now,
+    }
+    with store.connect() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO otel_log(id, trace_id, span_id, timestamp, severity_text, body_redacted, resource_json, attrs_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            tuple(row.values()),
+        )
+        conn.commit()
+    return row
+
+
+def insert_otel_metric_point(store: AssessmentStore, point: dict[str, Any]) -> dict[str, Any]:
+    now = utc_now()
+    row = {
+        "id": point.get("id") or new_id("omp"),
+        "metric_name": point.get("metric_name") or point.get("name") or "unknown",
+        "metric_type": point.get("metric_type") or point.get("type") or "gauge",
+        "timestamp": point.get("timeUnixNano") or point.get("timestamp") or now,
+        "value": point.get("value"),
+        "unit": point.get("unit"),
+        "resource_json": json.dumps(point.get("resource", {}), ensure_ascii=False),
+        "attrs_json": json.dumps(point.get("attributes", {}), ensure_ascii=False),
+        "created_at": now,
+    }
+    with store.connect() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO otel_metric_point(id, metric_name, metric_type, timestamp, value, unit, resource_json, attrs_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            tuple(row.values()),
+        )
+        conn.commit()
+    return row
+
+
+# ── Behavior Chain ────────────────────────────────────────────
+
 def create_behavior_chain(store: AssessmentStore, chain: dict[str, Any]) -> dict[str, Any]:
     """创建一条行为链 (通用表)."""
     return store.upsert_record("behavior_chain", {

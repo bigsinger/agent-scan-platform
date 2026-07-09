@@ -17,11 +17,9 @@ import json
 import re
 from typing import Any
 
-from ..store import AssessmentStore, get_store, new_id, utc_now
+from ..store import AssessmentStore, new_id, utc_now
 from .storage import (
     create_behavior_anomaly,
-    list_probe_events,
-    get_probe_event,
 )
 
 
@@ -229,11 +227,12 @@ def _check_secret_in_prompt(events: list[dict[str, Any]], chain_id: str | None) 
         for key, value in payload.items():
             key_lower = key.lower()
             for pattern in ["token", "secret", "password", "key", "credential", "authorization", "bearer"]:
-                if pattern in key_lower and value and str(value).strip("[RE") != "[REDACTED]":
-                    # 非脱敏的敏感字段
+                if pattern in key_lower and value and str(value) != "[REDACTED]":
+                    # 非脱敏的敏感字段：证据只保存字段名和哈希，不保存明文
                     return _make_anomaly("ANOM-SECRET-IN-PROMPT", chain_id, ev, {
                         "sensitive_field": key,
-                        "sample_value_preview": str(value)[:50],
+                        "value_hash": __import__("hashlib").sha256(str(value).encode()).hexdigest(),
+                        "value_state": "redacted_required",
                         "event_id": ev["event_id"],
                     })
     return None
@@ -370,8 +369,8 @@ def _check_approval_mismatch(events: list[dict[str, Any]], chain_id: str | None)
 
     if completed_tools:
         first_tc_id = next(iter(completed_tools))
-        return _make_anomaly("ANOM-APPROVAL-MISMATCH", chain_id, 
-                            get_probe_event(get_store(), completed_tools[first_tc_id]) or events[0],
+        source = next((ev for ev in events if ev.get("event_id") == completed_tools[first_tc_id]), events[0])
+        return _make_anomaly("ANOM-APPROVAL-MISMATCH", chain_id, source,
                             {"denied_tool_call_ids": list(denied_tools.keys()),
                              "completed_after_denial": list(completed_tools.keys())})
     return None

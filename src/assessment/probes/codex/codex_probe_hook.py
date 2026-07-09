@@ -53,6 +53,7 @@ def generate_hook_script(
 """Codex Security Probe Hook — 自动生成, 只读上报, fail-open."""
 import json, sys, os, hashlib, urllib.request, urllib.error
 from pathlib import Path
+from datetime import datetime, timezone
 
 COLLECTOR_URL = {json.dumps(collector_url)}
 TIMEOUT = {timeout_ms} / 1000.0

@@ -1489,3 +1489,14 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 8. API 查询能返回真实扫描记录。
 9. 报告能下载并离线打开。
 10. 修复后可重新扫描生成新报告。
+
+## v4.2.5 探针与可观测性验收流程
+
+1. 启动平台：`powershell -ExecutionPolicy Bypass -File .\start_services.ps1`。
+2. 打开 `http://127.0.0.1:8000/assessment/probes` 查看探针管理。
+3. 运行 `powershell -ExecutionPolicy Bypass -File .\send_test_event.ps1` 发送测试事件。
+4. 打开 `http://127.0.0.1:8000/assessment/behavior/chains` 点击「运行链重建」。
+5. 打开 `http://127.0.0.1:8000/assessment/behavior/anomalies` 查看异常规则结果。
+6. 打开 `http://127.0.0.1:8000/assessment/probes/install` 生成 dry-run 安装计划。
+
+安全边界：本轮只生成 dry-run 计划，不修改 Codex/Hermes 配置，不写 hook/plugin 文件，不启动 stdio MCP，不保存 raw prompt/result。
