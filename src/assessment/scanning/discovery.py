@@ -13,6 +13,7 @@ from ..store import new_id, utc_now
 from .models import DiscoveryResult
 from .redaction import file_digest, redact_text, safe_display_path, stable_hash
 from .scope import filter_self_project_dirs, may_contain_self_test_asset, should_skip_self_project_path
+from .skill_metadata import parse_skill_metadata
 
 
 SKIP_DIRS = {
@@ -189,6 +190,9 @@ class DiscoveryEngine:
         kind = classify_kind(path)
         digest = file_digest(path) if path.is_file() else stable_hash(str(path))
         scope = scope_for_path(path, root)
+        skill_meta: dict[str, Any] = {}
+        if kind == "Skill" and path.name == "SKILL.md":
+            skill_meta = parse_skill_metadata(path)
         hit = {
             "id": "hit_" + stable_hash(str(path.resolve())),
             "type": kind,
@@ -200,7 +204,10 @@ class DiscoveryEngine:
             "sha256": digest,
             "status": "可导入",
             "created_at": utc_now(),
+            "skill_metadata": skill_meta,
         }
+        hit["display"] = self._display_for_hit(hit, path, skill_meta)
+        hit["relationships"] = self._relationships_for_hit(hit, path, skill_meta)
         result.hits.append(hit)
         if path.is_file() and should_scan_discovered_file(path):
             result.scan_paths.append(path)
@@ -220,6 +227,115 @@ class DiscoveryEngine:
         if kind in {"MCP", "Config"}:
             self._inspect_mcp_config(path, product, result, display_root)
 
+    def _display_for_hit(self, hit: dict[str, Any], path: Path, skill_meta: dict[str, Any] | None = None) -> dict[str, Any]:
+        kind = str(hit.get("type") or "Config")
+        product = str(hit.get("agent") or "Generic")
+        short_hash = str(hit.get("sha256") or "")[:16]
+        primary_path = str(hit.get("path") or "")
+        base_tags = ["local-readonly", kind.lower(), str(hit.get("source") or "well-known")]
+        if kind == "Skill":
+            meta = skill_meta or {}
+            title = str(meta.get("name") or path.parent.name)
+            subtitle = str(meta.get("description") or "本地 Skill，尚未扫描风险")
+            version = str(meta.get("version") or "-") or "-"
+            files = meta.get("files", 0)
+            scripts = meta.get("scripts", 0)
+            risk = "含脚本/网络关键词，建议扫描" if meta.get("has_network_keywords") or meta.get("has_shell_keywords") else "待扫描"
+            return {
+                "title": title,
+                "subtitle": subtitle,
+                "type_label": "Skill",
+                "icon": "skill",
+                "badge": product,
+                "version": version,
+                "primary_path": primary_path,
+                "fields": [
+                    {"label": "Agent", "value": product, "kind": "text"},
+                    {"label": "版本", "value": version, "kind": "text"},
+                    {"label": "文件", "value": files, "kind": "number"},
+                    {"label": "脚本", "value": scripts, "kind": "number"},
+                    {"label": "路径", "value": primary_path, "kind": "path"},
+                    {"label": "Hash", "value": short_hash, "kind": "hash"},
+                ],
+                "tags": base_tags + [str(tag) for tag in meta.get("tags", [])[:6]],
+                "risk_summary": risk,
+                "safety_summary": "只读发现；未执行 Skill 代码",
+                "primary_action": "查看 Skill",
+                "secondary_actions": ["扫描 Skill", "忽略"],
+            }
+        if kind == "MCP":
+            return {
+                "title": path.stem,
+                "subtitle": f"{product} MCP 配置命中，需静态检查/审批",
+                "type_label": "MCP",
+                "icon": "mcp",
+                "badge": product,
+                "version": str(hit.get("version") or "-"),
+                "primary_path": primary_path,
+                "fields": [
+                    {"label": "Agent", "value": product, "kind": "text"},
+                    {"label": "Transport", "value": "unknown", "kind": "text"},
+                    {"label": "审批", "value": "待检查", "kind": "text"},
+                    {"label": "Hash", "value": short_hash, "kind": "hash"},
+                ],
+                "tags": base_tags,
+                "risk_summary": "stdio MCP 默认不启动，需审批",
+                "safety_summary": "只读解析；未启动 MCP Server",
+                "primary_action": "查看 MCP",
+                "secondary_actions": ["静态检查", "审批"],
+            }
+        if kind == "Agent":
+            return {
+                "title": product,
+                "subtitle": f"{hit.get('source') or 'local'} · {hit.get('status') or '探测命中'}",
+                "type_label": "Agent",
+                "icon": "agent",
+                "badge": str(hit.get("status") or "探测"),
+                "version": str(hit.get("version") or "-") or "-",
+                "primary_path": primary_path,
+                "fields": [
+                    {"label": "产品", "value": product, "kind": "text"},
+                    {"label": "版本", "value": hit.get("version") or "-", "kind": "text"},
+                    {"label": "方法", "value": hit.get("probe_method") or hit.get("source") or "只读解析", "kind": "text"},
+                    {"label": "Hash", "value": short_hash, "kind": "hash"},
+                ],
+                "tags": base_tags,
+                "risk_summary": "待导入后扫描",
+                "safety_summary": "只读探测；不启动 Agent 运行时",
+                "primary_action": "导入 Agent",
+                "secondary_actions": ["创建测评", "详情"],
+            }
+        parser = "json" if path.suffix.lower() == ".json" else "toml" if path.suffix.lower() == ".toml" else "yaml" if path.suffix.lower() in {".yaml", ".yml"} else "markdown" if path.suffix.lower() == ".md" else "file"
+        return {
+            "title": path.name,
+            "subtitle": f"{product} 配置文件 · parser={parser}",
+            "type_label": "Config",
+            "icon": "config",
+            "badge": product,
+            "version": str(hit.get("version") or "-") or "-",
+            "primary_path": primary_path,
+            "fields": [
+                {"label": "Agent", "value": product, "kind": "text"},
+                {"label": "解析器", "value": parser, "kind": "text"},
+                {"label": "配置类型", "value": "MCP config" if "mcp" in path.name.lower() else "Agent config", "kind": "text"},
+                {"label": "Hash", "value": short_hash, "kind": "hash"},
+            ],
+            "tags": base_tags,
+            "risk_summary": "待解析/扫描",
+            "safety_summary": "只读解析；不写配置文件",
+            "primary_action": "查看配置摘要",
+            "secondary_actions": ["解析", "忽略"],
+        }
+
+    def _relationships_for_hit(self, hit: dict[str, Any], path: Path, skill_meta: dict[str, Any] | None = None) -> dict[str, Any]:
+        kind = str(hit.get("type") or "")
+        return {
+            "agent_id": None,
+            "skill_id": "skill_" + stable_hash(str(path.parent.resolve())) if kind == "Skill" else None,
+            "mcp_server_id": None,
+            "config_snapshot_id": "cfg_" + stable_hash(str(path.resolve())) if kind in {"Config", "MCP"} else None,
+        }
+
     def _skill_record(self, path: Path, product: str, display_root: Path | None) -> dict:
         skill_root = path.parent
         file_count = 0
@@ -233,17 +349,30 @@ class DiscoveryEngine:
                     script_count += 1
             if file_count > 5000:
                 break
+        metadata = parse_skill_metadata(path)
         return {
             "id": "skill_" + stable_hash(str(skill_root.resolve())),
             "name": skill_root.name,
+            "title": metadata.get("name") or skill_root.name,
+            "description": metadata.get("description") or "",
+            "version": metadata.get("version") or "-",
+            "author": metadata.get("author") or "",
+            "tags": metadata.get("tags") or [],
+            "entry_file": metadata.get("entry_file") or "SKILL.md",
+            "metadata_truncated": bool(metadata.get("metadata_truncated")),
             "agent": product,
             "path": safe_display_path(skill_root, display_root),
+            "skill_md_path": safe_display_path(path, display_root),
             "real_path": str(skill_root.resolve()),
             "scope": "Project",
             "metadata": "SKILL.md",
-            "files": file_count,
-            "scripts": script_count,
-            "risk": "待扫描",
+            "files": metadata.get("files", file_count),
+            "scripts": metadata.get("scripts", script_count),
+            "has_network_keywords": bool(metadata.get("has_network_keywords")),
+            "has_shell_keywords": bool(metadata.get("has_shell_keywords")),
+            "has_secret_like_text": bool(metadata.get("has_secret_like_text")),
+            "risk": "含脚本/网络关键词，建议扫描" if metadata.get("has_network_keywords") or metadata.get("has_shell_keywords") else "待扫描",
+            "risk_summary": "含脚本/网络关键词，建议扫描" if metadata.get("has_network_keywords") or metadata.get("has_shell_keywords") else "待扫描",
             "riskClass": "medium",
             "status": "已发现",
             "sha256": file_digest(path),

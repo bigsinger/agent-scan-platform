@@ -1509,3 +1509,7 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 - 异常分析：打开 `/assessment/behavior/anomalies`，查看 P0 规则结果；证据字段默认脱敏。
 - 报告证据：在报告预览中点击证据会打开右侧抽屉，不离开报告上下文。
 - 探针安装：打开 `/assessment/probes/install` 只生成 dry-run 安装计划；不会写入 Codex/Hermes 配置。
+
+## v4.2.7 本机发现体验
+
+P04 本机发现现在使用类型化命中展示：Agent、Skill、MCP、Config 分别显示不同字段。Skill 行直接展示 Skill 名、描述、版本、文件数、脚本数、路径和风险摘要。点击名称或“详情”可打开右侧详情抽屉，关闭后保留当前筛选上下文。

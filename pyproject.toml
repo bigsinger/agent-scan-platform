@@ -1,7 +1,7 @@
 [project]
 name = "agent-security-assessment"
-version = "4.2.6"
-description = "Local Agent security assessment module based on the V4.2.6 SPEC."
+version = "4.2.7"
+description = "Local Agent security assessment module based on the V4.2.7 SPEC."
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.110",

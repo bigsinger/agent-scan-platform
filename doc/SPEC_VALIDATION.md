@@ -43,7 +43,9 @@ python tools\check_frontend_offline.py --html src\assessment\static\assessment\i
 
 ```powershell
 $env:PYTHONPATH='src'
-python - <<'PY'
+@'
+# python here-string
+'@ | python -
 from tests.test_v425_observability_e2e import (
     test_v425_behavior_chain_build_is_idempotent,
     test_v425_otlp_normalizer_and_query_api,
@@ -63,7 +65,7 @@ PY
 执行命令：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File toolserify_v426_acceptance.ps1
+powershell -ExecutionPolicy Bypass -File tools\verify_v426_acceptance.ps1
 ```
 
 实际输出摘要：
@@ -81,3 +83,28 @@ v4.2.6 acceptance verification passed
 ```
 
 完整性矩阵期望：58 页；P49-P54/D19-D22 文档、原型、契约、E2E manifest 均已映射。未在 manifest 中覆盖的旧页面保持 `NOT_ASSERTED`，不伪造 PASS。
+
+## v4.2.7 Discovery Experience 验收
+
+```powershell
+powershell -ExecutionPolicy Bypass -File toolserify_v427_discovery.ps1
+```
+
+核心检查：
+
+```powershell
+$env:PYTHONPATH='src'
+@'
+from fastapi.testclient import TestClient
+from assessment.main import app
+client = TestClient(app)
+payload = client.get('/api/v1/completeness?page_size=200').json()
+print(payload['summary'])
+required = {'P02','P04','P05','P06','P16','P17','P20','D09'}
+for row in payload['items']:
+    if row['id'] in required:
+        print(row['id'], row['audit'], row['contract'], row['e2e'], row['status'])
+'@ | python -
+```
+
+预期：`e2e_passed >= 18`，P02/P04/P05/P06/P16/P17/P20/D09 均为 `PASS PASS PASS 已验收`。

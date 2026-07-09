@@ -61,6 +61,11 @@
     state.discoveryInventoryExport = null;
     state.discoveryFilterText = '';
     state.discoveryFilterType = '全部';
+    state.discoveryFilterStatus = '全部状态';
+    state.discoveryFilterChanged = '全部变化';
+    state.discoveryFilterScripts = '全部脚本';
+    state.selectedDiscoveryHit = null;
+    state.discoveryHitDrawerOpen = false;
     state.agentFilterText = '';
     state.agentFilterAdapter = '全部 Agent';
     state.agentFilterCoverage = '全部支持级别';
@@ -142,6 +147,11 @@ data(){
     initial.discoveryInventoryExport = null;
     initial.discoveryFilterText = '';
     initial.discoveryFilterType = '全部';
+    initial.discoveryFilterStatus = '全部状态';
+    initial.discoveryFilterChanged = '全部变化';
+    initial.discoveryFilterScripts = '全部脚本';
+    initial.selectedDiscoveryHit = null;
+    initial.discoveryHitDrawerOpen = false;
     initial.agentFilterText = '';
     initial.agentFilterAdapter = '全部 Agent';
     initial.agentFilterCoverage = '全部支持级别';
@@ -503,8 +513,21 @@ data(){
     filteredDiscoveryHits(){
       const keyword=String(this.discoveryFilterText || '').trim().toLowerCase();
       const type=String(this.discoveryFilterType || '全部');
+      const status=String(this.discoveryFilterStatus || '全部状态');
+      const changed=String(this.discoveryFilterChanged || '全部变化');
+      const scripts=String(this.discoveryFilterScripts || '全部脚本');
       return (this.discoveryHits || []).filter(item => {
-        if(type !== '全部' && String(item.type || '') !== type) return false;
+        const display=item.display || {};
+        if(type !== '全部' && String(item.type || display.type_label || '') !== type) return false;
+        if(status !== '全部状态' && String(item.status || '') !== status) return false;
+        if(changed === '已变化' && !['NEW','CHANGED'].includes(String(item.change_status || ''))) return false;
+        if(changed === '已忽略' && String(item.status || '') !== '已忽略') return false;
+        if(scripts === '含脚本') {
+          const fields=display.fields || [];
+          const scriptField=fields.find(f=>String(f.label||'').includes('脚本'));
+          const scriptValue=Number((item.skill_metadata&&item.skill_metadata.scripts) || item.scripts || (scriptField&&scriptField.value) || 0);
+          if(!scriptValue) return false;
+        }
         if(!keyword) return true;
         const haystack=[
           item.type,
@@ -515,7 +538,14 @@ data(){
           item.version,
           item.probe_method,
           item.change_status,
-          item.status
+          item.status,
+          display.title,
+          display.subtitle,
+          display.version,
+          display.primary_path,
+          display.risk_summary,
+          (display.fields||[]).map(f=>String(f.label||'')+' '+String(f.value||'')).join(' '),
+          (display.tags||[]).join(' ')
         ].map(value=>String(value || '').toLowerCase()).join(' ');
         return haystack.includes(keyword);
       });
@@ -2781,6 +2811,18 @@ data(){
         this.toastMsg('发现验收包已导出：'+(res.artifact&&res.artifact.id || '完成'));
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
+    },
+    openDiscoveryHit(hit){
+      this.selectedDiscoveryHit = hit || null;
+      this.discoveryHitDrawerOpen = !!hit;
+    },
+    closeDiscoveryHit(){
+      this.discoveryHitDrawerOpen = false;
+      this.selectedDiscoveryHit = null;
+    },
+    discoveryActionLabel(hit){
+      const display=(hit&&hit.display)||{};
+      return display.primary_action || (hit&&hit.type==='Agent'?'导入 Agent':hit&&hit.type==='Skill'?'查看 Skill':hit&&hit.type==='MCP'?'查看 MCP':'查看详情');
     },
     async importDiscoveryHit(hit){
       if(!hit || !hit.id) return;

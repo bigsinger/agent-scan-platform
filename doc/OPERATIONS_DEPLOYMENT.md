@@ -1257,7 +1257,11 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/observability/health
 ### 验收脚本
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File toolserify_v426_acceptance.ps1
+powershell -ExecutionPolicy Bypass -File tools\verify_v426_acceptance.ps1
 ```
 
 脚本优先使用 `uv run --with pytest --with httpx2` 隔离 pytest 环境，并清空外部 `PYTHONPATH`，避免宿主 Hermes venv 污染。
+
+## v4.2.7 Discovery 运维说明
+
+发现命中 `display` 字段仅来源于只读解析，不执行 Skill、不启动 Agent、不启动 stdio MCP。默认列表会隐藏本项目源码/文档历史命中，并标记 `self_project_policy=legacy_stale`；测试 fixture 保留为 `test_asset`。

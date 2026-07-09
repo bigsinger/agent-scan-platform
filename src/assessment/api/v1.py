@@ -268,7 +268,7 @@ async def bootstrap() -> dict:
         git_hash = ""
     return {
         "state": runtime_state(),
-        "version": "4.2.6",
+        "version": "4.2.7",
         "git_short_hash": git_hash,
     }
 
@@ -304,9 +304,9 @@ async def health_self_test() -> dict:
 @router.get("/version")
 async def version() -> dict:
     return {
-        "app": "4.2.6",
-        "spec": "V4.2.6",
-        "rules": "baseline@4.2.6",
+        "app": "4.2.7",
+        "spec": "V4.2.7",
+        "rules": "baseline@4.2.7",
         "agent_scan": {"version": "0.5.12", "mode": "vendored-compatible"},
     }
 
@@ -2092,6 +2092,8 @@ def enrich_items(key: str, items: list[dict]) -> list[dict]:
         return [normalize_redteam_case(item) for item in items]
     if key == "defenseRecommendations":
         return [decorate_defense_recommendation(item) for item in items]
+    if key == "discoveryHits":
+        return [item for item in (decorate_discovery_hit(item) for item in items) if not item.get("hidden_by_default")]
     return items
 
 
@@ -5173,7 +5175,7 @@ def write_discovery_run_artifact(store: Any, discovery: Any, body: dict) -> dict
 
 def export_discovery_inventory(store: Any, state: dict) -> dict:
     runs = combine_items(store.list_records("discovery_run"), state.get("discoveryRuns", []))
-    hits = combine_items(store.list_records("discovery_hit"), state.get("discoveryHits", []))
+    hits = [decorate_discovery_hit(item) for item in combine_items(store.list_records("discovery_hit"), state.get("discoveryHits", []))]
     agents = combine_items(store.list_records("agent_instance"), state.get("agentAssets", []))
     mcp_servers = combine_items(store.list_records("mcp_server"), state.get("mcpServers", []))
     skills = combine_items(store.list_records("skill"), state.get("skills", []))
@@ -5182,6 +5184,13 @@ def export_discovery_inventory(store: Any, state: dict) -> dict:
         "runs": len(runs),
         "hits": len(hits),
         "agents": len(agents),
+        "agent_count": len([h for h in hits if h.get("type") == "Agent"]),
+        "skill_count": len([h for h in hits if h.get("type") == "Skill"]),
+        "mcp_count": len([h for h in hits if h.get("type") == "MCP"]),
+        "config_count": len([h for h in hits if h.get("type") == "Config"]),
+        "changed_count": len([h for h in hits if h.get("change_status") in {"NEW", "CHANGED"}]),
+        "ignored_count": len([h for h in hits if h.get("status") in {"已忽略", "IGNORED"}]),
+        "skipped_count": len([h for h in hits if h.get("self_project_policy") in {"hidden", "legacy_stale"}]),
         "mcp_servers": len(mcp_servers),
         "skills": len(skills),
         "artifacts": len([item for item in artifacts if str(item.get("kind") or "").startswith("discovery")]),
@@ -5352,7 +5361,106 @@ def discovery_run_summary(run: dict) -> dict:
     }
 
 
+def decorate_discovery_hit(hit: dict) -> dict:
+    item = dict(hit)
+    item.setdefault("mutates_installed_agents", False)
+    item.setdefault("stdio_mcp_started", False)
+    item.setdefault("agent_runtime_started", False)
+    item.setdefault("secrets_redacted", True)
+    item.setdefault("relationships", discovery_hit_relationships(item))
+    item.update(discovery_self_project_policy(item))
+    item["display"] = normalize_discovery_display(item)
+    return item
+
+
+def discovery_self_project_policy(hit: dict) -> dict:
+    path = str(hit.get("path") or "").replace("\\", "/")
+    source = str(hit.get("source") or "")
+    kind = str(hit.get("type") or "")
+    is_self = any(marker in path for marker in ["<project>/src/", "<project>/doc/", "<target>/src/assessment", "agent-scan-platform/src/", "agent-scan-platform/doc/"])
+    is_fixture = "tests/fixtures" in path or "sample_agent_project" in path
+    policy = "test_asset" if is_fixture else "legacy_stale" if is_self else "visible"
+    return {
+        "is_self_project": bool(is_self or is_fixture),
+        "self_project_policy": policy,
+        "hidden_by_default": policy == "legacy_stale",
+        "skip_reason": "本项目源码/文档历史命中默认隐藏" if policy == "legacy_stale" else "测试资产允许展示" if policy == "test_asset" else "",
+    }
+
+
+def discovery_hit_relationships(hit: dict) -> dict:
+    kind = str(hit.get("type") or "")
+    path_seed = str(hit.get("path_hash") or hit.get("path") or hit.get("id") or "")
+    return {
+        "agent_id": hit.get("imported_agent_id"),
+        "skill_id": hit.get("skill_id") or ("skill_" + stable_hash(path_seed) if kind == "Skill" else None),
+        "mcp_server_id": hit.get("mcp_server_id"),
+        "config_snapshot_id": hit.get("config_snapshot_id") or ("cfg_" + stable_hash(path_seed) if kind in {"Config", "MCP"} else None),
+    }
+
+
+def normalize_discovery_display(hit: dict) -> dict:
+    existing = hit.get("display") if isinstance(hit.get("display"), dict) else {}
+    kind = str(hit.get("type") or existing.get("type_label") or "Config")
+    agent = str(hit.get("agent") or existing.get("badge") or "Generic")
+    path = str(hit.get("path") or existing.get("primary_path") or "")
+    version = str(hit.get("version") or existing.get("version") or "-") or "-"
+    sha = str(hit.get("sha256") or "")[:16]
+    metadata = hit.get("skill_metadata") if isinstance(hit.get("skill_metadata"), dict) else {}
+    title = existing.get("title") or hit.get("name") or metadata.get("name") or (Path(path).name if path else kind)
+    subtitle = existing.get("subtitle") or metadata.get("description") or hit.get("description") or f"{agent} {kind} 命中"
+    type_label = {"Skill": "Skill", "MCP": "MCP", "Agent": "Agent", "Config": "Config"}.get(kind, kind)
+    fields = existing.get("fields") if isinstance(existing.get("fields"), list) else []
+    if not fields:
+        if kind == "Skill":
+            fields = [
+                {"label": "Agent", "value": agent, "kind": "text"},
+                {"label": "版本", "value": version, "kind": "text"},
+                {"label": "文件", "value": metadata.get("files") or hit.get("files") or "-", "kind": "number"},
+                {"label": "脚本", "value": metadata.get("scripts") or hit.get("scripts") or "-", "kind": "number"},
+                {"label": "路径", "value": path, "kind": "path"},
+                {"label": "Hash", "value": sha, "kind": "hash"},
+            ]
+        elif kind == "MCP":
+            fields = [
+                {"label": "Agent", "value": agent, "kind": "text"},
+                {"label": "Transport", "value": hit.get("transport") or "unknown", "kind": "text"},
+                {"label": "Env Keys", "value": len(hit.get("env_keys") or []), "kind": "number"},
+                {"label": "审批", "value": hit.get("status") or "待检查", "kind": "text"},
+            ]
+        elif kind == "Agent":
+            fields = [
+                {"label": "产品", "value": agent, "kind": "text"},
+                {"label": "版本", "value": version, "kind": "text"},
+                {"label": "状态", "value": hit.get("install_status") or hit.get("status") or "探测", "kind": "text"},
+                {"label": "方法", "value": hit.get("probe_method") or hit.get("source") or "只读解析", "kind": "text"},
+            ]
+        else:
+            fields = [
+                {"label": "Agent", "value": agent, "kind": "text"},
+                {"label": "配置类型", "value": "MCP config" if "mcp" in path.lower() else "Agent config", "kind": "text"},
+                {"label": "路径", "value": path, "kind": "path"},
+                {"label": "Hash", "value": sha, "kind": "hash"},
+            ]
+    return {
+        "title": redact_text(str(title), max_len=180),
+        "subtitle": redact_text(str(subtitle), max_len=260),
+        "type_label": type_label,
+        "icon": existing.get("icon") or kind.lower(),
+        "badge": existing.get("badge") or agent,
+        "version": version,
+        "primary_path": path,
+        "fields": fields,
+        "tags": existing.get("tags") or ["local-readonly", kind.lower(), str(hit.get("source") or "well-known")],
+        "risk_summary": existing.get("risk_summary") or hit.get("risk_summary") or hit.get("risk") or "待扫描",
+        "safety_summary": existing.get("safety_summary") or "只读发现；不修改已安装 Agent；不启动 stdio MCP",
+        "primary_action": existing.get("primary_action") or {"Agent":"导入 Agent","Skill":"查看 Skill","MCP":"查看 MCP","Config":"查看配置摘要"}.get(kind, "查看详情"),
+        "secondary_actions": existing.get("secondary_actions") or ["忽略"],
+    }
+
+
 def discovery_hit_summary(hit: dict) -> dict:
+    hit = decorate_discovery_hit(hit)
     return {
         "id": hit.get("id"),
         "type": hit.get("type"),
@@ -5368,6 +5476,14 @@ def discovery_hit_summary(hit: dict) -> dict:
         "probe_method": hit.get("probe_method"),
         "probe_source": hit.get("probe_source"),
         "command_started": bool(hit.get("command_started")),
+        "display": hit.get("display"),
+        "relationships": hit.get("relationships"),
+        "safety": {
+            "mutates_installed_agents": False,
+            "stdio_mcp_started": False,
+            "agent_runtime_started": False,
+            "secrets_redacted": True,
+        },
         "mutates_installed_agents": False,
     }
 
