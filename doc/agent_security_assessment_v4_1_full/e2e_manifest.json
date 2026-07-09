@@ -1,5 +1,5 @@
 {
-  "schema": "agent-security-e2e-manifest@4.2.7",
+  "schema": "agent-security-e2e-manifest@4.2.8",
   "updated_at": "2026-07-09T00:00:00Z",
   "items": [
     {
@@ -299,6 +299,186 @@
       "assertions": [
         "core local assessment flow covered",
         "discovery display contract present"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "P07",
+      "status": "PASS",
+      "test_file": "tests/test_v428_abom_adapter_e2e.py",
+      "test_names": [
+        "test_v428_abom_and_adapter_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_abom_adapter_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "P08",
+      "status": "PASS",
+      "test_file": "tests/test_v428_abom_adapter_e2e.py",
+      "test_names": [
+        "test_v428_abom_and_adapter_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_abom_adapter_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "P10",
+      "status": "PASS",
+      "test_file": "tests/test_v428_agent_scan_mapping_e2e.py",
+      "test_names": [
+        "test_v428_agent_scan_mapping_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_agent_scan_mapping_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "D05",
+      "status": "PASS",
+      "test_file": "tests/test_v428_agent_scan_mapping_e2e.py",
+      "test_names": [
+        "test_v428_agent_scan_mapping_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_agent_scan_mapping_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "P11",
+      "status": "PASS",
+      "test_file": "tests/test_v428_mcp_static_consent_e2e.py",
+      "test_names": [
+        "test_v428_mcp_static_consent_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_mcp_static_consent_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "P12",
+      "status": "PASS",
+      "test_file": "tests/test_v428_mcp_static_consent_e2e.py",
+      "test_names": [
+        "test_v428_mcp_static_consent_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_mcp_static_consent_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "D06",
+      "status": "PASS",
+      "test_file": "tests/test_v428_mcp_static_consent_e2e.py",
+      "test_names": [
+        "test_v428_mcp_static_consent_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_mcp_static_consent_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "D07",
+      "status": "PASS",
+      "test_file": "tests/test_v428_mcp_static_consent_e2e.py",
+      "test_names": [
+        "test_v428_mcp_static_consent_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_mcp_static_consent_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "P13",
+      "status": "PASS",
+      "test_file": "tests/test_v428_skill_scan_detail_e2e.py",
+      "test_names": [
+        "test_v428_skill_scan_detail_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_skill_scan_detail_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
+      ],
+      "safety_invariants": [
+        "mutates_installed_agents=false",
+        "stdio_mcp_started=false",
+        "agent_runtime_started=false",
+        "no raw secret"
+      ]
+    },
+    {
+      "page_id": "P14",
+      "status": "PASS",
+      "test_file": "tests/test_v428_skill_scan_detail_e2e.py",
+      "test_names": [
+        "test_v428_skill_scan_detail_e2e"
+      ],
+      "command": "python -m pytest tests/test_v428_skill_scan_detail_e2e.py -q",
+      "assertions": [
+        "MCP/Skill/ABOM/agent-scan asset workflow covered"
       ],
       "safety_invariants": [
         "mutates_installed_agents=false",

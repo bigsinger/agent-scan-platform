@@ -1265,3 +1265,8 @@ powershell -ExecutionPolicy Bypass -File tools\verify_v426_acceptance.ps1
 ## v4.2.7 Discovery 运维说明
 
 发现命中 `display` 字段仅来源于只读解析，不执行 Skill、不启动 Agent、不启动 stdio MCP。默认列表会隐藏本项目源码/文档历史命中，并标记 `self_project_policy=legacy_stale`；测试 fixture 保留为 `test_asset`。
+
+
+## v4.2.8 运维补充
+
+验收脚本：`tools\verify_v428_asset_mcp_skill.ps1`。支持 `ASSESSMENT_DB_PATH`、`ASSESSMENT_STATE_ROOT` 指向临时目录。

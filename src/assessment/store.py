@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -15,9 +16,9 @@ from .contracts import completeness_rows
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = Path(__file__).resolve().parent
-DATA_DIR = REPO_ROOT / "data"
+DATA_DIR = Path(os.environ.get("ASSESSMENT_STATE_ROOT") or os.environ.get("ASSESSMENT_ARTIFACT_ROOT") or (REPO_ROOT / "data"))
 DB_DIR = DATA_DIR / "db"
-DB_PATH = DB_DIR / "app.db"
+DB_PATH = Path(os.environ.get("ASSESSMENT_DB_PATH") or (DB_DIR / "app.db"))
 SEED_PATH = PACKAGE_ROOT / "static" / "assessment" / "seed.json"
 
 

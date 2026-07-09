@@ -268,7 +268,7 @@ async def bootstrap() -> dict:
         git_hash = ""
     return {
         "state": runtime_state(),
-        "version": "4.2.7",
+        "version": "4.2.8",
         "git_short_hash": git_hash,
     }
 
@@ -304,9 +304,9 @@ async def health_self_test() -> dict:
 @router.get("/version")
 async def version() -> dict:
     return {
-        "app": "4.2.7",
-        "spec": "V4.2.7",
-        "rules": "baseline@4.2.7",
+        "app": "4.2.8",
+        "spec": "V4.2.8",
+        "rules": "baseline@4.2.8",
         "agent_scan": {"version": "0.5.12", "mode": "vendored-compatible"},
     }
 
@@ -933,6 +933,12 @@ async def generic_get(resource: str, request: Request) -> dict:
         return await licenses_export()
     if path == "/discovery-hits/export":
         return export_discovery_inventory(get_store(), state)
+    if path == "/discovery-hits":
+        return discovery_hits_query(get_store(), state, request)
+    if path == "/agents":
+        return agents_query(get_store(), state, request)
+    if path == "/mcp":
+        return {"alias_for": "/api/v1/mcp-servers", **page(enrich_items("mcpServers", combine_items(real_items_for_path("/mcp-servers"), state.get("mcpServers", []))), request)}
     if path == "/defense-recommendations/export":
         return export_defense_recommendations(get_store(), state)
     if path == "/policy-drafts/export":
@@ -974,6 +980,10 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     store = get_store()
     state = store.get_state()
     result: dict[str, Any] = {"ok": True, "route": path, "method": method, "received": body}
+
+    if path == "/discovery-hits/cleanup-self-project":
+        result.update(cleanup_self_project_hits(store, state, body))
+        return result
 
     if path == "/quick-scans/precheck":
         scan_body = normalize_local_scan_payload(body)
@@ -1172,6 +1182,10 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     elif path == "/skill-scans":
         result.update(run_skill_scan(store, state, body))
         return result
+    elif path.startswith("/skills/") and path.endswith("/scan"):
+        skill_id = path.split("/")[-2]
+        result.update(run_skill_scan(store, state, {**body, "skill_id": skill_id}))
+        return result
     elif path.startswith("/skills/") and path.endswith("/quarantine"):
         skill_id = path.split("/")[-2]
         result.update(quarantine_skill(store, state, skill_id, body))
@@ -1181,9 +1195,9 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result.update(inspect_mcp_server(store, state, server_id, body))
     elif path == "/settings/import":
         result.update(import_settings(store, state, body))
-    elif path.startswith("/mcp-consents/") and path.endswith(("/approve", "/decline")):
+    elif path.startswith("/mcp-consents/") and path.endswith(("/approve", "/decline", "/reject")):
         consent_id = path.split("/")[-2]
-        default_decision = "DENIED" if path.endswith("/decline") else "APPROVED_FOR_TASK"
+        default_decision = "DENIED" if path.endswith(("/decline", "/reject")) else "APPROVED_FOR_TASK"
         decision = body.get("decision") or default_decision
         result["consent"] = update_consent(store, state, consent_id, consent_status_from_decision(decision), {**body, "decision": decision})
         result["status"] = "DECIDED"
@@ -1823,7 +1837,7 @@ def get_item_route(path: str, state: dict) -> dict | None:
     if len(parts) >= 2 and parts[0] == "adapters":
         adapter = find_adapter(state, parts[1])
         return {"item": adapter}
-    if len(parts) >= 2 and parts[0] == "mcp-servers":
+    if len(parts) >= 2 and parts[0] in {"mcp-servers", "mcp"}:
         item = get_store().get_record("mcp_server", parts[1]) or find_item(state.get("mcpServers", []), parts[1])
         if len(parts) == 2:
             return {"item": item or {"id": parts[1], "status": "NOT_FOUND"}}
@@ -1920,7 +1934,8 @@ def page(items: list[dict], request: Request | None, total: int | None = None) -
     page_size = int(request.query_params.get("page_size", 20)) if request else 20
     start = max(0, (page_num - 1) * page_size)
     end = start + page_size
-    return {"items": items[start:end], "total": len(items) if total is None else total, "page": page_num, "page_size": page_size}
+    effective_total = len(items) if total is None else total
+    return {"items": items[start:end], "total": effective_total, "page": page_num, "page_size": page_size, "has_next": end < effective_total}
 
 
 def completeness_doc_root() -> Path:
@@ -4537,6 +4552,8 @@ def inspect_mcp_server(store: Any, state: dict, server_id: str, body: dict) -> d
         "evidence": updated_evidence,
         "safe_mode": "local-readonly",
         "mutates_installed_agents": False,
+        "stdio_mcp_started": False,
+        "agent_runtime_started": False,
         "external_process_started": False,
         "mcp_started": False,
     }
@@ -5289,6 +5306,110 @@ def discovery_probe_coverage(agents: list[dict], hits: list[dict]) -> dict:
     }
 
 
+def discovery_hits_query(store: Any, state: dict, request: Request) -> dict:
+    items = [decorate_discovery_hit(item) for item in combine_items(store.list_records("discovery_hit"), state.get("discoveryHits", []))]
+    qp = request.query_params
+    kind = qp.get("type") or qp.get("kind") or qp.get("filter_type")
+    status = qp.get("status")
+    change_status = qp.get("change_status")
+    policy = qp.get("self_project_policy")
+    q = str(qp.get("q") or "").strip().lower()
+    include_hidden = str(qp.get("include_hidden") or "false").lower() in {"1", "true", "yes"}
+    if kind:
+        allowed = {"Agent", "Skill", "MCP", "Config"}
+        if kind not in allowed:
+            raise HTTPException(status_code=422, detail={"message": "invalid discovery type", "allowed": sorted(allowed)})
+        items = [i for i in items if str(i.get("type")) == kind]
+    if status:
+        items = [i for i in items if str(i.get("status") or "") == status]
+    if change_status:
+        items = [i for i in items if str(i.get("change_status") or "") == change_status]
+    if policy:
+        items = [i for i in items if str(i.get("self_project_policy") or "") == policy]
+    if not include_hidden:
+        items = [i for i in items if not i.get("hidden_by_default")]
+    if q:
+        def matches(item: dict) -> bool:
+            display = item.get("display") or {}
+            meta = item.get("skill_metadata") or {}
+            haystack = " ".join(str(x or "") for x in [item.get("type"), item.get("agent"), item.get("path"), item.get("status"), display.get("title"), display.get("subtitle"), display.get("primary_path"), display.get("risk_summary"), meta.get("description"), " ".join(str(f.get("value") or "") for f in display.get("fields", []))]).lower()
+            return q in haystack
+        items = [i for i in items if matches(i)]
+    sort_key = qp.get("sort") or "updated_at"
+    allowed_sort = {"updated_at", "created_at", "type", "agent", "title"}
+    if sort_key not in allowed_sort:
+        raise HTTPException(status_code=422, detail={"message": "invalid sort", "allowed": sorted(allowed_sort)})
+    reverse = str(qp.get("order") or "desc").lower() != "asc"
+    def key(item: dict):
+        if sort_key == "title":
+            return str((item.get("display") or {}).get("title") or "").lower()
+        return str(item.get(sort_key) or "").lower()
+    items.sort(key=key, reverse=reverse)
+    payload = page(items, request)
+    payload["filters"] = {"type": kind, "status": status, "change_status": change_status, "self_project_policy": policy, "q": q, "include_hidden": include_hidden, "sort": sort_key, "order": "desc" if reverse else "asc"}
+    return payload
+
+
+def normalize_agent_name(value: str) -> str:
+    text = str(value or "").replace("бд", "·").replace("\ufffd", "·")
+    text = re.sub(r"\s*[·•]+\s*", " · ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def canonical_agent_key(agent: dict) -> str:
+    adapter = normalize_agent_name(agent.get("adapter") or agent.get("agent") or agent.get("name") or "Generic")
+    adapter = adapter.split(" · ")[0].strip() or "Generic"
+    return re.sub(r"[^a-z0-9]+", "-", adapter.lower()).strip("-") or "generic"
+
+
+def normalize_agent_asset(agent: dict) -> dict:
+    item = dict(agent)
+    adapter = normalize_agent_name(item.get("adapter") or item.get("agent") or item.get("name") or "Generic").split(" · ")[0].strip()
+    item["adapter"] = adapter
+    item["name"] = f"{adapter} Local"
+    item["canonical_key"] = canonical_agent_key(item)
+    return item
+
+
+def agents_query(store: Any, state: dict, request: Request) -> dict:
+    raw = [normalize_agent_asset(item) for item in combine_items(store.list_records("agent_instance"), state.get("agentAssets", []))]
+    groups: dict[str, list[dict]] = {}
+    for item in raw:
+        groups.setdefault(item["canonical_key"], []).append(item)
+    normalized = []
+    for key_name, rows in groups.items():
+        rows.sort(key=lambda x: (str(x.get("status") or ""), str(x.get("version") or ""), str(x.get("created_at") or "")), reverse=True)
+        primary = dict(rows[0])
+        primary["id"] = f"agt_{key_name}"
+        primary["installations"] = [{"id": r.get("id"), "version": r.get("version") or "-", "path": r.get("path"), "status": "active" if idx == 0 else "stale", "source": r.get("probe_source") or r.get("source") or "historical"} for idx, r in enumerate(rows)]
+        primary["duplicate_count"] = max(0, len(rows) - 1)
+        primary["aliases"] = sorted({str(r.get("name") or "") for r in rows if r.get("name")})[:10]
+        normalized.append(primary)
+    normalized.sort(key=lambda x: str(x.get("adapter") or ""))
+    return page(normalized, request)
+
+
+
+def cleanup_self_project_hits(store: Any, state: dict, body: dict) -> dict:
+    dry_run = bool(body.get("dry_run", True))
+    all_hits = [decorate_discovery_hit(item) for item in combine_items(store.list_records("discovery_hit"), state.get("discoveryHits", []))]
+    matched = [hit for hit in all_hits if hit.get("self_project_policy") == "legacy_stale"]
+    ids = [str(hit.get("id")) for hit in matched if hit.get("id")]
+    if not dry_run:
+        for hit in matched:
+            hit.update({"status": "已忽略", "archived_at": utc_now(), "archive_reason": "self-project legacy hit archived"})
+            store.upsert_record("discovery_hit", hit, status="IGNORED")
+    return {
+        "dry_run": dry_run,
+        "matched": len(matched),
+        "would_mark_ignored": ids,
+        "marked_ignored": [] if dry_run else ids,
+        "mutates_installed_agents": False,
+        "stdio_mcp_started": False,
+        "agent_runtime_started": False,
+    }
+
 def discovery_inventory_change_summary(hits: list[dict]) -> dict:
     by_status: dict[str, int] = {}
     by_type: dict[str, int] = {}
@@ -5377,7 +5498,7 @@ def discovery_self_project_policy(hit: dict) -> dict:
     path = str(hit.get("path") or "").replace("\\", "/")
     source = str(hit.get("source") or "")
     kind = str(hit.get("type") or "")
-    is_self = any(marker in path for marker in ["<project>/src/", "<project>/doc/", "<target>/src/assessment", "agent-scan-platform/src/", "agent-scan-platform/doc/"])
+    is_self = any(marker in path for marker in ["<project>/assessment/", "<project>/src/", "<project>/doc/", "<target>/assessment/", "<target>/src/", "<target>/doc/", "<target>/src/assessment", "agent-scan-platform/assessment/", "agent-scan-platform/src/", "agent-scan-platform/doc/", "F:/bigsinger/agent-scan-platform/"])
     is_fixture = "tests/fixtures" in path or "sample_agent_project" in path
     policy = "test_asset" if is_fixture else "legacy_stale" if is_self else "visible"
     return {
@@ -5737,7 +5858,9 @@ def import_discovery_hit(store: Any, state: dict, hit_id: str, body: dict) -> di
     merge_state_record(state, "agentAssets", updated_agent)
     merge_state_record(state, "discoveryHits", updated_hit)
     state["selectedAsset"] = updated_agent
-    return {"status": "IMPORTED", "hit": updated_hit, "agent": updated_agent}
+    normalized_agent = normalize_agent_asset(updated_agent)
+    normalized_agent["id"] = f"agt_{normalized_agent['canonical_key']}"
+    return {"status": "IMPORTED", "hit": updated_hit, "agent": normalized_agent}
 
 
 def ignore_discovery_hit(store: Any, state: dict, hit_id: str, body: dict) -> dict:

@@ -87,7 +87,7 @@ v4.2.6 acceptance verification passed
 ## v4.2.7 Discovery Experience 验收
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File toolserify_v427_discovery.ps1
+powershell -ExecutionPolicy Bypass -File tools\erify_v427_discovery.ps1
 ```
 
 核心检查：
@@ -108,3 +108,12 @@ for row in payload['items']:
 ```
 
 预期：`e2e_passed >= 18`，P02/P04/P05/P06/P16/P17/P20/D09 均为 `PASS PASS PASS 已验收`。
+
+
+## v4.2.8 Asset/MCP/Skill 验收
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify_v428_asset_mcp_skill.ps1
+```
+
+预期：`e2e_passed >= 28`。

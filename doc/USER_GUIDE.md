@@ -1513,3 +1513,8 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 ## v4.2.7 本机发现体验
 
 P04 本机发现现在使用类型化命中展示：Agent、Skill、MCP、Config 分别显示不同字段。Skill 行直接展示 Skill 名、描述、版本、文件数、脚本数、路径和风险摘要。点击名称或“详情”可打开右侧详情抽屉，关闭后保留当前筛选上下文。
+
+
+## v4.2.8 资产治理与 MCP/Skill 专项
+
+Discovery 支持服务端搜索、类型筛选、分页和隐藏记录开关。Agent 资产默认按产品归一展示。

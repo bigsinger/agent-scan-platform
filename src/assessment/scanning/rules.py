@@ -159,6 +159,21 @@ RULES: tuple[LocalRule, ...] = (
         ),
         file_name_hints=("mcp", ".json", ".toml", ".md"),
     ),
+    LocalRule(id="MCP-PKG-001", title="MCP command 使用未固定远程包", severity="高危 P1", category="MCP/Tool 协议安全", confidence=0.82, remediation="固定 package 版本并校验来源。", patterns=(re.compile(r"(?i)\bnpx\b(?![^\n@]*@\d)"),), file_name_hints=("mcp", ".json", ".toml")),
+    LocalRule(id="MCP-PIPE-001", title="MCP command 使用 shell pipeline", severity="严重 P0", category="MCP/Tool 协议安全", confidence=0.86, remediation="禁止管道下载执行，拆分为可审计步骤。", patterns=(re.compile(r"(?i)(curl|wget).{0,120}\|\s*(bash|sh|pwsh|powershell)"),), file_name_hints=("mcp", ".json", ".toml")),
+    LocalRule(id="MCP-FS-001", title="MCP 暴露宽泛文件系统路径", severity="高危 P1", category="MCP/Tool 协议安全", confidence=0.78, remediation="限制到工作区 allowlist。", patterns=(re.compile(r"(?i)(/|C:\\\\|~[/\\\\]|<home>)"),), file_name_hints=("mcp", "filesystem", ".json", ".toml")),
+    LocalRule(id="TOOL-DESTRUCTIVE-001", title="Tool schema 含破坏性动作且无确认", severity="高危 P1", category="工具执行安全", confidence=0.8, remediation="为 delete/write/exec 类工具增加确认和审计。", patterns=(re.compile(r"(?i)\b(delete|remove|write_file|exec|shell|terminate)\b"),), file_name_hints=("tool", "schema", ".json", ".md")),
+    LocalRule(id="TOOL-NETWORK-001", title="Tool schema 包含网络外联 sink", severity="中危 P2", category="通信安全", confidence=0.75, remediation="标记网络 sink 并加入 egress allowlist。", patterns=(re.compile(r"(?i)\b(http|webhook|post|upload|socket|fetch)\b"),), file_name_hints=("tool", "schema", ".json", ".md")),
+    LocalRule(id="SKILL-SHELL-001", title="Skill 文档要求执行 shell 命令", severity="高危 P1", category="供应链与漏洞安全", confidence=0.8, remediation="将 shell 命令改为 dry-run 或审批步骤。", patterns=(re.compile(r"(?i)\b(bash|sh|powershell|cmd\.exe|subprocess|os\.system)\b"),), file_name_hints=("skill.md", "skills/")),
+    LocalRule(id="SKILL-NET-001", title="Skill 存在网络访问指令", severity="中危 P2", category="供应链与漏洞安全", confidence=0.78, remediation="明确网络访问目的和 allowlist。", patterns=(re.compile(r"(?i)\b(curl|wget|requests|httpx|fetch|Invoke-WebRequest)\b"),), file_name_hints=("skill.md", "skills/")),
+    LocalRule(id="SKILL-SECRET-001", title="Skill 包含 secret-like 内容", severity="高危 P1", category="身份与权限安全", confidence=0.84, remediation="删除明文凭据并轮换。", patterns=(re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]"),), file_name_hints=("skill.md", "skills/")),
+    LocalRule(id="SKILL-WRITE-001", title="Skill 写入工作区外路径", severity="高危 P1", category="工具执行安全", confidence=0.76, remediation="限制写入 data/work 或项目临时目录。", patterns=(re.compile(r"(?i)(write|save|output).{0,80}(/etc/|~/.ssh|C:\\\\Windows|<home>)"),), file_name_hints=("skill.md", "skills/")),
+    LocalRule(id="SKILL-INSTALL-001", title="Skill 运行时安装包", severity="中危 P2", category="供应链与漏洞安全", confidence=0.78, remediation="依赖应固定并提前构建。", patterns=(re.compile(r"(?i)\b(pip|npm|pnpm|yarn)\s+(install|add)\b"),), file_name_hints=("skill.md", "skills/", ".sh", ".ps1")),
+    LocalRule(id="SKILL-URL-001", title="Skill 隐含外部 URL", severity="中危 P2", category="通信安全", confidence=0.72, remediation="外部 URL 必须声明用途和信任边界。", patterns=(re.compile(r"(?i)https?://(?!127\.0\.0\.1|localhost)"),), file_name_hints=("skill.md", "skills/")),
+    LocalRule(id="CONFIG-ALLOW-001", title="配置授予危险工具 always-allow", severity="高危 P1", category="治理与审计安全", confidence=0.88, remediation="危险工具必须按任务审批。", patterns=(re.compile(r"(?i)(always[_-]?allow|allowAlways).{0,80}(shell|exec|write|delete)"),), file_name_hints=("config", "settings", ".json", ".toml")),
+    LocalRule(id="MCP-APPROVAL-001", title="stdio MCP 缺少审批说明", severity="中危 P2", category="MCP/Tool 协议安全", confidence=0.74, remediation="stdio MCP 必须生成 consent 记录。", patterns=(re.compile(r"(?i)\bstdio\b"),), file_name_hints=("mcp", ".json", ".toml")),
+    LocalRule(id="MCP-UNKNOWN-001", title="MCP transport 未知", severity="中危 P2", category="MCP/Tool 协议安全", confidence=0.7, remediation="显式声明 stdio/http transport。", patterns=(re.compile(r"(?i)\bmcp\b"),), file_name_hints=("mcp", ".json", ".toml")),
+    LocalRule(id="MCP-SECRET-KEY-001", title="MCP env 暴露 secret-like key", severity="高危 P1", category="身份与权限安全", confidence=0.9, remediation="env 只保存 secret reference。", patterns=(re.compile(r"(?i)(API_KEY|SECRET|TOKEN|PASSWORD)"),), file_name_hints=("mcp", ".json", ".toml")),
 )
 
 

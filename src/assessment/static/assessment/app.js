@@ -64,6 +64,13 @@
     state.discoveryFilterStatus = '全部状态';
     state.discoveryFilterChanged = '全部变化';
     state.discoveryFilterScripts = '全部脚本';
+    state.discoveryPage = 1;
+    state.discoveryPageSize = 50;
+    state.discoveryTotal = 0;
+    state.discoveryHasNext = false;
+    state.discoverySort = 'updated_at';
+    state.discoveryOrder = 'desc';
+    state.discoveryIncludeHidden = false;
     state.selectedDiscoveryHit = null;
     state.discoveryHitDrawerOpen = false;
     state.agentFilterText = '';
@@ -150,6 +157,13 @@ data(){
     initial.discoveryFilterStatus = '全部状态';
     initial.discoveryFilterChanged = '全部变化';
     initial.discoveryFilterScripts = '全部脚本';
+    initial.discoveryPage = 1;
+    initial.discoveryPageSize = 50;
+    initial.discoveryTotal = 0;
+    initial.discoveryHasNext = false;
+    initial.discoverySort = 'updated_at';
+    initial.discoveryOrder = 'desc';
+    initial.discoveryIncludeHidden = false;
     initial.selectedDiscoveryHit = null;
     initial.discoveryHitDrawerOpen = false;
     initial.agentFilterText = '';
@@ -2773,6 +2787,9 @@ data(){
         else if(target) payload.path=target;
         const res=await this.apiPost('/api/v1/discovery-runs', payload);
         this.discoveryHits=res.hits || [];
+        this.discoveryTotal=this.discoveryHits.length;
+        this.discoveryPage=1;
+        this.discoveryHasNext=false;
         this.agentAssets=res.agents || [];
         this.mcpServers=res.mcp_servers || [];
         this.consents=res.consents || [];
@@ -2812,6 +2829,33 @@ data(){
       } catch (err) { this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
+    async loadDiscoveryHits(opts){
+      opts = opts || {};
+      if(opts.resetPage) this.discoveryPage = 1;
+      const params = new URLSearchParams();
+      params.set('page', String(this.discoveryPage || 1));
+      params.set('page_size', String(this.discoveryPageSize || 50));
+      if(this.discoveryFilterType && this.discoveryFilterType !== '全部') params.set('type', this.discoveryFilterType);
+      if(this.discoveryFilterText) params.set('q', this.discoveryFilterText);
+      if(this.discoveryFilterStatus && this.discoveryFilterStatus !== '全部状态') params.set('status', this.discoveryFilterStatus);
+      if(this.discoveryFilterChanged === '已变化') params.set('change_status', 'CHANGED');
+      if(this.discoveryIncludeHidden) params.set('include_hidden', 'true');
+      params.set('sort', this.discoverySort || 'updated_at');
+      params.set('order', this.discoveryOrder || 'desc');
+      const res = await this.apiGet('/api/v1/discovery-hits?' + params.toString());
+      this.discoveryHits = res.items || [];
+      this.discoveryTotal = res.total || 0;
+      this.discoveryPage = res.page || this.discoveryPage || 1;
+      this.discoveryPageSize = res.page_size || this.discoveryPageSize || 50;
+      this.discoveryHasNext = !!res.has_next;
+      return res;
+    },
+    changeDiscoveryFilter(type, value){
+      this[type] = value;
+      return this.loadDiscoveryHits({resetPage:true});
+    },
+    nextDiscoveryPage(){ if(this.discoveryHasNext){ this.discoveryPage++; return this.loadDiscoveryHits(); } },
+    prevDiscoveryPage(){ if((this.discoveryPage||1)>1){ this.discoveryPage--; return this.loadDiscoveryHits(); } },
     openDiscoveryHit(hit){
       this.selectedDiscoveryHit = hit || null;
       this.discoveryHitDrawerOpen = !!hit;
