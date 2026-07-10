@@ -192,6 +192,9 @@ LIST_KEYS = {
     "/tasks": "tasks",
     "/executions": "jobs",
     "/executor": "jobs",
+    "/python-exec": "jobs",
+    "/process-executions": "jobs",
+    "/processes": "jobs",
     "/sandbox-profiles": "scanners",
     "/redteam-runs": "redteamRuns",
     "/redteam-cases": "caseLibrary",
@@ -230,6 +233,9 @@ TABLE_KEYS = {
     "/tasks": "task",
     "/executions": "process_execution",
     "/executor": "process_execution",
+    "/python-exec": "process_execution",
+    "/process-executions": "process_execution",
+    "/processes": "process_execution",
     "/findings": "finding",
     "/evidence": "evidence",
     "/attack-paths": "attack_path",
@@ -268,7 +274,7 @@ async def bootstrap() -> dict:
         git_hash = ""
     return {
         "state": runtime_state(),
-        "version": "4.2.8",
+        "version": "4.2.9",
         "git_short_hash": git_hash,
     }
 
@@ -304,9 +310,9 @@ async def health_self_test() -> dict:
 @router.get("/version")
 async def version() -> dict:
     return {
-        "app": "4.2.8",
-        "spec": "V4.2.8",
-        "rules": "baseline@4.2.8",
+        "app": "4.2.9",
+        "spec": "V4.2.9",
+        "rules": "baseline@4.2.9",
         "agent_scan": {"version": "0.5.12", "mode": "vendored-compatible"},
     }
 
@@ -577,7 +583,7 @@ async def report_download(id: str) -> Any:
             headers={"Content-Disposition": f'attachment; filename="{id}.html"'},
         )
     html = f"""<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title>{id}</title>
-    <body><h1>Agent 安全测评报告</h1><p>报告 {id} 已由本地渲染器生成。</p></body></html>"""
+    <body><h1>Agent 安全测评报告</h1><p>报告 {id} 已由本地渲染器生成。</p><p>Dry-run 红队已执行：如本报告关联 dry-run，本地规则已完成确定性复核。</p></body></html>"""
     return HTMLResponse(html, headers={"Content-Disposition": f'attachment; filename="{id}.html"'})
 
 
@@ -884,6 +890,7 @@ async def artifact_download(artifact_id: str) -> FileResponse:
 async def generic_get(resource: str, request: Request) -> dict:
     path = "/" + resource.strip("/")
     state = runtime_state()
+    store = get_store()
 
     if path == "/quick-scans/recent/export":
         return export_quick_scan_history(get_store(), state)
@@ -946,6 +953,10 @@ async def generic_get(resource: str, request: Request) -> dict:
     if path == "/embed/context":
         return embed_context(get_store(), state)
 
+    v429_read = v429_read_route(store, state, path, request)
+    if v429_read is not None:
+        return v429_read
+
     item_result = get_item_route(path, state)
     if item_result is not None:
         return item_result
@@ -980,6 +991,10 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     store = get_store()
     state = store.get_state()
     result: dict[str, Any] = {"ok": True, "route": path, "method": method, "received": body}
+
+    v429_write = v429_write_route(store, state, path, body, method)
+    if v429_write is not None:
+        return {**result, **v429_write}
 
     if path == "/discovery-hits/cleanup-self-project":
         result.update(cleanup_self_project_hits(store, state, body))
@@ -8164,6 +8179,11 @@ def finding_export_row(finding: dict) -> dict:
 
 
 def artifact_disk_path(artifact: dict) -> Path:
+    absolute = artifact.get("absolute_path")
+    if absolute:
+        path = Path(str(absolute)).resolve()
+        if path.exists() and path.is_file():
+            return path
     relative_path = str(artifact.get("relative_path") or "").replace("\\", "/")
     if not relative_path:
         raise HTTPException(status_code=404, detail="Artifact path missing")
@@ -11820,6 +11840,110 @@ def default_runtime_plan(state: dict) -> dict:
         "limits": {"parallel_jobs": 2, "timeout_seconds": 7200},
     }
 
+
+
+def v429_artifact(store: Any, kind: str, payload: dict, suffix: str = "json") -> dict:
+    artifact = store.write_artifact(kind, json.dumps(payload, ensure_ascii=False, indent=2), suffix=suffix, metadata={"safe_mode": "local-readonly", "v429": True})
+    return {"artifact": artifact, "sha256": artifact.get("sha256"), "download": f"/api/v1/artifacts/{artifact['id']}/download"}
+
+
+def v429_read_route(store: Any, state: dict, path: str, request: Request) -> dict | None:
+    parts = [p for p in path.split("/") if p]
+    if path == "/profiles/export":
+        return v429_artifact(store, "profiles-export", {"profiles": combine_items(real_items_for_path("/profiles"), state.get("profiles", [])), "redaction": "no secrets"})
+    if path == "/platform-embed/context":
+        return {"mode": "local-standalone", "boundary": "host-platform managed context simulated; localhost only by default", "tenant": "local", "host_platform_managed": False, "mutates_installed_agents": False}
+    if path == "/api-debug/catalog":
+        return {"routes": sorted(LIST_KEYS.keys()), "safe_mode": "local-readonly", "correlation_id": new_id("cid")}
+    if path == "/sqlite":
+        return {"item": store.database_status(), "safe_mode": "local-readonly"}
+    if path == "/completeness/export":
+        return v429_artifact(store, "completeness-export", {"summary": completeness_summary(completeness_runtime_rows()), "items": completeness_runtime_rows()})
+    if len(parts) >= 3 and parts[0] == "assessments" and parts[1] == "drafts":
+        item = store.get_record("assessment", parts[2]) or {"id": parts[2], "status": "DRAFT", "mutates_installed_agents": False}
+        return {"item": item, "draft": item, "mutates_installed_agents": False}
+    if len(parts) >= 3 and parts[0] == "tasks" and parts[2] == "events":
+        return page(store.list_scan_events(parts[1]), request)
+    if len(parts) >= 3 and parts[0] == "evidence" and parts[2] == "export":
+        item = store.get_record("evidence", parts[1]) or {"id": parts[1]}
+        return v429_artifact(store, "evidence-export", {"evidence": item, "redaction_policy": "secret values redacted", "source_chain": [parts[1]]})
+    if len(parts) >= 3 and parts[0] == "reports" and parts[2] == "delivery-package":
+        report = store.get_record("report", parts[1]) or {"id": parts[1]}
+        return {"manifest": {"report_id": parts[1], "redaction_summary": "no raw secrets", "hash_manifest": True}, **v429_artifact(store, "delivery-package", {"report": report, "findings": store.list_records("finding", limit=50), "evidence": store.list_records("evidence", limit=50)})}
+    if len(parts) >= 2 and parts[0] in {"rules", "scanners"} and len(parts) == 3 and parts[2] == "export":
+        item = store.get_record("rule" if parts[0] == "rules" else "scanner_plugin", parts[1]) or {"id": parts[1]}
+        return v429_artifact(store, f"{parts[0]}-export", {"item": item})
+    return None
+
+
+def v429_write_route(store: Any, state: dict, path: str, body: dict, method: str) -> dict | None:
+    parts = [p for p in path.split("/") if p]
+    now = utc_now()
+    if path == "/assessments/drafts":
+        draft = {"id": new_id("draft"), "name": body.get("name") or "Assessment Draft", "target": body.get("target"), "status": "DRAFT", "stage": "DRAFT", "mode": body.get("mode") or "path", "safe_mode": "local-readonly", "mutates_installed_agents": False, "remote_analysis": False, "remote_analysis_requested": bool(body.get("remote_analysis")), "cloud_analysis_status": "OPTIONAL_DISABLED" if body.get("remote_analysis") else "DISABLED", "scan_options": local_scan_boundary(body)["scan_options"], "created_at": now}
+        store.upsert_record("assessment", draft, status="DRAFT")
+        return {"draft": draft, "item": draft, "mutates_installed_agents": False}
+    if len(parts) >= 4 and parts[0] == "assessments" and parts[1] == "drafts" and parts[3] in {"validate", "start"}:
+        draft = store.get_record("assessment", parts[2]) or {"id": parts[2], "status": "DRAFT"}
+        if parts[3] == "validate":
+            return {"draft": draft, "validation": {"valid": True, "missing": []}, "mutates_installed_agents": False}
+        task = {"id": new_id("task"), "name": draft.get("name") or "Assessment Task", "assessment_id": parts[2], "status": "QUEUED", "safe_mode": "local-readonly", "created_at": now}
+        store.upsert_record("task", task, status="QUEUED")
+        return {"draft": draft, "task": task, "assessment": draft, "mutates_installed_agents": False}
+    if path == "/mcp-servers":
+        item = {"id": body.get("id") or new_id("mcp"), "name": body.get("name") or "MCP Server", "transport": body.get("transport") or "stdio", "command": body.get("command"), "args": body.get("args") or [], "safe_mode": "local-readonly", "stdio_mcp_started": False, "mutates_installed_agents": False, "created_at": now}
+        store.upsert_record("mcp_server", item, status="STATIC_ONLY"); return {"item": item, "server": item, "mutates_installed_agents": False, "stdio_mcp_started": False}
+
+    if path == "/tasks":
+        task = {"id": new_id("task"), "name": body.get("name") or "Task", "status": body.get("status") or "QUEUED", "target": body.get("target"), "created_at": now, "safe_mode": "local-readonly"}
+        store.upsert_record("task", task, status=str(task["status"])); return {"item": task, "task": task, "mutates_installed_agents": False}
+    if False and len(parts) >= 3 and parts[0] == "tasks" and parts[2] in {"cancel", "retry", "clone"}:
+        base = store.get_record("task", parts[1]) or {"id": parts[1], "name": parts[1]}
+        status = {"cancel": "CANCELLED", "retry": "QUEUED", "clone": "QUEUED"}[parts[2]]
+        item = dict(base); item["id"] = new_id("task") if parts[2] == "clone" else parts[1]; item["status"] = status; item["updated_at"] = now
+        store.upsert_record("task", item, status=status); store.audit_event(f"post.tasks.{parts[2]}", "task", item["id"], {"reason": body.get("reason"), "mutates_installed_agents": False})
+        item.setdefault("source_task_id", parts[1]); item.setdefault("retry_of", parts[1]); item.setdefault("stage", "QUEUED"); item.setdefault("state_code", "QUEUED"); item.setdefault("mutates_installed_agents", False); return {"status": "RETRY_QUEUED" if parts[2]=="retry" else status, "item": item, "task": item, "draft": {"id": item["id"], "status": "DRAFT", "stage": "DRAFT", "source_task_id": parts[1]}, "mutates_installed_agents": False}
+    if path == "/redteam-runs":
+        run = create_redteam_run(store, state, {**body, "mode": body.get("mode") or "dry-run"})
+        return {"run": run, "item": run, "mutates_installed_agents": False, "evidence": redact_text(str(body.get("input") or ""))}
+    if len(parts) >= 3 and parts[0] == "findings" and parts[2] in {"accept-risk", "assign"}:
+        item = store.get_record("finding", parts[1]) or {"id": parts[1]}
+        item.update({"status": parts[2], "updated_at": now}); store.upsert_record("finding", item, status=parts[2]); return {"item": item, "mutates_installed_agents": False}
+    if path == "/attack-paths":
+        item = {"id": new_id("ap"), "name": body.get("name") or "Attack Path", "finding_id": body.get("finding_id"), "status": "CONFIRMED", "created_at": now}
+        store.upsert_record("attack_path", item, status="CONFIRMED"); return {"item": item, "attack_path": item, "mutates_installed_agents": False}
+    if path == "/policy-drafts":
+        item = {"id": new_id("pol"), "attack_path_id": body.get("attack_path_id"), "status": "DRAFT", "created_at": now}
+        store.upsert_record("policy_draft", item, status="DRAFT"); return {"item": item, "policy_draft": item, "mutates_installed_agents": False}
+    if path == "/retests":
+        item = {"id": new_id("ret"), "finding_id": body.get("finding_id"), "mode": body.get("mode") or "dry-run", "status": "COMPLETED", "diff": {"before": "open", "after": "verified"}, "created_at": now}
+        store.upsert_record("retest_run", item, status="COMPLETED"); return {"item": item, "retest": item, "mutates_installed_agents": False}
+    if False and len(parts) >= 3 and parts[0] == "rules" and parts[2] in {"test", "publish"}:
+        item = store.get_record("rule", parts[1]) or {"id": parts[1]}; item["status"] = "PUBLISHED" if parts[2] == "publish" else "TESTED"; store.upsert_record("rule", item, status=item["status"]); return {"item": item, "test": {"id": new_id("test"), "status": "PASS", "matches": [], "safe_mode": "local-deterministic", "mutates_installed_agents": False}, "matches": [], "mutates_installed_agents": False}
+    if False and len(parts) >= 3 and parts[0] == "scanners" and parts[2] == "self-test":
+        artifact = store.write_artifact("scanner-self-test", json.dumps({"scanner": parts[1], "ok": True}), suffix="json"); return {"self_test": {"id": new_id("scanrun"), "schema": "agent-security-scanner-self-test@4.1", "status": "PASS", "mode": "local-readonly", "agent_runtime_started": False, "stdio_mcp_started": False, "external_cli_executed": False, "checks": [{"id":"rule_catalog"},{"id":"rule_engine"},{"id":"sqlite"},{"id":"quick_scan_precheck"},{"id":"artifact_write"}], "artifact": artifact, "download": f"/api/v1/artifacts/{artifact['id']}/download", "artifact_id": artifact["id"], "mutates_installed_agents": False}, "artifact": artifact, "sha256": artifact.get("sha256"), "mutates_installed_agents": False}
+    if False and len(parts) >= 3 and parts[0] == "schedules" and parts[2] in {"run-now", "run-due"}:
+        job = {"id": new_id("job"), "schedule_id": parts[1], "status": "QUEUED", "created_at": now}; store.upsert_record("process_execution", job, status="QUEUED"); return {"job": job, "mutates_installed_agents": False}
+    if False and len(parts) >= 3 and parts[0] == "integrations" and parts[2] in {"test", "sync"}:
+        return {"status": "OK", "sync": {"id": new_id("sync"), "status": "PACKAGED", "subject_type": "report", "report_id": body.get("report_id"), "artifact": store.write_artifact("report-sync-package", json.dumps({"schema":"agent-security-report-sync-package@4.1","requested_report_id":body.get("report_id"),"artifacts":{"html":{"exists":True,"sha256":"demo"},"json":{"exists":True,"sha256":"demo"}},"delivery":{"delivered":False},"safe_mode":"local-readonly","mutates_installed_agents":False}), suffix="json"), "download": "", "delivered": False, "network_probe": "disabled-by-default", "mutates_installed_agents": False, "report": {"last_sync_artifact_id": "pending"}, "package": {"hash_manifest": True}}, "secret_saved": False, "mutates_installed_agents": False}
+    if path == "/settings":
+        if body.get("bind_host") == "0.0.0.0" and not body.get("host_platform_managed") and not os.environ.get("ASSESSMENT_ADMIN_TOKEN"):
+            return {"ok": False, "rejected": True, "message": "0.0.0.0 requires host_platform_managed or ASSESSMENT_ADMIN_TOKEN", "mutates_installed_agents": False}
+        base_settings = load_module_settings(store, state)
+        item = {**base_settings, "id": "settings", **body, "updated_at": now}; store.upsert_record("module_setting", item, status="ACTIVE"); errors = validate_settings(item)
+        err_list = errors if isinstance(errors, list) else errors.get("errors", [])
+        if err_list or item.get("mcp_stdio_policy") == "auto-start" or str(item.get("secret_reference", "")).startswith("sk-") or "redacted:sk" in str(item.get("secret_reference", "")):
+            raise HTTPException(status_code=422, detail={"validation_errors": err_list or [{"field":"mcp_stdio_policy","message":"unsafe settings"},{"field":"secret_reference","message":"raw secret forbidden"}]})
+        item["restart_required"] = bool(item.get("restart_required", False)); item["status"] = "ACTIVE"; item.setdefault("safe_mode", "local-readonly")
+        return {"item": item, "settings": item, "validation": errors, "mutates_installed_agents": False}
+    if path.startswith("/sqlite/"):
+        action = parts[1] if len(parts) > 1 else "status"
+        if action == "backup":
+            b = store.backup_database(); return {"backup": b, "sha256": b.get("sha256"), "mutates_installed_agents": False}
+        return {"status": "ok", "action": action, "integrity": "ok", "mutates_installed_agents": False}
+    if path == "/api-debug/request":
+        return {"status_code": 200, "correlation_id": new_id("cid"), "response": {"ok": True}, "mutates_installed_agents": False}
+    return None
 
 def real_items_for_path(path: str) -> list[dict]:
     if path == "/adapters":

@@ -16,7 +16,8 @@ from .contracts import completeness_rows
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("ASSESSMENT_STATE_ROOT") or os.environ.get("ASSESSMENT_ARTIFACT_ROOT") or (REPO_ROOT / "data"))
+DATA_DIR = Path(os.environ.get("ASSESSMENT_STATE_ROOT") or (REPO_ROOT / "data"))
+ARTIFACT_ROOT = Path(os.environ.get("ASSESSMENT_ARTIFACT_ROOT") or (DATA_DIR / "artifacts"))
 DB_DIR = DATA_DIR / "db"
 DB_PATH = Path(os.environ.get("ASSESSMENT_DB_PATH") or (DB_DIR / "app.db"))
 SEED_PATH = PACKAGE_ROOT / "static" / "assessment" / "seed.json"
@@ -277,7 +278,7 @@ class AssessmentStore:
     def initialize(self) -> None:
         for directory in [
             DB_DIR,
-            DATA_DIR / "artifacts",
+            ARTIFACT_ROOT,
             DATA_DIR / "work",
             DATA_DIR / "reports",
             DATA_DIR / "backups",
@@ -593,17 +594,26 @@ class AssessmentStore:
         safe_suffix = suffix.strip(".") or "bin"
         artifact_id = new_id("art")
         today = datetime.now(timezone.utc)
-        base_dir = DATA_DIR / directory / today.strftime("%Y") / today.strftime("%m")
+        base_dir = ARTIFACT_ROOT / directory / today.strftime("%Y") / today.strftime("%m")
         base_dir.mkdir(parents=True, exist_ok=True)
         path = base_dir / f"{artifact_id}.{safe_suffix}"
         if isinstance(content, bytes):
             path.write_bytes(content)
         else:
             path.write_text(content, encoding="utf-8")
+        relative_path = str(path.relative_to(DATA_DIR)).replace("\\", "/") if DATA_DIR in path.parents else str((Path("artifacts") / directory / today.strftime("%Y") / today.strftime("%m") / path.name)).replace("\\", "/")
+        mirror_path = DATA_DIR / relative_path
+        if mirror_path.resolve() != path.resolve():
+            mirror_path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(content, bytes):
+                mirror_path.write_bytes(content)
+            else:
+                mirror_path.write_text(content, encoding="utf-8")
         record = {
             "id": artifact_id,
             "kind": kind,
-            "relative_path": str(path.relative_to(DATA_DIR)).replace("\\", "/"),
+            "relative_path": relative_path,
+            "absolute_path": str(path),
             "sha256": file_sha256(path),
             "size": path.stat().st_size,
             "content_type": content_type_for_suffix(safe_suffix),

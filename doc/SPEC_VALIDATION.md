@@ -117,3 +117,11 @@ powershell -ExecutionPolicy Bypass -File tools\verify_v428_asset_mcp_skill.ps1
 ```
 
 预期：`e2e_passed >= 28`。
+
+## v4.2.9 最终验收
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify_v429_final_acceptance.ps1
+```
+
+目标：`pages=58`、`audit_passed=58`、`contract_passed=58`、`e2e_passed=58`、`gaps=0`。

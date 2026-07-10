@@ -1270,3 +1270,11 @@ powershell -ExecutionPolicy Bypass -File tools\verify_v426_acceptance.ps1
 ## v4.2.8 运维补充
 
 验收脚本：`tools\verify_v428_asset_mcp_skill.ps1`。支持 `ASSESSMENT_DB_PATH`、`ASSESSMENT_STATE_ROOT` 指向临时目录。
+
+## v4.2.9 一键交付
+
+- 验收：`tools\verify_v429_final_acceptance.ps1`
+- 重置演示：`tools\reset_demo_state.ps1`
+- 导出交付包：`tools\export_final_delivery_package.ps1`
+
+验收脚本会设置 `ASSESSMENT_DB_PATH`、`ASSESSMENT_ARTIFACT_ROOT`、`ASSESSMENT_STATE_ROOT` 到临时目录，避免污染正式库。
