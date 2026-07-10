@@ -29,7 +29,7 @@ class SensitiveDataGuard:
     """
 
     PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-        ("openai_key", re.compile(r"sk-[A-Za-z0-9_\-]{8,}")),
+        ("openai_key", re.compile(r"(?<![A-Za-z0-9_])sk-[A-Za-z0-9_\-]{8,}")),
         ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
         ("bearer_token", re.compile(r"(?i)Bearer\s+[A-Za-z0-9._\-]{12,}")),
         ("assignment_secret", re.compile(r"(?i)\b(api[_-]?key|token|secret|password|passwd|pwd|session|cookie)\b\s*[:=]\s*['\"]?([^'\"\r\n\s,;]{6,})")),

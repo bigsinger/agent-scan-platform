@@ -11,6 +11,10 @@
     showBootError('Vue 未加载', '请确认 /static/vendor/vue.global.prod.js 存在并可访问。');
     return;
   }
+  if (!window.AssessmentRuntime) {
+    showBootError('前端运行时未加载', '请确认 /static/assessment/runtime.js 存在并可访问。');
+    return;
+  }
   const seed = window.ASSESSMENT_SEED || {};
   const runtimeListKeys = [
     'agents','agentAssets','discoveryHits','discoveryErrors','discoveryLog','mcpServers','consents','tools','skills',
@@ -275,6 +279,8 @@ data(){
     initial.findingFilterSeverity = '全部严重度';
     initial.findingFilterStatus = '全部状态';
     initial.findingFilterSource = '全部来源';
+    initial.findingSuppressionReason = '';
+    initial.findingSuppressionDays = 30;
     initial.agentDetail = null;
     initial.abomData = null;
     initial.abomDiff = null;
@@ -318,7 +324,11 @@ data(){
     initial.chainEvents = [];
     initial.probeInstallPlan = null;
     initial.probeInstallAgentType = 'codex';
-    initial.probeInstallCollectorUrl = '/api/v1/probes/events';
+    initial.probeInstallCollectorUrl = 'http://127.0.0.1:4318/v1/logs';
+    initial.probeCapability = null;
+    initial.probeInstallConfirmation = '';
+    initial.probeMutationAcknowledged = false;
+    initial.probeLifecycleResult = null;
     initial.detailDrawerOpen = false;
     initial.detailDrawerType = '';
     initial.detailDrawerPayload = null;
@@ -1683,7 +1693,7 @@ data(){
       const agentDetailPath=this.selectedAsset&&this.selectedAsset.id?'/assessment/agents/'+this.selectedAsset.id:'/assessment/agents';
       const taskDetailPath=this.selectedTask&&this.selectedTask.id?'/assessment/tasks/'+this.selectedTask.id:'/assessment/tasks';
       const skillDetailPath=this.selectedSkill&&this.selectedSkill.id?'/assessment/skills/'+this.selectedSkill.id:'/assessment/skills';
-      const findingDetailPath=this.selectedFinding&&this.selectedFinding.id?'/assessment/findings/'+this.selectedFinding.id:'/assessment/findings';
+      const findingDetailPath=this.selectedFinding&&this.selectedFinding.id?'/assessment/findings/'+encodeURIComponent(this.selectedFinding.id):'/assessment/findings';
       const adapterDetailPath=this.selectedAdapter&&this.selectedAdapter.id?'/assessment/adapters/'+this.selectedAdapter.id:'/assessment/adapters';
       const mcpDetailPath=this.selectedMcp&&this.selectedMcp.id?'/assessment/mcp/'+this.selectedMcp.id:'/assessment/mcp';
       const toolDetailPath=this.selectedTool&&this.selectedTool.id?'/assessment/tools/'+this.selectedTool.id:'/assessment/mcp';
@@ -1736,7 +1746,9 @@ data(){
       if(this.current==='behavior-chains') this.loadBehaviorChains();
       if(this.current==='behavior-anomalies') { this.loadBehaviorAnomalies(); this.loadAnomalyRules(); }
       if(this.current==='otel-explorer') { this.loadOtelSpans(); this.loadOtelLogs(); this.loadOtelMetrics(); }
-      if(this.current==='probe-install') this.loadProbes();
+      if(this.current==='probe-install') { this.loadProbes(); this.loadProbeCapability(); }
+      const probePlanMatch=path.match(/^\/assessment\/probes\/plans\/([^/]+)/);
+      if(probePlanMatch && this.current==='probe-plan-detail') this.loadProbeInstallPlan(decodeURIComponent(probePlanMatch[1]));
       const skillMatch=path.match(/^\/assessment\/skills\/([^/]+)/);
       if(skillMatch){
         const skillId=decodeURIComponent(skillMatch[1]);
@@ -1912,9 +1924,14 @@ data(){
         const plan = await this.apiPost('/api/v1/probes/install-plan', {
           agent_type: probe.agent_type || probe.adapter_id || 'codex',
           dry_run: true,
-          collector_url: '/api/v1/probes/events',
+          collector_url: 'http://127.0.0.1:4318/v1/logs',
         });
         this.probeInstallPlan = plan;
+        this.probeInstallAgentType = plan.agent_type || 'codex';
+        this.probeInstallConfirmation = '';
+        this.probeMutationAcknowledged = false;
+        this.probeLifecycleResult = null;
+        await this.loadProbeCapability();
       } catch(e) { this.apiError = this.describeError(e); }
     },
     async loadBehaviorChains() {
@@ -1975,22 +1992,60 @@ data(){
           collector_url: this.probeInstallCollectorUrl || '/api/v1/probes/events',
         });
         this.probeInstallPlan = plan;
+        this.probeInstallConfirmation = '';
+        this.probeMutationAcknowledged = false;
+        this.probeLifecycleResult = null;
+        await this.loadProbeCapability();
         this.toastMsg('dry-run 安装计划已生成：'+(plan.id||''));
       } catch(e) { this.apiError = this.describeError(e); }
       this.opsBusy = false;
+    },
+    async loadProbeCapability() {
+      try {
+        this.probeCapability = await this.apiGet('/api/v1/probes/capability/'+encodeURIComponent(this.probeInstallAgentType||'codex'));
+      } catch(e) { this.probeCapability = {status:'UNAVAILABLE', installed:false}; }
+    },
+    async loadProbeInstallPlan(planId) {
+      try {
+        this.probeInstallPlan = await this.apiGet('/api/v1/probes/install-plan/'+encodeURIComponent(planId));
+        this.probeInstallAgentType = this.probeInstallPlan.agent_type || 'codex';
+        this.probeInstallCollectorUrl = this.probeInstallPlan.collector_url || 'http://127.0.0.1:4318/v1/logs';
+        this.probeInstallConfirmation = '';
+        this.probeMutationAcknowledged = false;
+        await this.loadProbeCapability();
+      } catch(e) { this.apiError = this.describeError(e); }
+    },
+    async runProbeLifecycle(action) {
+      const plan=this.probeInstallPlan||{};
+      if(!plan.id) return;
+      const mutating=['apply','disable','repair','uninstall','rollback'].includes(action);
+      if(mutating && (this.probeInstallConfirmation!==plan.plan_id || !this.probeMutationAcknowledged)) {
+        this.apiError='必须输入完整 plan_id 并确认允许修改 Hermes 探针配置。';
+        return;
+      }
+      this.opsBusy=true;
+      this.apiError='';
+      try {
+        const body=mutating?{confirm_plan_id:this.probeInstallConfirmation,acknowledge_agent_config_change:true}:{};
+        const response=await this.apiPost('/api/v1/probes/install-plan/'+encodeURIComponent(plan.id)+'/'+encodeURIComponent(action),body);
+        this.probeLifecycleResult=response;
+        if(response.plan) this.probeInstallPlan=response.plan;
+        this.probeInstallConfirmation='';
+        this.probeMutationAcknowledged=false;
+        await this.loadProbeCapability();
+        await this.loadProbes();
+        this.toastMsg('探针操作完成：'+action);
+      } catch(e) { this.apiError=this.describeError(e); }
+      this.opsBusy=false;
     },
     async apiGet(path){ return this.apiRequest(path); },
     async apiPost(path, body){ return this.apiRequest(path, {method:'POST', body:JSON.stringify(body||{})}); },
     async apiPatch(path, body){ return this.apiRequest(path, {method:'PATCH', body:JSON.stringify(body||{})}); },
     async apiPut(path, body){ return this.apiRequest(path, {method:'PUT', body:JSON.stringify(body||{})}); },
     async apiRequest(path, options){
-      const res=await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, options||{}));
-      const text=await res.text();
-      const data=text ? JSON.parse(text) : {};
-      if(!res.ok) throw data;
-      return data;
+      return window.AssessmentRuntime.request(path, options);
     },
-    describeError(err){ return err && err.error ? err.error.message+' · '+err.error.correlation_id : String(err && err.message || err || '未知错误'); },
+    describeError(err){ return window.AssessmentRuntime.describeError(err); },
 
     formatTime(t){ if(!t) return '-'; try{ const d=new Date(t); if(isNaN(d.getTime())) return String(t).slice(0,19); const pad=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); }catch(e){ return String(t).slice(0,19); } },
 
@@ -2414,7 +2469,7 @@ data(){
         target_path:this.form.targetPath,
         additional_paths:this.form.discoveryPaths,
         adapter:this.form.adapter,
-        profile_id:'standard-complete@4.1.0'
+        profile_id:'standard-complete@4.2.10'
       }, this.scanOptionPayload('assessment'), extra || {});
     },
     async nextWizardStep(){
@@ -2757,6 +2812,16 @@ data(){
       this.quickBusy=true; this.apiError='';
       try {
         const res = await this.apiPost('/api/v1/quick-scans', this.quickPayload());
+        if(res.task && (res.status_code===202 || res.status==='QUEUED')){
+          const queued=res.task;
+          this.mergeRecords('tasks', [queued]);
+          this.selectedTask=queued;
+          this.go('task-detail');
+          await this.refreshTaskEvents(queued, true);
+          this.toastMsg('快速扫描已进入受控队列：'+queued.id);
+          this.pollQueuedTask(queued.id);
+          return;
+        }
         this.mergeScanResponse(res);
         if(res.redteam_run){ this.mergeRecords('redteamRuns', [res.redteam_run]); this.selectedRedteamRun=res.redteam_run; }
         const t = res.assessment;
@@ -2765,6 +2830,30 @@ data(){
         this.mergeRecords('tasks', [t]); this.selectedTask=t; this.go('task-detail'); this.toastMsg(res.redteam_run?'快速扫描与本地 dry-run 红队已完成':'快速扫描已完成本地只读分析');
       } catch (err) { this.apiError = this.describeError(err); }
       finally { this.quickBusy=false; }
+    },
+    async pollQueuedTask(taskId){
+      const token=String(taskId||'')+':'+Date.now();
+      this._activeTaskPoll=token;
+      const terminal=new Set(['COMPLETED','PARTIAL_COMPLETED','FAILED','CANCELLED','WAITING_CONSENT']);
+      for(let attempt=0;attempt<300 && this._activeTaskPoll===token;attempt++){
+        await new Promise(resolve=>setTimeout(resolve,1000));
+        try{
+          const res=await this.apiGet('/api/v1/tasks/'+encodeURIComponent(taskId));
+          const task=res.item || res.task;
+          if(!task || !task.id) continue;
+          this.mergeRecords('tasks', [task]);
+          if(this.selectedTask && this.selectedTask.id===taskId) this.selectedTask=task;
+          if(attempt%2===0) await this.refreshTaskEvents(task, true);
+          if(terminal.has(task.state_code || task.stage)){
+            await this.refreshQuickHistory({silent:true});
+            this.toastMsg((task.state_code==='COMPLETED'?'快速扫描完成':'快速扫描状态更新')+'：'+(task.state_code||task.status));
+            break;
+          }
+        }catch(err){
+          if(attempt>5){ this.apiError=this.describeError(err); break; }
+        }
+      }
+      if(this._activeTaskPoll===token) this._activeTaskPoll='';
     },
     async runDiscovery(){
       if(this.discoveryRunning){ this.discoveryRunning=false; this.toastMsg('发现已停止并保留当前命中'); return; }
@@ -3418,6 +3507,33 @@ data(){
         await this.loadFindingHistory(this.selectedFinding, {silent:true});
         this.toastMsg('误报候选已写入 SQLite，等待人工复核');
       } catch (err) { this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async suppressFinding(finding){
+      if(!finding || !finding.id) return;
+      const reason=String(this.findingSuppressionReason||'').trim();
+      const days=Math.max(1,Math.min(365,Number(this.findingSuppressionDays)||30));
+      if(reason.length<4){ this.apiError='抑制理由至少需要 4 个字符。'; return; }
+      this.opsBusy=true; this.apiError='';
+      try {
+        const expiresAt=new Date(Date.now()+days*86400000).toISOString();
+        const res=await this.apiPost('/api/v1/findings/'+encodeURIComponent(finding.id)+'/suppress',{scope:'fingerprint',reason,expires_at:expiresAt});
+        if(res.finding){ this.mergeRecords('findings',[res.finding]); this.selectedFinding=res.finding; }
+        this.findingSuppressionReason='';
+        await this.loadFindingHistory(this.selectedFinding,{silent:true});
+        this.toastMsg('风险抑制已生效：'+days+' 天');
+      } catch(err){ this.apiError=this.describeError(err); }
+      finally { this.opsBusy=false; }
+    },
+    async revokeFindingSuppression(finding){
+      if(!finding || !finding.suppression_id) return;
+      this.opsBusy=true; this.apiError='';
+      try {
+        const res=await this.apiPost('/api/v1/finding-suppressions/'+encodeURIComponent(finding.suppression_id)+'/revoke',{reason:'本地人工撤销'});
+        if(res.finding){ this.mergeRecords('findings',[res.finding]); this.selectedFinding=res.finding; }
+        await this.loadFindingHistory(this.selectedFinding,{silent:true});
+        this.toastMsg('风险抑制已撤销');
+      } catch(err){ this.apiError=this.describeError(err); }
       finally { this.opsBusy=false; }
     },
     async retestFinding(finding){
@@ -4349,6 +4465,7 @@ data(){
     });
     prototypeApp.config.errorHandler = function(err){ showBootError('Vue 运行时错误', err && (err.stack || err.message || err)); console.error(err); };
     prototypeApp.mount('#app');
+    window.AssessmentRuntime.installAccessibility(document);
     const boot = document.getElementById('boot-status');
     if (boot) boot.remove();
   } catch (err) {

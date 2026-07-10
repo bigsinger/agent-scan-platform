@@ -8,29 +8,35 @@ import json
 import os
 import re
 import sqlite3
+import struct
 import tomllib
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import APIRouter, Body, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ..contracts import API_CONTRACTS, completeness_rows
 from ..observability.api import router as observability_router
 from ..reports import ReportRenderer
 from ..scanning import DiscoveryEngine, LocalScanEngine, PassiveGuard
+from ..scanning.jobs import cancel_scan, queue_scan, retry_scan, submit_scan
 from ..scanning.mcp_static import derive_mcp_tools, highest_mcp_risk, mcp_static_risks, sanitize_mcp_server, tool_flows
 from ..scanning.models import effective_user_scope, normalize_execution_mode, normalize_user_scope
 from ..scanning.redaction import file_digest, redact_text, safe_display_path, stable_hash
 from ..scanning.rules import analyze_text
 from ..scanning.rules import rule_catalog
-from ..store import DATA_DIR, REPO_ROOT, file_sha256, get_store, new_id, utc_now
+from ..store import ARTIFACT_ROOT, DATA_DIR, REPO_ROOT, file_sha256, get_store, new_id, utc_now
+from .maintenance import router as maintenance_router
+from .findings import router as findings_router
 
 
 router = APIRouter(prefix="/api/v1", tags=["assessment"])
 router.include_router(observability_router)
+router.include_router(maintenance_router)
+router.include_router(findings_router)
 PUBLIC_QUICK_SCAN_MODES = {"machine", "path", "mcp"}
 INTERNAL_SKILL_PATH_KEYS = {"real_path", "source_path"}
 RETEST_INPUT_LIMIT_BYTES = 512 * 1024
@@ -574,17 +580,22 @@ async def assessment_events(id: str, request: Request) -> Any:
 @router.get("/reports/{id}/download")
 async def report_download(id: str) -> Any:
     report = get_store().get_record("report", id)
+    if not report:
+        raise HTTPException(status_code=404, detail={"message": "report not found"})
     html_path = report_path(report) if report else None
     if html_path and html_path.exists():
+        if html_path.stat().st_size > 64 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail={"message": "report exceeds download limit"})
         return FileResponse(
             html_path,
             media_type="text/html; charset=utf-8",
             filename=f"{id}.html",
             headers={"Content-Disposition": f'attachment; filename="{id}.html"'},
         )
-    html = f"""<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title>{id}</title>
-    <body><h1>Agent 安全测评报告</h1><p>报告 {id} 已由本地渲染器生成。</p><p>Dry-run 红队已执行：如本报告关联 dry-run，本地规则已完成确定性复核。</p></body></html>"""
-    return HTMLResponse(html, headers={"Content-Disposition": f'attachment; filename="{id}.html"'})
+    raise HTTPException(
+        status_code=409,
+        detail={"message": "report artifact is not ready", "report_id": id, "status": report.get("status")},
+    )
 
 
 @router.get("/reports/{id}/package")
@@ -952,10 +963,9 @@ async def generic_get(resource: str, request: Request) -> dict:
         return export_policy_draft_package(get_store(), state, request.query_params.get("attack_path_id"))
     if path == "/embed/context":
         return embed_context(get_store(), state)
-
-    v429_read = v429_read_route(store, state, path, request)
-    if v429_read is not None:
-        return v429_read
+    supplemental = supplemental_read_route(store, state, path, request)
+    if supplemental is not None:
+        return supplemental
 
     item_result = get_item_route(path, state)
     if item_result is not None:
@@ -969,22 +979,28 @@ async def generic_get(resource: str, request: Request) -> dict:
         items = enrich_items(key, combine_items(real_items, state.get(key, [])))
         return page(items, request)
 
-    unsupported_read_operation(get_store(), path)
+    reject_unknown_read_route(get_store(), path)
 
 
 @router.post("/{resource:path}")
-async def generic_post(resource: str, request: Request, body: dict | None = Body(default=None)) -> dict:
-    return await handle_write("/" + resource.strip("/"), request, body or {}, method="POST")
+async def generic_post(resource: str, request: Request, response: Response, body: dict | None = Body(default=None)) -> dict:
+    result = await handle_write("/" + resource.strip("/"), request, body or {}, method="POST")
+    response.status_code = int(result.pop("_http_status", 200))
+    return result
 
 
 @router.patch("/{resource:path}")
-async def generic_patch(resource: str, request: Request, body: dict | None = Body(default=None)) -> dict:
-    return await handle_write("/" + resource.strip("/"), request, body or {}, method="PATCH")
+async def generic_patch(resource: str, request: Request, response: Response, body: dict | None = Body(default=None)) -> dict:
+    result = await handle_write("/" + resource.strip("/"), request, body or {}, method="PATCH")
+    response.status_code = int(result.pop("_http_status", 200))
+    return result
 
 
 @router.put("/{resource:path}")
-async def generic_put(resource: str, request: Request, body: dict | None = Body(default=None)) -> dict:
-    return await handle_write("/" + resource.strip("/"), request, body or {}, method="PUT")
+async def generic_put(resource: str, request: Request, response: Response, body: dict | None = Body(default=None)) -> dict:
+    result = await handle_write("/" + resource.strip("/"), request, body or {}, method="PUT")
+    response.status_code = int(result.pop("_http_status", 200))
+    return result
 
 
 async def handle_write(path: str, request: Request, body: dict, method: str) -> dict:
@@ -992,9 +1008,11 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     state = store.get_state()
     result: dict[str, Any] = {"ok": True, "route": path, "method": method, "received": body}
 
-    v429_write = v429_write_route(store, state, path, body, method)
-    if v429_write is not None:
-        return {**result, **v429_write}
+    supplemental = supplemental_write_route(store, state, path, body, method, request)
+    if supplemental is not None:
+        merged = {**result, **supplemental}
+        merged["audit_event"] = store.audit_event(path_action(method, path), "api_route", path, {"body": body})
+        return merged
 
     if path == "/discovery-hits/cleanup-self-project":
         result.update(cleanup_self_project_hits(store, state, body))
@@ -1033,23 +1051,33 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     if path == "/quick-scans":
         scan_body = normalize_local_scan_payload(body)
         validate_public_quick_scan_mode(scan_body)
-        if body.get("async_scan") or body.get("execution_mode") == "async":
-            task = {
-                "id": new_id("task"),
-                "name": "Async quick scan",
-                "status": "QUEUED",
-                "stage": "QUEUED",
-                "state_code": "QUEUED",
-                "progress": 0,
-                "scan_request": scan_body,
-                "safe_mode": "local-readonly",
-                "mutates_installed_agents": False,
-                "created_at": utc_now(),
-            }
-            store.upsert_record("task", task, status="QUEUED")
-            store.upsert_record("scan_job", {**task, "id": "job_" + task["id"], "task_id": task["id"]}, status="QUEUED")
-            store.scan_event(task["id"], "task.queued", {"message": "异步扫描已进入队列", "state_code": "QUEUED"})
-            result.update({"status_code": 202, "task": task, "job": {"id": "job_" + task["id"], "task_id": task["id"], "status": "QUEUED"}, "poll": f"/api/v1/tasks/{task['id']}", "mutates_installed_agents": False})
+        async_requested = (
+            body.get("async_scan") is True
+            or body.get("execution_mode") == "async"
+            or (
+                scan_body.get("mode") == "machine"
+                and body.get("async_scan") is not False
+                and body.get("wait_for_completion") is not True
+            )
+        )
+        if async_requested:
+            queued = queue_scan(store, scan_body, auto_start=None if not body.get("defer_start") else False)
+            task, job = queued["task"], queued["job"]
+            result.update(
+                {
+                    "_http_status": 202,
+                    "status_code": 202,
+                    "status": "QUEUED",
+                    "task": task,
+                    "job": job,
+                    "deduplicated": queued.get("deduplicated", False),
+                    "poll": f"/api/v1/tasks/{task['id']}",
+                    "events": f"/api/v1/tasks/{task['id']}/events",
+                    "mutates_installed_agents": False,
+                    "stdio_mcp_started": False,
+                    "agent_runtime_started": False,
+                }
+            )
             return result
         try:
             scan = LocalScanEngine(store).run_quick_scan(scan_body)
@@ -1234,13 +1262,29 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         decision = body.get("decision") or default_decision
         result["consent"] = update_consent(store, state, consent_id, consent_status_from_decision(decision), {**body, "decision": decision})
         result["status"] = "DECIDED"
+    elif path.startswith("/tasks/") and path.endswith("/run"):
+        task_id = path.split("/")[-2]
+        task = store.get_record("task", task_id) or store.get_record("assessment", task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail={"message": "queued scan task not found"})
+        submit_scan(store, task_id)
+        result.update({"_http_status": 202, "status_code": 202, "status": "RUN_REQUESTED", "task": task, "poll": f"/api/v1/tasks/{task_id}"})
+        return result
     elif (path.startswith("/tasks/") or path.startswith("/assessments/")) and path.endswith("/cancel"):
         task_id = path.split("/")[-2]
-        result["task"] = update_task_state(store, state, task_id, "已取消", "CANCELLED")
+        result["task"] = cancel_scan(store, task_id, str(body.get("reason") or "local-user requested"))
         result["status"] = "CANCELLED"
     elif (path.startswith("/tasks/") or path.startswith("/assessments/")) and path.endswith("/retry"):
         task_id = path.split("/")[-2]
-        result["task"] = retry_task(store, state, task_id, body)
+        source = store.get_record("task", task_id) or store.get_record("assessment", task_id)
+        if source and source.get("scan_request"):
+            queued = retry_scan(store, task_id, body)
+            result["task"] = queued["task"]
+            result["job"] = queued["job"]
+            result["_http_status"] = 202
+            result["status_code"] = 202
+        else:
+            result["task"] = retry_task(store, state, task_id, body)
         result["status"] = "RETRY_QUEUED"
     elif path.startswith("/tasks/") and path.endswith("/clone"):
         task_id = path.split("/")[-2]
@@ -1253,6 +1297,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result.update(probe_agent_asset(store, state, agent_id, body))
     elif path == "/assessments/drafts":
         result["draft"] = create_assessment_draft(store, state, normalize_local_scan_payload(body))
+        result["mutates_installed_agents"] = False
     elif path == "/assessments/plan":
         plan = build_assessment_plan(normalize_local_scan_payload(body), state)
         result["plan"] = plan
@@ -1338,9 +1383,13 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         retest = create_retest(store, state, str(body.get("finding_id") or "finding-local-unspecified"), body)
         merge_state_record(state, "retests", retest)
         result["retest"] = retest
+        result["mutates_installed_agents"] = False
     elif path == "/redteam-runs":
         run = create_redteam_run(store, state, body)
         result["run"] = run
+        result["mutates_installed_agents"] = False
+        result["stdio_mcp_started"] = False
+        result["agent_runtime_started"] = False
     elif path.startswith("/redteam-runs/") and path.endswith("/stop"):
         run_id = path.split("/")[-2]
         result["run"] = update_structured_record(store, state, "redteam_run", "redteamRuns", run_id, {"status": "STOPPED", "stopped_at": utc_now()})
@@ -1439,7 +1488,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         result["policy"] = save_sandbox_policy(store, state, body)
     elif path == "/sandbox-policy/test":
         result["test"] = run_sandbox_policy_test(store, state, body)
-    elif path == "/settings" and method == "PUT":
+    elif path == "/settings" and method in {"PUT", "POST"}:
         result["settings"] = save_module_settings(store, state, body)
     elif path == "/settings/test":
         result["test"] = test_module_settings(store, state, body)
@@ -1465,7 +1514,7 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
         existing["updated_at"] = utc_now()
         store.upsert_record("finding", existing, status=str(existing.get("status") or "NEEDS_REVIEW"))
     else:
-        unsupported_write_operation(store, method, path, body)
+        reject_unknown_write_route(store, method, path, body)
 
     store.save_state(state)
     result["audit_event"] = store.audit_event(path_action(method, path), "api_route", path, {"body": body})
@@ -1489,13 +1538,13 @@ def validate_public_quick_scan_mode(body: dict) -> None:
         )
 
 
-def unsupported_write_operation(store: Any, method: str, path: str, body: dict) -> None:
+def reject_unknown_write_route(store: Any, method: str, path: str, body: dict) -> None:
     audit_event = store.audit_event(
         "unsupported." + path_action(method, path),
         "api_route",
         path,
         {
-            "status": "NOT_IMPLEMENTED",
+            "status": "REJECTED_UNKNOWN_ROUTE",
             "method": method,
             "path": path,
             "body": redacted_body_summary(body),
@@ -1503,10 +1552,10 @@ def unsupported_write_operation(store: Any, method: str, path: str, body: dict) 
         },
     )
     raise HTTPException(
-        status_code=501,
+        status_code=404,
         detail={
-            "code": "NOT_IMPLEMENTED",
-            "message": "该写操作尚未实现，系统没有执行任何动作。",
+            "code": "ROUTE_NOT_FOUND",
+            "message": "请求的写入路由不存在，系统没有执行任何动作。",
             "route": path,
             "method": method,
             "audit_event": audit_event,
@@ -1515,13 +1564,13 @@ def unsupported_write_operation(store: Any, method: str, path: str, body: dict) 
     )
 
 
-def unsupported_read_operation(store: Any, path: str) -> None:
+def reject_unknown_read_route(store: Any, path: str) -> None:
     audit_event = store.audit_event(
         "unsupported.get." + path.strip("/").replace("/", "."),
         "api_route",
         path,
         {
-            "status": "NOT_IMPLEMENTED",
+            "status": "REJECTED_UNKNOWN_ROUTE",
             "method": "GET",
             "path": path,
             "mutates_installed_agents": False,
@@ -1530,8 +1579,8 @@ def unsupported_read_operation(store: Any, path: str) -> None:
     raise HTTPException(
         status_code=404,
         detail={
-            "code": "NOT_IMPLEMENTED",
-            "message": "该读取接口尚未实现，系统没有返回伪造空数据。",
+            "code": "ROUTE_NOT_FOUND",
+            "message": "请求的读取路由不存在，系统没有返回伪造空数据。",
             "route": path,
             "method": "GET",
             "audit_event": audit_event,
@@ -1617,8 +1666,7 @@ def ingest_quick_scan_snapshot(store: Any, state: dict, body: dict, raw_content:
     store.upsert_record("assessment", assessment, status="RUNNING")
     matches = analyze_text(synthetic_path, raw_content, REPO_ROOT)
     engine = LocalScanEngine(store)
-    evidence = [engine._evidence_from_match(assessment["id"], match, REPO_ROOT) for match in matches]
-    findings = engine._findings_from_matches(assessment, matches, evidence)
+    findings, evidence = engine._rollup_matches(assessment, matches, REPO_ROOT)
     store.upsert_records("evidence", evidence, status="READY")
     store.upsert_records("finding", findings, status="NEEDS_REVIEW")
     p0 = len([finding for finding in findings if "P0" in str(finding.get("severity")) or "严重" in str(finding.get("severity"))])
@@ -2002,11 +2050,39 @@ def load_acceptance_result() -> dict:
     return result
 
 
+def _acceptance_png_info(path: Path) -> tuple[int, int, int]:
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        if handle.read(8) != bytes([137, 80, 78, 71, 13, 10, 26, 10]):
+            raise ValueError("invalid_png_signature")
+        length = struct.unpack(">I", handle.read(4))[0]
+        if handle.read(4) != b"IHDR" or length < 8:
+            raise ValueError("invalid_png_ihdr")
+        width, height = struct.unpack(">II", handle.read(8))
+    return width, height, size
+
+
 def validate_acceptance_page(page_id: str, evidence: dict) -> tuple[str, dict]:
     result = load_acceptance_result()
     details = {"acceptance_status": result.get("status"), "acceptance_path": result.get("_path") or result.get("path")}
     if result.get("status") not in {"PASS", "PASSED"}:
         return "NOT_ASSERTED", details
+    if result.get("schema") != "agent-security-enterprise-e2e-result@4.2.10" or result.get("generated_from") != "pytest-junit-xml" or result.get("exit_code") != 0:
+        details["reason"] = "untrusted_or_failed_result"
+        return "NOT_ASSERTED", details
+    try:
+        finished_at = datetime.fromisoformat(str(result.get("finished_at") or "").replace("Z", "+00:00"))
+        if finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - finished_at.astimezone(timezone.utc)
+        max_age = timedelta(hours=max(1, int(os.environ.get("ASSESSMENT_E2E_MAX_AGE_HOURS", "72"))))
+        if age < timedelta(minutes=-5) or age > max_age:
+            details["reason"] = "result_expired"
+            details["finished_at"] = result.get("finished_at")
+            return "STALE", details
+    except (TypeError, ValueError, OverflowError):
+        details["reason"] = "invalid_result_timestamp"
+        return "STALE", details
     if result.get("commit") != current_git_commit():
         details["reason"] = "commit_mismatch"
         details["result_commit"] = result.get("commit")
@@ -2027,6 +2103,14 @@ def validate_acceptance_page(page_id: str, evidence: dict) -> tuple[str, dict]:
         details["passed"] = sorted(passed_names)
         return "NOT_ASSERTED", details
     screenshots = result.get("screenshots") or []
+    browser_tests = tests.get("tests/browser/test_enterprise_journeys.py") or {}
+    browser_names = set(browser_tests.get("passed_tests") or [])
+    if browser_tests.get("exit_code") != 0 or any(not any(name.startswith(f"test_j{index:02d}_") for name in browser_names) for index in range(1, 9)):
+        details["reason"] = "browser_journeys_missing_or_failed"
+        return "NOT_ASSERTED", details
+    if len(screenshots) < 8:
+        details["reason"] = "browser_screenshots_missing"
+        return "NOT_ASSERTED", details
     for shot in screenshots:
         path = Path(str(shot.get("path") or ""))
         if not path.is_absolute():
@@ -2036,12 +2120,13 @@ def validate_acceptance_page(page_id: str, evidence: dict) -> tuple[str, dict]:
             details["screenshot"] = str(path)
             return "STALE", details
         try:
-            with path.open("rb") as handle:
-                if handle.read(8) != bytes([137, 80, 78, 71, 13, 10, 26, 10]):
-                    details["reason"] = "invalid_png_signature"
-                    return "STALE", details
-        except Exception:
-            details["reason"] = "screenshot_unreadable"
+            width, height, size = _acceptance_png_info(path)
+            if size < 1024 or width < 320 or height < 240:
+                raise ValueError("png_too_small")
+            if shot.get("width") not in {None, width} or shot.get("height") not in {None, height} or shot.get("size") not in {None, size}:
+                raise ValueError("png_metadata_mismatch")
+        except (OSError, ValueError, struct.error) as exc:
+            details["reason"] = str(exc) or "screenshot_unreadable"
             return "STALE", details
     details["result_commit"] = result.get("commit")
     details["assertion_count"] = result.get("assertion_count")
@@ -8270,17 +8355,21 @@ def finding_export_row(finding: dict) -> dict:
 
 
 def artifact_disk_path(artifact: dict) -> Path:
+    allowed_roots = {DATA_DIR.resolve(), ARTIFACT_ROOT.resolve()}
+
+    def allowed(path: Path) -> bool:
+        return any(path == root or root in path.parents for root in allowed_roots)
+
     absolute = artifact.get("absolute_path")
     if absolute:
         path = Path(str(absolute)).resolve()
-        if path.exists() and path.is_file():
+        if allowed(path) and path.exists() and path.is_file():
             return path
     relative_path = str(artifact.get("relative_path") or "").replace("\\", "/")
     if not relative_path:
         raise HTTPException(status_code=404, detail="Artifact path missing")
-    root = DATA_DIR.resolve()
     path = (DATA_DIR / relative_path).resolve()
-    if root != path and root not in path.parents:
+    if not allowed(path):
         raise HTTPException(status_code=400, detail="Artifact path outside data directory")
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Artifact file not found")
@@ -8289,6 +8378,8 @@ def artifact_disk_path(artifact: dict) -> Path:
 
 def artifact_file_response(artifact: dict, filename: str | None = None) -> FileResponse:
     path = artifact_disk_path(artifact)
+    if path.stat().st_size > 64 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail={"message": "artifact exceeds download limit"})
     return FileResponse(
         path,
         media_type=str(artifact.get("content_type") or "application/octet-stream"),
@@ -9549,7 +9640,7 @@ def normalize_assessment_profile(values: dict | None) -> dict:
         "timeout_seconds": coerce_positive_int(values.get("timeout_seconds"), default=7200),
         "evidence_redaction": str(values.get("evidence_redaction") or "structured"),
         "raw_sensitive_evidence": str(values.get("raw_sensitive_evidence") or "do-not-store"),
-        "version": str(values.get("version") or "4.1.0-draft"),
+        "version": str(values.get("version") or "4.2.10-draft"),
         "status": str(values.get("status") or "DRAFT"),
         "source_profile_id": values.get("source_profile_id", ""),
         "mutates_installed_agents": False,
@@ -11933,23 +12024,23 @@ def default_runtime_plan(state: dict) -> dict:
 
 
 
-def v429_artifact(store: Any, kind: str, payload: dict, suffix: str = "json") -> dict:
-    artifact = store.write_artifact(kind, json.dumps(payload, ensure_ascii=False, indent=2), suffix=suffix, metadata={"safe_mode": "local-readonly", "v429": True})
+def supplemental_artifact(store: Any, kind: str, payload: dict, suffix: str = "json") -> dict:
+    artifact = store.write_artifact(kind, json.dumps(payload, ensure_ascii=False, indent=2), suffix=suffix, metadata={"safe_mode": "local-readonly", "compatibility_route": True})
     return {"artifact": artifact, "sha256": artifact.get("sha256"), "download": f"/api/v1/artifacts/{artifact['id']}/download"}
 
 
-def v429_read_route(store: Any, state: dict, path: str, request: Request) -> dict | None:
+def supplemental_read_route(store: Any, state: dict, path: str, request: Request) -> dict | None:
     parts = [p for p in path.split("/") if p]
     if path == "/profiles/export":
-        return v429_artifact(store, "profiles-export", {"profiles": combine_items(real_items_for_path("/profiles"), state.get("profiles", [])), "redaction": "no secrets"})
+        return supplemental_artifact(store, "profiles-export", {"profiles": combine_items(real_items_for_path("/profiles"), state.get("profiles", [])), "redaction": "no secrets"})
     if path == "/platform-embed/context":
-        return {"mode": "local-standalone", "boundary": "host-platform managed context simulated; localhost only by default", "tenant": "local", "host_platform_managed": False, "mutates_installed_agents": False}
+        return {"mode": "local-standalone", "boundary": "host-platform integration is not connected; localhost only by default", "tenant": "local", "host_platform_managed": False, "mutates_installed_agents": False}
     if path == "/api-debug/catalog":
         return {"routes": sorted(LIST_KEYS.keys()), "safe_mode": "local-readonly", "correlation_id": new_id("cid")}
     if path == "/sqlite":
         return {"item": store.database_status(), "safe_mode": "local-readonly"}
     if path == "/completeness/export":
-        return v429_artifact(store, "completeness-export", {"summary": completeness_summary(completeness_runtime_rows()), "items": completeness_runtime_rows()})
+        return supplemental_artifact(store, "completeness-export", {"summary": completeness_summary(completeness_runtime_rows()), "items": completeness_runtime_rows()})
     if len(parts) >= 3 and parts[0] == "assessments" and parts[1] == "drafts":
         item = store.get_record("assessment", parts[2]) or {"id": parts[2], "status": "DRAFT", "mutates_installed_agents": False}
         return {"item": item, "draft": item, "mutates_installed_agents": False}
@@ -11957,23 +12048,19 @@ def v429_read_route(store: Any, state: dict, path: str, request: Request) -> dic
         return page(store.list_scan_events(parts[1]), request)
     if len(parts) >= 3 and parts[0] == "evidence" and parts[2] == "export":
         item = store.get_record("evidence", parts[1]) or {"id": parts[1]}
-        return v429_artifact(store, "evidence-export", {"evidence": item, "redaction_policy": "secret values redacted", "source_chain": [parts[1]]})
+        return supplemental_artifact(store, "evidence-export", {"evidence": item, "redaction_policy": "secret values redacted", "source_chain": [parts[1]]})
     if len(parts) >= 3 and parts[0] == "reports" and parts[2] == "delivery-package":
         report = store.get_record("report", parts[1]) or {"id": parts[1]}
-        return {"manifest": {"report_id": parts[1], "redaction_summary": "no raw secrets", "hash_manifest": True}, **v429_artifact(store, "delivery-package", {"report": report, "findings": store.list_records("finding", limit=50), "evidence": store.list_records("evidence", limit=50)})}
+        return {"manifest": {"report_id": parts[1], "redaction_summary": "no raw secrets", "hash_manifest": True}, **supplemental_artifact(store, "delivery-package", {"report": report, "findings": store.list_records("finding", limit=50), "evidence": store.list_records("evidence", limit=50)})}
     if len(parts) >= 2 and parts[0] in {"rules", "scanners"} and len(parts) == 3 and parts[2] == "export":
         item = store.get_record("rule" if parts[0] == "rules" else "scanner_plugin", parts[1]) or {"id": parts[1]}
-        return v429_artifact(store, f"{parts[0]}-export", {"item": item})
+        return supplemental_artifact(store, f"{parts[0]}-export", {"item": item})
     return None
 
 
-def v429_write_route(store: Any, state: dict, path: str, body: dict, method: str) -> dict | None:
+def supplemental_write_route(store: Any, state: dict, path: str, body: dict, method: str, request: Request) -> dict | None:
     parts = [p for p in path.split("/") if p]
     now = utc_now()
-    if path == "/assessments/drafts":
-        draft = {"id": new_id("draft"), "name": body.get("name") or "Assessment Draft", "target": body.get("target"), "status": "DRAFT", "stage": "DRAFT", "mode": body.get("mode") or "path", "safe_mode": "local-readonly", "mutates_installed_agents": False, "remote_analysis": False, "remote_analysis_requested": bool(body.get("remote_analysis")), "cloud_analysis_status": "OPTIONAL_DISABLED" if body.get("remote_analysis") else "DISABLED", "scan_options": local_scan_boundary(body)["scan_options"], "created_at": now}
-        store.upsert_record("assessment", draft, status="DRAFT")
-        return {"draft": draft, "item": draft, "mutates_installed_agents": False}
     if len(parts) >= 4 and parts[0] == "assessments" and parts[1] == "drafts" and parts[3] in {"validate", "start"}:
         draft = store.get_record("assessment", parts[2]) or {"id": parts[2], "status": "DRAFT"}
         if parts[3] == "validate":
@@ -11988,15 +12075,6 @@ def v429_write_route(store: Any, state: dict, path: str, body: dict, method: str
     if path == "/tasks":
         task = {"id": new_id("task"), "name": body.get("name") or "Task", "status": body.get("status") or "QUEUED", "target": body.get("target"), "created_at": now, "safe_mode": "local-readonly"}
         store.upsert_record("task", task, status=str(task["status"])); return {"item": task, "task": task, "mutates_installed_agents": False}
-    if False and len(parts) >= 3 and parts[0] == "tasks" and parts[2] in {"cancel", "retry", "clone"}:
-        base = store.get_record("task", parts[1]) or {"id": parts[1], "name": parts[1]}
-        status = {"cancel": "CANCELLED", "retry": "QUEUED", "clone": "QUEUED"}[parts[2]]
-        item = dict(base); item["id"] = new_id("task") if parts[2] == "clone" else parts[1]; item["status"] = status; item["updated_at"] = now
-        store.upsert_record("task", item, status=status); store.audit_event(f"post.tasks.{parts[2]}", "task", item["id"], {"reason": body.get("reason"), "mutates_installed_agents": False})
-        item.setdefault("source_task_id", parts[1]); item.setdefault("retry_of", parts[1]); item.setdefault("stage", "QUEUED"); item.setdefault("state_code", "QUEUED"); item.setdefault("mutates_installed_agents", False); return {"status": "RETRY_QUEUED" if parts[2]=="retry" else status, "item": item, "task": item, "draft": {"id": item["id"], "status": "DRAFT", "stage": "DRAFT", "source_task_id": parts[1]}, "mutates_installed_agents": False}
-    if path == "/redteam-runs":
-        run = create_redteam_run(store, state, {**body, "mode": body.get("mode") or "dry-run"})
-        return {"run": run, "item": run, "mutates_installed_agents": False, "evidence": redact_text(str(body.get("input") or ""))}
     if len(parts) >= 3 and parts[0] == "findings" and parts[2] in {"accept-risk", "assign"}:
         item = store.get_record("finding", parts[1]) or {"id": parts[1]}
         item.update({"status": parts[2], "updated_at": now}); store.upsert_record("finding", item, status=parts[2]); return {"item": item, "mutates_installed_agents": False}
@@ -12006,34 +12084,25 @@ def v429_write_route(store: Any, state: dict, path: str, body: dict, method: str
     if path == "/policy-drafts":
         item = {"id": new_id("pol"), "attack_path_id": body.get("attack_path_id"), "status": "DRAFT", "created_at": now}
         store.upsert_record("policy_draft", item, status="DRAFT"); return {"item": item, "policy_draft": item, "mutates_installed_agents": False}
-    if path == "/retests":
-        item = {"id": new_id("ret"), "finding_id": body.get("finding_id"), "mode": body.get("mode") or "dry-run", "status": "COMPLETED", "diff": {"before": "open", "after": "verified"}, "created_at": now}
-        store.upsert_record("retest_run", item, status="COMPLETED"); return {"item": item, "retest": item, "mutates_installed_agents": False}
-    if False and len(parts) >= 3 and parts[0] == "rules" and parts[2] in {"test", "publish"}:
-        item = store.get_record("rule", parts[1]) or {"id": parts[1]}; item["status"] = "PUBLISHED" if parts[2] == "publish" else "TESTED"; store.upsert_record("rule", item, status=item["status"]); return {"item": item, "test": {"id": new_id("test"), "status": "PASS", "matches": [], "safe_mode": "local-deterministic", "mutates_installed_agents": False}, "matches": [], "mutates_installed_agents": False}
-    if False and len(parts) >= 3 and parts[0] == "scanners" and parts[2] == "self-test":
-        artifact = store.write_artifact("scanner-self-test", json.dumps({"scanner": parts[1], "ok": True}), suffix="json"); return {"self_test": {"id": new_id("scanrun"), "schema": "agent-security-scanner-self-test@4.1", "status": "PASS", "mode": "local-readonly", "agent_runtime_started": False, "stdio_mcp_started": False, "external_cli_executed": False, "checks": [{"id":"rule_catalog"},{"id":"rule_engine"},{"id":"sqlite"},{"id":"quick_scan_precheck"},{"id":"artifact_write"}], "artifact": artifact, "download": f"/api/v1/artifacts/{artifact['id']}/download", "artifact_id": artifact["id"], "mutates_installed_agents": False}, "artifact": artifact, "sha256": artifact.get("sha256"), "mutates_installed_agents": False}
-    if False and len(parts) >= 3 and parts[0] == "schedules" and parts[2] in {"run-now", "run-due"}:
-        job = {"id": new_id("job"), "schedule_id": parts[1], "status": "QUEUED", "created_at": now}; store.upsert_record("process_execution", job, status="QUEUED"); return {"job": job, "mutates_installed_agents": False}
-    if False and len(parts) >= 3 and parts[0] == "integrations" and parts[2] in {"test", "sync"}:
-        return {"status": "OK", "sync": {"id": new_id("sync"), "status": "PACKAGED", "subject_type": "report", "report_id": body.get("report_id"), "artifact": store.write_artifact("report-sync-package", json.dumps({"schema":"agent-security-report-sync-package@4.1","requested_report_id":body.get("report_id"),"artifacts":{"html":{"exists":True,"sha256":"demo"},"json":{"exists":True,"sha256":"demo"}},"delivery":{"delivered":False},"safe_mode":"local-readonly","mutates_installed_agents":False}), suffix="json"), "download": "", "delivered": False, "network_probe": "disabled-by-default", "mutates_installed_agents": False, "report": {"last_sync_artifact_id": "pending"}, "package": {"hash_manifest": True}}, "secret_saved": False, "mutates_installed_agents": False}
-    if path == "/settings":
-        if body.get("bind_host") == "0.0.0.0" and not body.get("host_platform_managed") and not os.environ.get("ASSESSMENT_ADMIN_TOKEN"):
-            return {"ok": False, "rejected": True, "message": "0.0.0.0 requires host_platform_managed or ASSESSMENT_ADMIN_TOKEN", "mutates_installed_agents": False}
-        base_settings = load_module_settings(store, state)
-        item = {**base_settings, "id": "settings", **body, "updated_at": now}; store.upsert_record("module_setting", item, status="ACTIVE"); errors = validate_settings(item)
-        err_list = errors if isinstance(errors, list) else errors.get("errors", [])
-        if err_list or item.get("mcp_stdio_policy") == "auto-start" or str(item.get("secret_reference", "")).startswith("sk-") or "redacted:sk" in str(item.get("secret_reference", "")):
-            raise HTTPException(status_code=422, detail={"validation_errors": err_list or [{"field":"mcp_stdio_policy","message":"unsafe settings"},{"field":"secret_reference","message":"raw secret forbidden"}]})
-        item["restart_required"] = bool(item.get("restart_required", False)); item["status"] = "ACTIVE"; item.setdefault("safe_mode", "local-readonly")
-        return {"item": item, "settings": item, "validation": errors, "mutates_installed_agents": False}
     if path.startswith("/sqlite/"):
         action = parts[1] if len(parts) > 1 else "status"
         if action == "backup":
             b = store.backup_database(); return {"backup": b, "sha256": b.get("sha256"), "mutates_installed_agents": False}
-        return {"status": "ok", "action": action, "integrity": "ok", "mutates_installed_agents": False}
+        if action == "restore-drill":
+            integrity = store.integrity_check()
+            return {"status": integrity["status"], "action": action, "integrity": integrity["result"], "dry_run": True, "mutates_installed_agents": False}
+        return None
     if path == "/api-debug/request":
-        return {"status_code": 200, "correlation_id": new_id("cid"), "response": {"ok": True}, "mutates_installed_agents": False}
+        requested_path = str(body.get("path") or "").strip()
+        requested_method = str(body.get("method") or "GET").strip().upper()
+        operation = (request.app.openapi().get("paths", {}).get(requested_path, {}) or {}).get(requested_method.lower())
+        status_code = 200 if operation else 404
+        return {
+            "status_code": status_code,
+            "correlation_id": new_id("cid"),
+            "response": {"route_registered": bool(operation), "path": requested_path, "method": requested_method},
+            "mutates_installed_agents": False,
+        }
     return None
 
 def real_items_for_path(path: str) -> list[dict]:

@@ -1162,7 +1162,7 @@
   "selectedCase": {},
   "selectedFinding": {},
   "selectedEvidence": {},
-  "planJson": "{\n  \"adapter\": \"auto-detect\",\n  \"target\": \"local-machine\",\n  \"profile\": \"standard-complete@4.1.0\",\n  \"safe_mode\": \"local-readonly\",\n  \"remote_analysis\": false,\n  \"mutates_installed_agents\": false,\n  \"stdio_mcp\": \"per-server-consent\"\n}",
+  "planJson": "{\n  \"adapter\": \"auto-detect\",\n  \"target\": \"local-machine\",\n  \"profile\": \"standard-complete@4.2.10\",\n  \"safe_mode\": \"local-readonly\",\n  \"remote_analysis\": false,\n  \"mutates_installed_agents\": false,\n  \"stdio_mcp\": \"per-server-consent\"\n}",
   "ruleYaml": "尚未选择规则。请先从规则库创建或加载本地规则。",
   "scannerManifest": "apiVersion: assessment.security/v1\nkind: ScannerManifest\nmetadata:\n  status: runtime-catalog\nspec:\n  source: runtime built-ins + SQLite scanner_plugin\n  safe_mode: local-readonly",
   "apiError": "",

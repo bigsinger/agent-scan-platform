@@ -13,8 +13,9 @@ def test_v4210_same_file_same_rule_rolls_up_occurrences(tmp_path):
     store = AssessmentStore(tmp_path / 'rollup.db'); store.initialize()
     engine = LocalScanEngine(store)
     assessment = {'id':'asm_rollup','adapter':'Local'}
-    evidence = [engine._evidence_from_match('asm_rollup', _match(i), tmp_path) for i in range(1,4)]
-    findings = engine._findings_from_matches(assessment, [_match(1), _match(2), _match(3)], evidence)
+    findings, evidence = engine._rollup_matches(assessment, [_match(1), _match(2), _match(3)], tmp_path)
     assert len(findings) == 1
+    assert len(evidence) == 1
     assert findings[0]['occurrence_count'] == 3
+    assert evidence[0]['occurrence_count'] == 3
     assert len(store.list_records('finding_instance')) == 3

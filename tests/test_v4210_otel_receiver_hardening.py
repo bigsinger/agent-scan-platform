@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import gzip
 
 from assessment.observability.receiver import create_receiver_app
 from assessment.store import AssessmentStore
@@ -30,6 +31,13 @@ def test_v4210_otel_limits_and_invalid_ids(monkeypatch, tmp_path):
     assert client.post('/v1/traces', content=too_big, headers={'content-type':'application/json'}).status_code == 413
     bad = {'resourceSpans':[{'scopeSpans':[{'spans':[{'traceId':'bad','spanId':'1'*16,'name':'bad'}]}]}]}
     assert client.post('/v1/traces', json=bad).status_code == 400
+    compressed_bomb = gzip.compress(b'{"padding":"' + b'x' * (1024 * 1024 + 1) + b'"}')
+    expanded = client.post(
+        '/v1/traces',
+        content=compressed_bomb,
+        headers={'content-type':'application/json', 'content-encoding':'gzip'},
+    )
+    assert expanded.status_code == 413
 
 
 def test_v4210_otel_retention_endpoint(monkeypatch, tmp_path):

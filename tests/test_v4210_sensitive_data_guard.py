@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from assessment.security import SensitiveDataError, SensitiveDataGuard
+from assessment.scanning.rules import analyze_text
 from assessment.store import AssessmentStore
 
 
@@ -30,3 +33,10 @@ def test_v4210_persistence_gate_sanitizes_db_and_artifacts(tmp_path):
     content = open(artifact['absolute_path'], encoding='utf-8').read()
     assert raw not in content
     assert 'REDACTED' in content
+
+
+def test_v4210_secret_pattern_does_not_corrupt_disk_related_paths_or_text():
+    benign = 'skills/acquiring-disk-images/SKILL.md explains disk-image analysis'
+    assert SensitiveDataGuard.redact_text(benign) == benign
+    matches = analyze_text(Path('acquiring-disk-images/SKILL.md'), benign, Path('.'))
+    assert all(match.rule_id != 'SECRET-KEY-001' for match in matches)

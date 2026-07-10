@@ -1,13 +1,15 @@
-"""Agent Security v4.2 — OTel HTTP Receiver 骨架.
+"""Agent Security v4.2.10 OTLP/HTTP JSON side-channel receiver.
 
 独立启动: python -m assessment.observability.receiver --host 127.0.0.1 --port 4318
 集成启动: 通过 uvicorn 挂载 FastAPI 子应用.
+
+Only OTLP/HTTP JSON is supported. Protobuf and OTLP/gRPC are intentionally not
+advertised. Prompt/result bodies are redacted before persistence.
 """
 
 from __future__ import annotations
 
 import argparse
-import gzip
 import hmac
 import json
 import logging
@@ -15,6 +17,7 @@ import os
 import re
 import threading
 import time
+import zlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,10 +31,10 @@ except ImportError:
 
 from ..store import get_store
 from .storage import (
-    insert_otel_span,
-    insert_otel_log,
-    insert_otel_metric_point,
-    insert_probe_event,
+    insert_events_batch,
+    insert_otel_logs_batch,
+    insert_otel_metric_points_batch,
+    insert_otel_spans_batch,
     migrate_observability,
     probe_event_stats,
     probe_adapter_health,
@@ -109,11 +112,28 @@ async def _read_otlp_json(request: Request) -> dict[str, Any]:
         content_type = request.headers.get("content-type", "application/json").split(";", 1)[0].strip().lower()
         if content_type not in OTLP_JSON_CONTENT_TYPES:
             raise ReceiverError(415, "OTEL_UNSUPPORTED_CONTENT_TYPE", "only OTLP/HTTP JSON is supported", "rejected")
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                parsed_length = int(content_length)
+            except ValueError as exc:
+                raise ReceiverError(400, "OTEL_INVALID_CONTENT_LENGTH", "invalid content length", "rejected") from exc
+            if parsed_length > MAX_REQUEST_BYTES:
+                raise ReceiverError(413, "OTEL_REQUEST_TOO_LARGE", "request body exceeds receiver limit", "rejected")
         raw = await request.body()
+        if len(raw) > MAX_REQUEST_BYTES:
+            raise ReceiverError(413, "OTEL_REQUEST_TOO_LARGE", "request body exceeds receiver limit", "rejected")
         if request.headers.get("content-encoding", "").lower() == "gzip":
             try:
-                raw = gzip.decompress(raw)
-            except OSError as exc:
+                decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                expanded = decompressor.decompress(raw, MAX_REQUEST_BYTES + 1)
+                if len(expanded) > MAX_REQUEST_BYTES or decompressor.unconsumed_tail:
+                    raise ReceiverError(413, "OTEL_REQUEST_TOO_LARGE", "decompressed request body exceeds receiver limit", "rejected")
+                expanded += decompressor.flush(MAX_REQUEST_BYTES + 1 - len(expanded))
+                if len(expanded) > MAX_REQUEST_BYTES:
+                    raise ReceiverError(413, "OTEL_REQUEST_TOO_LARGE", "decompressed request body exceeds receiver limit", "rejected")
+                raw = expanded
+            except zlib.error as exc:
                 raise ReceiverError(400, "OTEL_INVALID_GZIP", "invalid gzip request body", "rejected") from exc
         if len(raw) > MAX_REQUEST_BYTES:
             raise ReceiverError(413, "OTEL_REQUEST_TOO_LARGE", "request body exceeds receiver limit", "rejected")
@@ -137,6 +157,15 @@ def _validate_identifiers(items: list[dict[str, Any]], kind: str) -> None:
         span_id = item.get("spanId") or item.get("span_id")
         if span_id and not _SPAN_ID_RE.fullmatch(str(span_id)):
             raise ReceiverError(400, "OTEL_INVALID_SPAN_ID", "span ID must be 16 hexadecimal characters", f"rejected{kind.title()}s")
+        for field in ("startTimeUnixNano", "endTimeUnixNano", "timeUnixNano", "observedTimeUnixNano"):
+            value = item.get(field)
+            if value in {None, ""}:
+                continue
+            try:
+                if int(value) < 0:
+                    raise ValueError
+            except (TypeError, ValueError) as exc:
+                raise ReceiverError(400, "OTEL_INVALID_TIMESTAMP", f"{field} must be a non-negative integer", f"rejected{kind.title()}s") from exc
 
 
 def _validate_batch(items: list[dict[str, Any]], kind: str) -> None:
@@ -163,7 +192,7 @@ def create_receiver_app() -> FastAPI | None:
     """创建 OTel HTTP Receiver FastAPI 子应用."""
     if FastAPI is None:
         return None
-    app = FastAPI(title="Agent Security OTel Receiver", version="4.2.0")
+    app = FastAPI(title="Agent Security OTel Receiver", version="4.2.10")
     migrate_observability(get_store())
 
     @app.get("/healthz")
@@ -171,8 +200,9 @@ def create_receiver_app() -> FastAPI | None:
         stats = probe_event_stats(get_store())
         return {
             "status": "ok",
-            "listen": "127.0.0.1:4318",
-            "protocols": ["otlp_http_json", "normalized_json"],
+            "listen": os.environ.get("ASSESSMENT_OTEL_LISTEN", "127.0.0.1:4318"),
+            "protocols": ["otlp_http_json"],
+            "unsupported_protocols": ["otlp_http_protobuf", "otlp_grpc"],
             "receiver": {
                 "started_at": _receiver_state.get("started_at"),
                 "accepted_traces": _receiver_state["accepted_traces"],
@@ -193,13 +223,13 @@ def create_receiver_app() -> FastAPI | None:
             spans = _extract_spans_from_otlp(body)
             _validate_batch(spans, "trace")
             store = get_store()
-            generated_events = 0
+            events = []
             for span in spans:
-                insert_otel_span(store, span)
                 event = span_to_probe_event(span, span.get("resource"), span.get("scope"))
                 if event:
-                    insert_probe_event(store, event)
-                    generated_events += 1
+                    events.append(event)
+            insert_otel_spans_batch(store, spans)
+            generated_events = insert_events_batch(store, events)["accepted"]
             _receiver_state["accepted_traces"] += len(spans)
             _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             return JSONResponse({"partialSuccess": {}, "accepted": len(spans), "generated_events": generated_events}, status_code=200)
@@ -217,13 +247,15 @@ def create_receiver_app() -> FastAPI | None:
             logs = _extract_logs_from_otlp(body)
             _validate_batch(logs, "log")
             store = get_store()
+            events = []
             for log in logs:
                 body_obj = log.get("body")
                 log["body_redacted"] = str(redact_payload({"body": body_obj}).get("body"))
-                insert_otel_log(store, log)
                 event = log_to_probe_event(log, log.get("resource"), log.get("scope"))
                 if event:
-                    insert_probe_event(store, event)
+                    events.append(event)
+            insert_otel_logs_batch(store, logs)
+            insert_events_batch(store, events)
             _receiver_state["accepted_logs"] += len(logs)
             _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             return JSONResponse({"partialSuccess": {}, "accepted": len(logs)}, status_code=200)
@@ -241,8 +273,7 @@ def create_receiver_app() -> FastAPI | None:
             points = _extract_metric_points_from_otlp(body)
             _validate_batch(points, "metric")
             store = get_store()
-            for point in points:
-                insert_otel_metric_point(store, point)
+            insert_otel_metric_points_batch(store, points)
             _receiver_state["accepted_metrics"] += len(points)
             _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             return JSONResponse({"partialSuccess": {}, "accepted": len(points)}, status_code=200)
@@ -254,9 +285,15 @@ def create_receiver_app() -> FastAPI | None:
 
     @app.post("/retention")
     async def retention(request: Request):
-        body = await request.json()
-        days = int(body.get("days", 30))
-        apply = bool(body.get("apply", False))
+        try:
+            _require_loopback_or_token(request)
+            body = await request.json()
+            days = int(body.get("days", 30))
+            if days < 1 or days > 3650:
+                raise ReceiverError(422, "OTEL_INVALID_RETENTION", "retention days must be between 1 and 3650", "rejected")
+            apply = bool(body.get("apply", False))
+        except ReceiverError as exc:
+            return _receiver_error(exc.status_code, exc.code, str(exc), exc.rejected_field)
         cutoff = time.time() - days * 86400
         store = get_store()
         counts = {"probe_event": 0, "otel_span": 0, "otel_log": 0, "otel_metric_point": 0}
@@ -282,7 +319,7 @@ def create_receiver_app() -> FastAPI | None:
                 conn.commit()
         return {"dry_run": not apply, "days": days, "counts": counts, "mutates_installed_agents": False}
 
-    _receiver_state["started_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
+    _receiver_state["started_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     return app
 
 
@@ -296,7 +333,8 @@ def _extract_spans_from_otlp(body: dict[str, Any]) -> list[dict[str, Any]]:
             scope_spans = rs.get("scopeSpans", [])
             for ss in scope_spans:
                 scope = ss.get("scope", {})
-                for span in ss.get("spans", []):
+                for raw_span in ss.get("spans", []):
+                    span = dict(raw_span)
                     span["resource"] = resource
                     span["scope"] = scope
                     spans.append(span)
@@ -311,10 +349,11 @@ def _extract_logs_from_otlp(body: dict[str, Any]) -> list[dict[str, Any]]:
         resource = rl.get("resource", {})
         for sl in rl.get("scopeLogs", []):
             scope = sl.get("scope", {})
-            for rec in sl.get("logRecords", []):
-                rec["resource"] = resource
-                rec["scope"] = scope
-                logs.append(rec)
+            for raw_record in sl.get("logRecords", []):
+                record = dict(raw_record)
+                record["resource"] = resource
+                record["scope"] = scope
+                logs.append(record)
     return logs
 
 
@@ -354,6 +393,9 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=4318, help="监听端口 (默认 4318)")
     args = parser.parse_args()
+    if not _is_loopback(args.host) and not os.environ.get("ASSESSMENT_OTEL_TOKEN"):
+        parser.error("non-loopback receiver binding requires ASSESSMENT_OTEL_TOKEN")
+    os.environ["ASSESSMENT_OTEL_LISTEN"] = f"{args.host}:{args.port}"
     app = create_receiver_app()
     if app is None:
         print("ERROR: fastapi not installed")

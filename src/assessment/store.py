@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sqlite3
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -22,6 +23,12 @@ ARTIFACT_ROOT = Path(os.environ.get("ASSESSMENT_ARTIFACT_ROOT") or (DATA_DIR / "
 DB_DIR = DATA_DIR / "db"
 DB_PATH = Path(os.environ.get("ASSESSMENT_DB_PATH") or (DB_DIR / "app.db"))
 SEED_PATH = PACKAGE_ROOT / "static" / "assessment" / "seed.json"
+MIGRATION_DIR = PACKAGE_ROOT / "persistence" / "migrations"
+AUDIT_CORRELATION_ID: ContextVar[str] = ContextVar("assessment_audit_correlation_id", default="")
+
+
+def set_audit_correlation_id(value: str) -> None:
+    AUDIT_CORRELATION_ID.set(str(value or ""))
 
 
 RUNTIME_SEED_LIST_KEYS = {
@@ -94,6 +101,7 @@ PROTOTYPE_RUNTIME_TABLES = [
     "task_stage",
     "task_event",
     "scan_stage",
+    "scan_file_cache",
     "scan_job",
     "mcp_consent",
     "consent_request",
@@ -113,6 +121,7 @@ PROTOTYPE_RUNTIME_TABLES = [
     "redteam_message",
     "finding",
     "finding_instance",
+    "finding_suppression",
     "evidence",
     "artifact",
     "attack_path",
@@ -204,6 +213,7 @@ GENERIC_TABLES = [
     "task_stage",
     "task_event",
     "scan_stage",
+    "scan_file_cache",
     "scan_job",
     "mcp_consent",
     "consent_request",
@@ -234,6 +244,7 @@ GENERIC_TABLES = [
     "payload_template",
     "finding",
     "finding_instance",
+    "finding_suppression",
     "evidence",
     "artifact",
     "attack_path",
@@ -279,16 +290,89 @@ class AssessmentStore:
     def initialize(self) -> None:
         for directory in [
             DB_DIR,
+            self.db_path.parent,
             ARTIFACT_ROOT,
             DATA_DIR / "work",
             DATA_DIR / "reports",
             DATA_DIR / "backups",
         ]:
             directory.mkdir(parents=True, exist_ok=True)
+        database_preexisted = self.db_path.is_file() and self.db_path.stat().st_size > 0
         with self.connect() as conn:
+            self._apply_schema_migrations(conn, backup_existing=database_preexisted)
             self._create_schema(conn)
             self._purge_prototype_runtime_records(conn)
             self._seed_if_needed(conn)
+
+    def _apply_schema_migrations(self, conn: sqlite3.Connection, *, backup_existing: bool) -> None:
+        migration_files = sorted(MIGRATION_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+        if not migration_files:
+            raise RuntimeError(f"schema migrations are missing: {MIGRATION_DIR}")
+        migration_table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migration'"
+        ).fetchone()
+        applied = {}
+        if migration_table_exists:
+            applied = {
+                str(row["version"]): str(row["checksum_sha256"])
+                for row in conn.execute("SELECT version, checksum_sha256 FROM schema_migration").fetchall()
+            }
+        pending: list[tuple[Path, str, str]] = []
+        for path in migration_files:
+            version = path.stem.split("_", 1)[0]
+            script = path.read_text(encoding="utf-8")
+            checksum = hashlib.sha256(script.encode("utf-8")).hexdigest()
+            if version in applied:
+                if applied[version] != checksum:
+                    raise RuntimeError(f"applied migration checksum changed: {path.name}")
+                continue
+            pending.append((path, checksum, script))
+        backup_path: Path | None = None
+        if pending and backup_existing:
+            backup_dir = self.db_path.parent / "migration-backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / f"before-{pending[0][0].stem}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.db"
+            with sqlite3.connect(backup_path) as target:
+                conn.backup(target)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migration (
+                version TEXT PRIMARY KEY,
+                checksum_sha256 TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+        for path, checksum, script in pending:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for statement in script.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        conn.execute(statement)
+                conn.execute(
+                    "INSERT INTO schema_migration(version, checksum_sha256, applied_at) VALUES (?, ?, ?)",
+                    (path.stem.split("_", 1)[0], checksum, utc_now()),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        app_metadata_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_metadata'"
+        ).fetchone()
+        if pending and app_metadata_exists:
+            conn.execute(
+                "INSERT OR REPLACE INTO app_metadata(key, value, updated_at) VALUES (?, ?, ?)",
+                ("schema_version", "4.2.10", utc_now()),
+            )
+            if backup_path:
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_metadata(key, value, updated_at) VALUES (?, ?, ?)",
+                    ("last_migration_backup", str(backup_path), utc_now()),
+                )
+            conn.commit()
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -500,7 +584,60 @@ class AssessmentStore:
         return row
 
     def upsert_records(self, table: str, records: list[dict], status: str | None = None) -> list[dict]:
-        return [self.upsert_record(table, record, status=status) for record in records]
+        if not records:
+            return []
+        self._ensure_table(table)
+        now = utc_now()
+        prepared: list[tuple[dict, str]] = []
+        for record in records:
+            current = dict(record)
+            if not current.get("id"):
+                current["id"] = new_id(table[:3])
+            row = SensitiveDataGuard.sanitize_for_persist(current)
+            row_status = status or str(row.get("status") or "ACTIVE")
+            row["status"] = row_status
+            prepared.append((row, row_status))
+        ids = [str(row["id"]) for row, _ in prepared]
+        existing: dict[str, str] = {}
+        with self._lock, self.connect() as conn:
+            for offset in range(0, len(ids), 500):
+                chunk = ids[offset : offset + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                for found in conn.execute(
+                    f"SELECT id, created_at FROM {table} WHERE id IN ({placeholders})",
+                    tuple(chunk),
+                ).fetchall():
+                    existing[str(found["id"])] = str(found["created_at"])
+            values = []
+            for row, row_status in prepared:
+                existing_created_at = existing.get(str(row["id"]))
+                if existing_created_at:
+                    row["created_at"] = existing_created_at
+                else:
+                    row.setdefault("created_at", now)
+                row["updated_at"] = now
+                values.append(
+                    (
+                        row["id"],
+                        row_status,
+                        json.dumps(row, ensure_ascii=False),
+                        row["created_at"],
+                        now,
+                    )
+                )
+            conn.executemany(
+                f"""
+                INSERT INTO {table}(id, status, data_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    status=excluded.status,
+                    data_json=excluded.data_json,
+                    updated_at=excluded.updated_at
+                """,
+                values,
+            )
+            conn.commit()
+        return [row for row, _ in prepared]
 
     def get_record(self, table: str, record_id: str) -> dict | None:
         self._ensure_table(table)
@@ -639,12 +776,16 @@ class AssessmentStore:
         payload: dict,
     ) -> dict:
         created_at = utc_now()
+        safe_payload = dict(payload)
+        correlation_id = AUDIT_CORRELATION_ID.get()
+        if correlation_id:
+            safe_payload.setdefault("correlation_id", correlation_id)
         conn.execute(
             """
             INSERT INTO audit_event(actor, action, object_type, object_id, payload_json, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            ("local-user", action, object_type, object_id, json.dumps(SensitiveDataGuard.sanitize_for_persist(payload), ensure_ascii=False), created_at),
+            ("local-user", action, object_type, object_id, json.dumps(SensitiveDataGuard.sanitize_for_persist(safe_payload), ensure_ascii=False), created_at),
         )
         seq = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         return {
@@ -658,17 +799,19 @@ class AssessmentStore:
 
     def scan_event(self, assessment_id: str, event_type: str, payload: dict, job_id: str | None = None) -> dict:
         created_at = utc_now()
+        safe_payload = SensitiveDataGuard.sanitize_for_persist(payload)
+        SensitiveDataGuard.assert_safe_to_persist(safe_payload)
         with self._lock, self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO scan_event(assessment_id, job_id, type, payload_json, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (assessment_id, job_id, event_type, json.dumps(payload, ensure_ascii=False), created_at),
+                (assessment_id, job_id, event_type, json.dumps(safe_payload, ensure_ascii=False), created_at),
             )
             seq = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             conn.commit()
-        return {"seq": seq, "assessment_id": assessment_id, "job_id": job_id, "type": event_type, "payload": payload, "created_at": created_at}
+        return {"seq": seq, "assessment_id": assessment_id, "job_id": job_id, "type": event_type, "payload": safe_payload, "created_at": created_at}
 
     def database_status(self) -> dict:
         with self.connect() as conn:

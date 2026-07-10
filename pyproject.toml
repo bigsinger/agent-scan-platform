@@ -16,7 +16,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-assessment = ["static/**/*"]
+assessment = ["static/**/*", "persistence/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -16,13 +16,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from ..common.emitter import emit_normalized_event
+from ...security import SensitiveDataGuard
 from ...store import new_id, utc_now
 
 
@@ -117,9 +121,9 @@ def parse_hook_event(hook_name: str, payload: dict[str, Any]) -> dict[str, Any] 
         "redaction_status": "redacted",
         "payload": {
             "hook": hook_name,
-            "input_preview": input_text[:200],
-            "output_preview": output_text[:200],
-            "error": error_text[:200] if error_text else None,
+            "input_preview": SensitiveDataGuard.redact_text(input_text, max_len=200),
+            "output_preview": SensitiveDataGuard.redact_text(output_text, max_len=200),
+            "error": SensitiveDataGuard.redact_text(error_text, max_len=200) if error_text else None,
         },
     }
 
@@ -129,98 +133,186 @@ def parse_hook_event(hook_name: str, payload: dict[str, Any]) -> dict[str, Any] 
 # ── Hermes plugin 脚本生成 ───────────────────────────────────
 
 def generate_hermes_plugin_code() -> str:
-    """生成 Hermes 探针 plugin Python 代码.
+    """Generate a real Hermes user plugin using the v0.18 register(ctx) API."""
+    return r'''"""Agent Security observer for Hermes. Generated, observe-only and fail-open."""
+from __future__ import annotations
 
-    该 plugin 注册到 Hermes 的 hook 生命周期,
-    采集事件后通过 emitter 上报到 Collector.
-    """
-    return '''"""
-Hermes Security Probe Plugin — 自动生成, 只读上报, fail-open.
-
-在 Hermes 配置中注册:
-  hooks:
-    probe_plugin:
-      module: "hermes_probe_plugin"
-      enabled: true
-"""
-
-import hashlib, json, os
-from uuid import uuid4
+import hashlib
+import json
+import os
+import queue
+import re
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.request import Request, urlopen
+from uuid import uuid4
 
-try:
-    from hermes_sdk import register_hook
-except ImportError:
-    register_hook = None
-
-COLLECTOR_URL = "http://127.0.0.1:8000/api/v1/probes/events"
-
-def _emit(event: dict) -> None:
-    """发送事件到 Collector, fail-open."""
+def _collector_endpoint():
+    configured = os.environ.get("AGENT_SCAN_OTLP_ENDPOINT", "").strip()
+    if configured:
+        return configured
     try:
-        import urllib.request
-        data = json.dumps({"events": [event]}).encode()
-        req = urllib.request.Request(
-            COLLECTOR_URL, data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=0.5)
+        state = json.loads(Path(__file__).with_name("install-state.json").read_text(encoding="utf-8"))
+        configured = str(state.get("collector_url") or "").strip()
     except Exception:
-        try:
-            buffer = Path.home() / ".hermes" / "probe_buffer.jsonl"
-            buffer.parent.mkdir(parents=True, exist_ok=True)
-            with open(buffer, "a") as f:
-                f.write(json.dumps(event) + "\\n")
-        except Exception:
-            pass
+        configured = ""
+    return configured or "http://127.0.0.1:4318/v1/logs"
 
-def _build_event(hook_name: str, payload: dict) -> dict:
-    tool_name = str(payload.get("tool_name", payload.get("tool", "")))
-    event = {
-        "event_id": "probe_" + uuid4().hex[:12],
-        "event_type": f"agent.{hook_name.replace('_', '.')}",
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z",
+
+ENDPOINT = _collector_endpoint()
+BUFFER = Path(os.environ.get("AGENT_SCAN_PROBE_BUFFER", str(Path.home() / ".agent-scan" / "hermes-probe-buffer.jsonl")))
+MAX_BUFFER_BYTES = max(4096, int(os.environ.get("AGENT_SCAN_PROBE_BUFFER_BYTES", "1048576")))
+EVENTS = (
+    "on_session_start", "on_session_end", "pre_llm_call", "post_llm_call",
+    "pre_tool_call", "post_tool_call", "subagent_start", "subagent_stop",
+)
+_EVENT_TYPES = {
+    "on_session_start": "agent.session.started", "on_session_end": "agent.session.completed",
+    "pre_llm_call": "agent.user_input.received", "post_llm_call": "agent.turn.completed",
+    "pre_tool_call": "tool.call.started", "post_tool_call": "tool.call.completed",
+    "subagent_start": "agent.subagent.started", "subagent_stop": "agent.subagent.completed",
+}
+_SECRET_PATTERNS = (
+    re.compile(r"(?<![A-Za-z0-9_])sk-[A-Za-z0-9_-]{8,}"), re.compile(r"AKIA[0-9A-Z]{16}"),
+    re.compile(r"(?i)Bearer\s+[A-Za-z0-9._-]{12,}"),
+    re.compile(r"(?i)\b(api[_-]?key|token|secret|password|cookie|session)\b\s*[:=]\s*[^\s,;]{6,}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9_]{16,}"), re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
+)
+_queue = queue.Queue(maxsize=2048)
+_start_lock = threading.Lock()
+_worker_started = False
+
+
+def _redact(value):
+    text = str(value or "").replace("\x00", "")
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("<REDACTED>", text)
+    return text[:200]
+
+
+def _text(value):
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+    except Exception:
+        return type(value).__name__
+
+
+def _build_event(hook_name, kwargs):
+    tool_name = str(kwargs.get("tool_name") or kwargs.get("name") or "")
+    raw_input = _text(kwargs.get("user_message") or kwargs.get("tool_input") or kwargs.get("request") or "")
+    raw_output = _text(kwargs.get("result") or kwargs.get("response") or kwargs.get("error") or "")
+    return {
+        "event_id": "hermes_" + uuid4().hex[:20],
+        "event_type": _EVENT_TYPES.get(hook_name, "agent.event"),
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source_agent": "hermes",
-        "adapter_id": "hermes-plugin-local",
-        "session_id": payload.get("session_id", ""),
-        "turn_id": payload.get("turn_id", ""),
+        "adapter_id": "hermes-user-plugin-v4.2.10",
+        "session_id": str(kwargs.get("session_id") or ""),
+        "turn_id": str(kwargs.get("turn_id") or ""),
+        "tool_call_id": str(kwargs.get("tool_call_id") or ""),
         "tool_name": tool_name,
-        "tool_type": "mcp" if tool_name.startswith("mcp_") else "shell" if tool_name.lower() in {"bash","shell"} else "builtin",
-        "phase": "start" if hook_name.startswith("pre_") else "complete",
-        "status": "ok",
-        "redaction_status": "redacted",
-        "payload": {"hook": hook_name},
+        "tool_type": "mcp" if tool_name.startswith("mcp_") else "shell" if tool_name.lower() in {"terminal", "bash", "shell", "powershell"} else "builtin",
+        "phase": "start" if hook_name.startswith(("pre_", "on_session_start", "subagent_start")) else "complete",
+        "status": "error" if kwargs.get("error") else "ok",
+        "input_size": len(raw_input),
+        "output_size": len(raw_output),
+        "input_hash": hashlib.sha256(raw_input.encode("utf-8", errors="replace")).hexdigest(),
+        "output_hash": hashlib.sha256(raw_output.encode("utf-8", errors="replace")).hexdigest(),
+        "redaction_status": "redacted-preview",
+        "payload": {"hook": hook_name, "input_preview": _redact(raw_input), "output_preview": _redact(raw_output)},
     }
-    if tool_name.startswith("mcp_"):
-        parts = tool_name.split("_", 2)
-        if len(parts) >= 3:
-            event["mcp_server"] = parts[1]
-            event["mcp_tool"] = parts[2]
-    return event
 
-if register_hook:
-    @register_hook("pre_llm_call")
-    def on_pre_llm(ctx):
-        _emit(_build_event("pre_llm_call", ctx or {}))
-        return ctx
 
-    @register_hook("post_llm_call")
-    def on_post_llm(ctx):
-        _emit(_build_event("post_llm_call", ctx or {}))
-        return ctx
+def _otlp_payload(event):
+    attrs = []
+    for key, value in {
+        "agent.event_type": event["event_type"], "agent.name": "hermes",
+        "agent.session_id": event["session_id"], "agent.turn_id": event["turn_id"],
+        "agent.tool_call_id": event["tool_call_id"], "agent.tool_name": event["tool_name"],
+        "agent.tool_type": event["tool_type"], "agent.phase": event["phase"], "agent.status": event["status"],
+    }.items():
+        attrs.append({"key": key, "value": {"stringValue": str(value)}})
+    return {"resourceLogs": [{"resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "hermes-agent"}}]}, "scopeLogs": [{"scope": {"name": "agent-security-observer", "version": "4.2.10"}, "logRecords": [{"timeUnixNano": str(time.time_ns()), "severityText": "INFO", "body": {"stringValue": json.dumps(event, ensure_ascii=False, separators=(",", ":"))}, "attributes": attrs}]}]}]}
 
-    @register_hook("pre_tool_call")
-    def on_pre_tool(ctx):
-        _emit(_build_event("pre_tool_call", ctx or {}))
-        return ctx
 
-    @register_hook("post_tool_call")
-    def on_post_tool(ctx):
-        _emit(_build_event("post_tool_call", ctx or {}))
-        return ctx
+def _buffer(event):
+    try:
+        BUFFER.parent.mkdir(parents=True, exist_ok=True)
+        if BUFFER.exists() and BUFFER.stat().st_size >= MAX_BUFFER_BYTES:
+            rotated = BUFFER.with_name(BUFFER.name + ".1")
+            rotated.unlink(missing_ok=True)
+            BUFFER.replace(rotated)
+        with BUFFER.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+        try:
+            os.chmod(BUFFER, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        pass
+
+
+def _worker():
+    while True:
+        event = _queue.get()
+        try:
+            data = json.dumps(_otlp_payload(event), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            request = Request(ENDPOINT, data=data, headers={"Content-Type": "application/json"}, method="POST")
+            with urlopen(request, timeout=0.2):
+                pass
+        except Exception:
+            _buffer(event)
+        finally:
+            _queue.task_done()
+
+
+def _ensure_worker():
+    global _worker_started
+    if _worker_started:
+        return
+    with _start_lock:
+        if not _worker_started:
+            threading.Thread(target=_worker, name="agent-security-hermes-observer", daemon=True).start()
+            _worker_started = True
+
+
+def _observe(hook_name, kwargs):
+    try:
+        _ensure_worker()
+        _queue.put_nowait(_build_event(hook_name, kwargs))
+    except Exception:
+        pass
+    return None
+
+
+def register(ctx):
+    for event_name in EVENTS:
+        def callback(_event_name=event_name, **kwargs):
+            return _observe(_event_name, kwargs)
+        callback.__name__ = "observe_" + event_name
+        ctx.register_hook(event_name, callback)
 '''
+
+
+def generate_hermes_plugin_manifest() -> str:
+    return """name: agent-scan-observer
+version: \"4.2.10\"
+description: \"Observe-only OTLP/HTTP JSON telemetry for Agent Security Assessment.\"
+author: agent-scan-platform
+hooks:
+  - on_session_start
+  - on_session_end
+  - pre_llm_call
+  - post_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - subagent_start
+  - subagent_stop
+"""
 
 
 # ── Install Plan 与能力生命周期 ────────────────────────────────
@@ -228,7 +320,17 @@ if register_hook:
 PROBE_MARKER_BEGIN = "# agent-scan-platform hermes probe begin"
 PROBE_MARKER_END = "# agent-scan-platform hermes probe end"
 PROBE_DISABLED_MARKER = "# agent-scan-platform hermes probe disabled"
-PROBE_HOOK_EVENTS = ("pre_llm_call", "post_llm_call", "pre_tool_call", "post_tool_call")
+PROBE_PLUGIN_NAME = "agent-scan-observer"
+PROBE_HOOK_EVENTS = (
+    "on_session_start",
+    "on_session_end",
+    "pre_llm_call",
+    "post_llm_call",
+    "pre_tool_call",
+    "post_tool_call",
+    "subagent_start",
+    "subagent_stop",
+)
 
 
 def _default_command_runner(command: list[str]) -> tuple[int, str, str]:
@@ -236,7 +338,7 @@ def _default_command_runner(command: list[str]) -> tuple[int, str, str]:
     import subprocess
 
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=2, check=False)
+        completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2, check=False)
         return completed.returncode, completed.stdout or "", completed.stderr or ""
     except (OSError, subprocess.SubprocessError) as exc:
         return 127, "", type(exc).__name__
@@ -250,6 +352,55 @@ def _probe_marker_state(config_path: Path) -> str:
     if PROBE_MARKER_BEGIN not in text or PROBE_MARKER_END not in text:
         return "absent"
     return "disabled" if PROBE_DISABLED_MARKER in text else "enabled"
+
+
+def _plugin_paths(config_path: Path) -> dict[str, Path]:
+    plugin_dir = config_path.parent / "plugins" / PROBE_PLUGIN_NAME
+    return {
+        "dir": plugin_dir,
+        "code": plugin_dir / "__init__.py",
+        "manifest": plugin_dir / "plugin.yaml",
+        "state": plugin_dir / "install-state.json",
+    }
+
+
+def _load_install_state(config_path: Path) -> dict[str, Any]:
+    path = _plugin_paths(config_path)["state"]
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _config_enables_plugin(config_path: Path) -> bool:
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return bool(re.search(r"(?s)\bplugins\s*:.*?\benabled\s*:.*?agent-scan-observer", text))
+
+
+def _run_hermes_plugin_command(config_path: Path, action: str) -> tuple[int, str, str]:
+    env = os.environ.copy()
+    env["HERMES_HOME"] = str(config_path.parent)
+    env["HERMES_CONFIG"] = str(config_path)
+    command = ["hermes", "plugins", action, PROBE_PLUGIN_NAME]
+    if action == "enable":
+        command.append("--no-allow-tool-override")
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, check=False, env=env)
+        return completed.returncode, completed.stdout or "", completed.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", type(exc).__name__
+
+
+def _strip_probe_marker(text: str) -> str:
+    start, end = text.find(PROBE_MARKER_BEGIN), text.find(PROBE_MARKER_END)
+    if start < 0 or end < start:
+        return text
+    end = text.find("\n", end)
+    return (text[:start] + (text[end + 1 :] if end >= 0 else "")).rstrip() + "\n"
 
 
 def capability_probe(
@@ -275,19 +426,33 @@ def capability_probe(
         evidence.append({"command": command, "exit_code": int(code), "stdout": str(stdout)[:1000], "stderr": str(stderr)[:500]})
 
     marker_state = _probe_marker_state(config) if config else "absent"
-    installed = marker_state == "enabled"
+    paths = _plugin_paths(config) if config else {}
+    plugin_files = bool(paths and paths["code"].is_file() and paths["manifest"].is_file())
+    configured = bool(config and _config_enables_plugin(config))
+    state = _load_install_state(config) if config else {}
+    drifted = bool(state.get("managed_config_hash") and config and _file_hash(config) != state.get("managed_config_hash"))
+    installed = marker_state == "enabled" and plugin_files and configured
+    present = marker_state != "absent" or plugin_files
+    status = "INSTALLED_HEALTHY" if installed and not drifted else "INSTALLED_DEGRADED" if present else "NOT_INSTALLED"
     return {
         "agent_type": "hermes",
-        "status": "INSTALLED_DEGRADED" if installed else "NOT_INSTALLED",
+        "status": status,
         "installed": installed,
-        "capability_status": "SUPPORTED_PARTIAL" if config else "NOT_INSTALLED",
+        "capability_status": status if present else "SUPPORTED_FULL" if config else "NOT_INSTALLED",
         "config_path": str(config) if config else None,
         "marker_state": marker_state,
+        "plugin_files_present": plugin_files,
+        "plugin_enabled": configured,
+        "drifted": drifted,
+        "plugin_dir": str(paths.get("dir")) if paths else None,
         "evidence": evidence,
         "supports_apply": bool(config),
         "supports_uninstall": bool(config),
         "supports_rollback": bool(config),
         "supports_synthetic_self_test": bool(config),
+        "transport": "otlp_http_json",
+        "observe_only": True,
+        "fail_open": True,
     }
 
 
@@ -302,7 +467,12 @@ def _plan_id(config_path: Path, before_hash: str) -> str:
     return "hermes-plan-" + hashlib.sha256(f"{config_path}:{before_hash}".encode()).hexdigest()[:16]
 
 
-def generate_install_plan(dry_run: bool = True, *, config_path: Path | str | None = None) -> dict[str, Any]:
+def generate_install_plan(
+    dry_run: bool = True,
+    *,
+    config_path: Path | str | None = None,
+    command_runner: Any | None = None,
+) -> dict[str, Any]:
     """Return a truthful, non-mutating Hermes installation plan.
 
     This function never applies a configuration change, even when callers pass
@@ -316,29 +486,31 @@ def generate_install_plan(dry_run: bool = True, *, config_path: Path | str | Non
         }
     before_hash = _file_hash(config)
     backup = config.with_name(config.name + ".agent_scan_probe_backup")
-    plugin_path = config.parent / "agent_scan_hermes_probe.py"
-    capability = capability_probe(config_path=config)
+    paths = _plugin_paths(config)
+    capability = capability_probe(config_path=config, command_runner=command_runner)
     if capability["installed"]:
         return {
-            "agent_type": "hermes", "install_status": "INSTALLED_DEGRADED", "capability_status": "INSTALLED_DEGRADED",
+            "agent_type": "hermes", "install_status": capability["status"], "capability_status": capability["status"],
             "dry_run": True, "plan_id": _plan_id(config, before_hash), "target_config_path": str(config),
             "steps": [], "rollback": [], "note": "已发现本产品探针标记；仍需运行自测确认健康状态", "capability": capability,
         }
     steps = [
         {"action": "backup", "source": str(config), "target": str(backup), "before_hash": before_hash},
-        {"action": "write_plugin", "target": str(plugin_path), "content_hash": hashlib.sha256(generate_hermes_plugin_code().encode()).hexdigest()},
-        {"action": "atomic_replace_config", "target": str(config), "diff_preview": "添加受限 agent-scan Hermes probe 配置标记；事件=" + ",".join(PROBE_HOOK_EVENTS), "timeout_ms": 200},
-        {"action": "synthetic_self_test", "description": "仅构造 probe.health 事件，不发送真实用户 Prompt"},
+        {"action": "write_plugin", "target": str(paths["code"]), "content_hash": hashlib.sha256(generate_hermes_plugin_code().encode()).hexdigest()},
+        {"action": "write_manifest", "target": str(paths["manifest"]), "content_hash": hashlib.sha256(generate_hermes_plugin_manifest().encode()).hexdigest()},
+        {"action": "hermes_plugin_enable", "command": ["hermes", "plugins", "enable", PROBE_PLUGIN_NAME, "--no-allow-tool-override"], "target": str(config), "timeout_seconds": 15},
+        {"action": "synthetic_self_test", "description": "编译插件并校验 manifest/注册事件；不发送真实用户 Prompt"},
     ]
     rollback = [
         {"action": "restore_config", "source": str(backup), "target": str(config)},
-        {"action": "delete_file", "target": str(plugin_path)},
+        {"action": "delete_directory", "target": str(paths["dir"])},
     ]
     return {
-        "agent_type": "hermes", "install_status": "SUPPORTED_PARTIAL", "capability_status": "SUPPORTED_PARTIAL",
+        "agent_type": "hermes", "install_status": "SUPPORTED_FULL", "capability_status": "SUPPORTED_FULL",
         "dry_run": True, "plan_id": _plan_id(config, before_hash), "target_config_path": str(config),
-        "backup_path": str(backup), "plugin_path": str(plugin_path), "before_hash": before_hash,
+        "backup_path": str(backup), "plugin_path": str(paths["code"]), "plugin_dir": str(paths["dir"]), "manifest_path": str(paths["manifest"]), "before_hash": before_hash,
         "steps": steps, "rollback": rollback, "hooks_exist": False, "capability": capability,
+        "observe_only": True, "fail_open": True, "callback_budget_ms": 50, "network_timeout_ms": 200,
     }
 
 
@@ -346,7 +518,7 @@ def _probe_config_block(disabled: bool = False) -> str:
     lines = [PROBE_MARKER_BEGIN]
     if disabled:
         lines.append(PROBE_DISABLED_MARKER)
-    lines.extend(["# lifecycle events: " + ", ".join(PROBE_HOOK_EVENTS), "# fail_open: true; timeout_ms: 200", PROBE_MARKER_END])
+    lines.extend(["# plugin: " + PROBE_PLUGIN_NAME, "# lifecycle events: " + ", ".join(PROBE_HOOK_EVENTS), "# observe_only: true; fail_open: true; network_timeout_ms: 200", PROBE_MARKER_END])
     return "\n".join(lines) + "\n"
 
 
@@ -364,42 +536,93 @@ def apply_install_plan(plan: dict[str, Any], *, confirmed_plan_id: str) -> dict[
     if not config.is_file() or _file_hash(config) != plan.get("before_hash"):
         raise ValueError("target configuration changed or is unavailable; regenerate the plan")
     backup = Path(plan["backup_path"])
+    plugin_dir = Path(plan["plugin_dir"])
     plugin_path = Path(plan["plugin_path"])
+    manifest_path = Path(plan["manifest_path"])
     backup.write_bytes(config.read_bytes())
     try:
-        plugin_path.write_text(generate_hermes_plugin_code(), encoding="utf-8")
-        current = config.read_text(encoding="utf-8")
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        _write_atomic(plugin_path, generate_hermes_plugin_code())
+        _write_atomic(manifest_path, generate_hermes_plugin_manifest())
+        code, _stdout, _stderr = _run_hermes_plugin_command(config, "enable")
+        if code != 0 or not _config_enables_plugin(config):
+            raise RuntimeError(f"Hermes plugin enable failed with exit code {code}")
+        current = _strip_probe_marker(config.read_text(encoding="utf-8"))
         _write_atomic(config, current.rstrip() + "\n" + _probe_config_block())
+        install_state = {
+            "schema": "agent-security-hermes-probe-install@4.2.10",
+            "plan_id": plan["plan_id"],
+            "before_hash": plan.get("before_hash"),
+            "backup_path": str(backup),
+            "collector_url": plan.get("collector_url") or "http://127.0.0.1:4318/v1/logs",
+            "enabled": True,
+            "installed_at": utc_now(),
+        }
+        install_state["managed_config_hash"] = _file_hash(config)
+        _write_atomic(_plugin_paths(config)["state"], json.dumps(install_state, ensure_ascii=False, indent=2))
+        self_test = run_synthetic_self_test(config_path=config)
+        if not self_test["passed"]:
+            raise RuntimeError("Hermes plugin synthetic self-test failed")
     except Exception:
         if backup.exists():
             _write_atomic(config, backup.read_text(encoding="utf-8"))
+        shutil.rmtree(plugin_dir, ignore_errors=True)
         raise
-    return {"status": "INSTALLED_DEGRADED", "plan_id": plan["plan_id"], "config_path": str(config), "self_test_required": True}
+    return {"status": "INSTALLED_HEALTHY", "plan_id": plan["plan_id"], "config_path": str(config), "plugin_dir": str(plugin_dir), "self_test": self_test, "observe_only": True}
 
 
 def run_synthetic_self_test(*, config_path: Path | str) -> dict[str, Any]:
-    """Validate only the installed marker and generated plugin; no agent command runs."""
+    """Compile the installed plugin and verify registration metadata without Agent data."""
     config = Path(config_path)
     state = _probe_marker_state(config)
-    return {"passed": state == "enabled", "status": "INSTALLED_DEGRADED" if state == "enabled" else "NOT_INSTALLED", "event_type": "probe.health", "synthetic": True}
+    paths = _plugin_paths(config)
+    checks = {
+        "marker_enabled": state == "enabled",
+        "plugin_enabled": _config_enables_plugin(config),
+        "code_present": paths["code"].is_file(),
+        "manifest_present": paths["manifest"].is_file(),
+        "all_events_declared": False,
+        "python_compiles": False,
+    }
+    try:
+        code = paths["code"].read_text(encoding="utf-8")
+        compile(code, str(paths["code"]), "exec")
+        checks["python_compiles"] = True
+        manifest = paths["manifest"].read_text(encoding="utf-8")
+        checks["all_events_declared"] = all(event in manifest and event in code for event in PROBE_HOOK_EVENTS)
+    except (OSError, SyntaxError):
+        pass
+    passed = all(checks.values())
+    return {"passed": passed, "status": "INSTALLED_HEALTHY" if passed else "INSTALLED_DEGRADED", "event_type": "probe.health", "synthetic": True, "checks": checks, "network_sent": False, "user_prompt_used": False}
 
 
 def disable_probe(*, config_path: Path | str) -> dict[str, Any]:
     config = Path(config_path)
-    text = config.read_text(encoding="utf-8")
-    if _probe_marker_state(config) == "enabled":
-        _write_atomic(config, text.replace(PROBE_MARKER_BEGIN, PROBE_MARKER_BEGIN + "\n" + PROBE_DISABLED_MARKER, 1))
-    return {"status": "INSTALLED_DEGRADED", "enabled": False}
+    code, _stdout, _stderr = _run_hermes_plugin_command(config, "disable")
+    if code != 0:
+        raise RuntimeError(f"Hermes plugin disable failed with exit code {code}")
+    text = _strip_probe_marker(config.read_text(encoding="utf-8"))
+    _write_atomic(config, text.rstrip() + "\n" + _probe_config_block(disabled=True))
+    state = _load_install_state(config)
+    state.update({"enabled": False, "disabled_at": utc_now(), "managed_config_hash": _file_hash(config)})
+    _write_atomic(_plugin_paths(config)["state"], json.dumps(state, ensure_ascii=False, indent=2))
+    return {"status": "INSTALLED_DEGRADED", "enabled": False, "observe_only": True}
 
 
 def uninstall_probe(*, config_path: Path | str) -> dict[str, Any]:
     config = Path(config_path)
-    text = config.read_text(encoding="utf-8")
-    start, end = text.find(PROBE_MARKER_BEGIN), text.find(PROBE_MARKER_END)
-    if start >= 0 and end >= start:
-        end = text.find("\n", end)
-        _write_atomic(config, (text[:start] + text[end + 1:]).rstrip() + "\n")
-    return {"status": "NOT_INSTALLED", "enabled": False}
+    paths = _plugin_paths(config)
+    state = _load_install_state(config)
+    backup = Path(str(state.get("backup_path") or config.with_name(config.name + ".agent_scan_probe_backup")))
+    managed = str(state.get("managed_config_hash") or "")
+    exact_restore = bool(backup.is_file() and managed and _file_hash(config) == managed)
+    if exact_restore:
+        _write_atomic(config, backup.read_text(encoding="utf-8"))
+    else:
+        _run_hermes_plugin_command(config, "disable")
+        _write_atomic(config, _strip_probe_marker(config.read_text(encoding="utf-8")))
+    shutil.rmtree(paths["dir"], ignore_errors=True)
+    return {"status": "NOT_INSTALLED", "enabled": False, "exact_config_restored": exact_restore, "drift_preserved": not exact_restore}
 
 
 def rollback_install(plan: dict[str, Any]) -> dict[str, Any]:
@@ -407,8 +630,27 @@ def rollback_install(plan: dict[str, Any]) -> dict[str, Any]:
     if not backup.is_file():
         raise ValueError("rollback backup is unavailable")
     _write_atomic(config, backup.read_text(encoding="utf-8"))
-    Path(plan["plugin_path"]).unlink(missing_ok=True)
-    return {"status": "NOT_INSTALLED", "rolled_back": True}
+    shutil.rmtree(Path(plan["plugin_dir"]), ignore_errors=True)
+    return {"status": "NOT_INSTALLED", "rolled_back": True, "exact_config_restored": True}
+
+
+def repair_probe(*, config_path: Path | str) -> dict[str, Any]:
+    config = Path(config_path)
+    paths = _plugin_paths(config)
+    if not paths["code"].is_file() or not paths["manifest"].is_file():
+        raise ValueError("installed Hermes probe files are unavailable; generate a new plan")
+    code, _stdout, _stderr = _run_hermes_plugin_command(config, "enable")
+    if code != 0:
+        raise RuntimeError(f"Hermes plugin repair failed with exit code {code}")
+    text = _strip_probe_marker(config.read_text(encoding="utf-8"))
+    _write_atomic(config, text.rstrip() + "\n" + _probe_config_block())
+    state = _load_install_state(config)
+    state.update({"enabled": True, "repaired_at": utc_now(), "managed_config_hash": _file_hash(config)})
+    _write_atomic(paths["state"], json.dumps(state, ensure_ascii=False, indent=2))
+    result = run_synthetic_self_test(config_path=config)
+    if not result["passed"]:
+        raise RuntimeError("Hermes plugin repair self-test failed")
+    return result
 
 
 # ── 辅助函数 ────────────────────────────────────────────────

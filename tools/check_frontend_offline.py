@@ -7,7 +7,10 @@ import re
 from pathlib import Path
 
 
-REMOTE_PATTERN = re.compile(r"https?://|//unpkg|//cdn|//cdnjs|fonts\.googleapis", re.IGNORECASE)
+REMOTE_PATTERN = re.compile(
+    r"https?://(?!127\.0\.0\.1(?::\d+)?(?:/|$)|localhost(?::\d+)?(?:/|$)|\[::1\](?::\d+)?(?:/|$))|//unpkg|//cdn|//cdnjs|fonts\.googleapis",
+    re.IGNORECASE,
+)
 
 
 def main() -> int:
@@ -28,6 +31,7 @@ def main() -> int:
     executable_files = [
         html_path,
         static / "assessment" / "app.js",
+        static / "assessment" / "runtime.js",
         static / "assessment" / "seed.js",
         static / "assessment" / "style.css",
     ]
@@ -43,6 +47,7 @@ def main() -> int:
         'v-cloak',
         "/static/vendor/vue.global.prod.js",
         "/static/assessment/app.js",
+        "/static/assessment/runtime.js",
         "/static/assessment/style.css",
     ]
     for token in required:

@@ -81,6 +81,36 @@ def test_v425_probe_install_plan_and_generated_code_compile():
         py_compile.compile(str(path), doraise=True)
 
 
+def test_v425_probe_event_metadata_is_redacted_and_raw_capture_is_rejected():
+    secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
+    event_id = "evt-v425-metadata-redaction"
+    response = client.post(
+        "/api/v1/probes/events",
+        json={
+            "events": [
+                {
+                    "event_id": event_id,
+                    "event_type": "tool.call.started",
+                    "source_agent": "hermes",
+                    "session_id": "session-" + secret,
+                    "tool_name": "tool-" + secret,
+                    "payload": {"input": secret},
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    stored = client.get(f"/api/v1/probes/events/{event_id}")
+    assert stored.status_code == 200
+    assert secret not in stored.text
+    assert "REDACTED" in stored.text
+    rejected = client.post(
+        "/api/v1/probes",
+        json={"id": "probe-raw-forbidden", "agent_type": "hermes", "raw_capture_enabled": True},
+    )
+    assert rejected.status_code == 422
+
+
 def test_v425_self_project_source_and_docs_are_skipped():
     result = DiscoveryEngine().discover([REPO_ROOT], scope="self-project-regression", probe_installed=False)
     paths = "\n".join(str(p).replace("\\", "/") for p in result.scan_paths)

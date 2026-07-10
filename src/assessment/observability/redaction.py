@@ -45,7 +45,7 @@ def _redact_string(text: str, max_sample: int = MAX_SAMPLE_CHARS) -> str:
     if not text:
         return ""
     # 替换常见 secret pattern
-    redacted = re.sub(r"(sk-[a-zA-Z0-9]{20,})", REDACTED_PLACEHOLDER, text)
+    redacted = re.sub(r"(?<![A-Za-z0-9_])sk-[a-zA-Z0-9]{20,}", REDACTED_PLACEHOLDER, text)
     redacted = re.sub(r"(Bearer\s+)[a-zA-Z0-9\-._~+/]+=*", r"\1" + REDACTED_PLACEHOLDER, redacted)
     redacted = re.sub(r"(password[\s\"'=:]+)[^\s\"',;}\]]{3,}", r"\1" + REDACTED_PLACEHOLDER, redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"(secret[\s\"'=:]+)[^\s\"',;}\]]{3,}", r"\1" + REDACTED_PLACEHOLDER, redacted, flags=re.IGNORECASE)

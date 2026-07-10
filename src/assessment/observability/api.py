@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 import json
+from pathlib import Path
 from urllib.request import urlopen
 from urllib.error import URLError
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
@@ -27,6 +29,7 @@ from ..observability.chain_builder import build_chains, get_chain_detail
 from ..store import get_store, new_id, utc_now
 
 router = APIRouter(tags=["observability"])
+MAX_PROBE_EVENTS_PER_BATCH = 10_000
 
 
 # ── Probe Event Ingestion ─────────────────────────────────────
@@ -37,8 +40,14 @@ async def post_probe_events(body: dict[str, Any] = Body(...)) -> dict:
     """批量上报规范化探针事件."""
     events = body.get("events", [])
     if not isinstance(events, list):
-        raise HTTPException(status_code=400, detail="'events' must be an array")
-    for event in events:
+        raise HTTPException(status_code=400, detail={"message": "'events' must be an array"})
+    if len(events) > MAX_PROBE_EVENTS_PER_BATCH:
+        raise HTTPException(status_code=413, detail={"message": "probe event batch exceeds 10000 items"})
+    normalized_events = []
+    for index, original in enumerate(events):
+        if not isinstance(original, dict):
+            raise HTTPException(status_code=422, detail={"message": f"events[{index}] must be an object"})
+        event = dict(original)
         payload = event.get("payload", {})
         if isinstance(payload, dict) and len(payload) > 0:
             event["payload"] = redact_payload(payload)
@@ -46,8 +55,9 @@ async def post_probe_events(body: dict[str, Any] = Body(...)) -> dict:
         if not event.get("input_hash") and isinstance(payload, dict):
             event["input_hash"] = stable_hash(str(payload.get("command") or payload.get("input") or ""))
         event.setdefault("redaction_status", "redacted")
+        normalized_events.append(event)
     store = get_store()
-    result = insert_events_batch(store, events)
+    result = insert_events_batch(store, normalized_events)
     store.audit_event(
         "post.probes.events", "probe_event",
         f"batch_{result['accepted']}",
@@ -96,6 +106,8 @@ async def list_probes() -> list[dict]:
 @router.post("/probes")
 async def create_probe(body: dict[str, Any] = Body(...)) -> dict:
     """注册/创建一个探针适配器."""
+    if body.get("raw_capture_enabled") is True:
+        raise HTTPException(status_code=422, detail="raw_capture_enabled is forbidden")
     store = get_store()
     record = store.upsert_record("probe_adapter", {
         "id": body.get("id") or body.get("adapter_id") or new_id("prb"),
@@ -106,7 +118,7 @@ async def create_probe(body: dict[str, Any] = Body(...)) -> dict:
         "endpoint": body.get("endpoint"),
         "enabled": int(body.get("enabled", False)),
         "fail_open": int(body.get("fail_open", True)),
-        "raw_capture_enabled": int(body.get("raw_capture_enabled", False)),
+        "raw_capture_enabled": 0,
         "last_heartbeat_at": utc_now(),
     })
     store.audit_event("post.probe", "probe_adapter", record["id"], {"agent_type": body.get("agent_type")})
@@ -389,6 +401,10 @@ async def create_install_plan(body: dict[str, Any] = Body(...)) -> dict:
     dry_run = bool(body.get("dry_run", True))
     if not dry_run:
         raise HTTPException(status_code=400, detail="v4.2.5 only supports dry_run=true install plans")
+    collector_url = str(body.get("collector_url") or "http://127.0.0.1:4318/v1/logs").strip()
+    parsed_collector = urlparse(collector_url)
+    if parsed_collector.scheme not in {"http", "https"} or parsed_collector.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise HTTPException(status_code=422, detail="collector_url must use a loopback HTTP(S) endpoint")
     if agent_type == "codex":
         from ..probes.codex.codex_probe_hook import generate_install_plan
         generated = generate_install_plan(dry_run=True)
@@ -415,7 +431,7 @@ async def create_install_plan(body: dict[str, Any] = Body(...)) -> dict:
         "agent_runtime_started": False,
         "stdio_mcp_started": False,
         "requires_confirmation": True,
-        "collector_url": body.get("collector_url") or "http://127.0.0.1:8000/api/v1/probes/events",
+        "collector_url": collector_url,
         "created_at": utc_now(),
     }
     plan = store.upsert_record("probe_install_plan", record, status="dry_run")
@@ -432,3 +448,133 @@ async def get_install_plan(plan_id: str) -> dict:
     if not plan:
         raise HTTPException(status_code=404, detail="Install plan not found")
     return plan
+
+
+def _get_probe_plan(plan_id: str) -> tuple[Any, dict[str, Any]]:
+    store = get_store()
+    plan = store.get_record("probe_install_plan", plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Install plan not found")
+    return store, plan
+
+
+def _confirm_probe_mutation(plan: dict[str, Any], body: dict[str, Any]) -> None:
+    expected = str(plan.get("plan_id") or "")
+    confirmed = str(body.get("confirm_plan_id") or "")
+    if not expected or confirmed != expected or body.get("acknowledge_agent_config_change") is not True:
+        raise HTTPException(
+            status_code=409,
+            detail="Exact confirm_plan_id and acknowledge_agent_config_change=true are required",
+        )
+
+
+def _record_probe_lifecycle(store: Any, plan: dict[str, Any], action: str, result: dict[str, Any], *, mutates: bool) -> dict[str, Any]:
+    status = str(result.get("status") or "UNKNOWN")
+    enabled = status == "INSTALLED_HEALTHY"
+    plan.update(
+        {
+            "status": status,
+            "plan_status": status.lower(),
+            "last_action": action,
+            "last_action_at": utc_now(),
+            "last_result": result,
+            "mutates_installed_agents": mutates,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+        }
+    )
+    stored_plan = store.upsert_record("probe_install_plan", plan, status=status)
+    store.upsert_record(
+        "probe_adapter",
+        {
+            "id": f"probe-{plan.get('agent_type')}",
+            "agent_type": plan.get("agent_type"),
+            "adapter_version": "4.2.10",
+            "install_status": status,
+            "mode": "plugin" if plan.get("agent_type") == "hermes" else "hook",
+            "endpoint": plan.get("collector_url"),
+            "enabled": enabled,
+            "fail_open": True,
+            "raw_capture_enabled": False,
+            "status": status,
+            "last_heartbeat_at": utc_now() if enabled else None,
+        },
+        status=status,
+    )
+    store.audit_event(
+        f"post.probes.lifecycle.{action}",
+        "probe_install_plan",
+        str(plan.get("id")),
+        {
+            "agent_type": plan.get("agent_type"),
+            "status": status,
+            "mutates_installed_agents": mutates,
+            "agent_runtime_started": False,
+            "stdio_mcp_started": False,
+        },
+    )
+    return {"plan": stored_plan, "result": result, "mutates_installed_agents": mutates, "agent_runtime_started": False, "stdio_mcp_started": False}
+
+
+@router.get("/probes/capability/{agent_type}")
+async def get_probe_capability(agent_type: str) -> dict:
+    canonical = agent_type.strip().lower()
+    if canonical == "hermes":
+        from ..probes.hermes.hermes_probe_plugin import capability_probe
+
+        return capability_probe()
+    if canonical == "codex":
+        from ..probes.codex.codex_probe_hook import capability_probe
+
+        return capability_probe()
+    raise HTTPException(status_code=404, detail="Unsupported probe adapter")
+
+
+@router.post("/probes/install-plan/{plan_id}/apply")
+async def apply_probe_plan(plan_id: str, body: dict[str, Any] = Body(...)) -> dict:
+    store, plan = _get_probe_plan(plan_id)
+    if plan.get("agent_type") != "hermes":
+        raise HTTPException(status_code=409, detail="This adapter is dry-run only and cannot be applied")
+    _confirm_probe_mutation(plan, body)
+    from ..probes.hermes.hermes_probe_plugin import apply_install_plan
+
+    try:
+        result = apply_install_plan(plan, confirmed_plan_id=str(body.get("confirm_plan_id")))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=f"Hermes probe apply failed: {type(exc).__name__}") from exc
+    return _record_probe_lifecycle(store, plan, "apply", result, mutates=True)
+
+
+@router.post("/probes/install-plan/{plan_id}/self-test")
+async def self_test_probe_plan(plan_id: str) -> dict:
+    store, plan = _get_probe_plan(plan_id)
+    if plan.get("agent_type") != "hermes" or not plan.get("target_config_path"):
+        raise HTTPException(status_code=409, detail="Synthetic self-test is unavailable for this adapter")
+    from ..probes.hermes.hermes_probe_plugin import run_synthetic_self_test
+
+    result = run_synthetic_self_test(config_path=Path(str(plan["target_config_path"])))
+    return _record_probe_lifecycle(store, plan, "self-test", result, mutates=False)
+
+
+@router.post("/probes/install-plan/{plan_id}/{action}")
+async def mutate_probe_plan(plan_id: str, action: str, body: dict[str, Any] = Body(...)) -> dict:
+    if action not in {"disable", "repair", "uninstall", "rollback"}:
+        raise HTTPException(status_code=404, detail="Unsupported probe lifecycle action")
+    store, plan = _get_probe_plan(plan_id)
+    if plan.get("agent_type") != "hermes" or not plan.get("target_config_path"):
+        raise HTTPException(status_code=409, detail="This lifecycle action is unavailable for the adapter")
+    _confirm_probe_mutation(plan, body)
+    from ..probes.hermes.hermes_probe_plugin import disable_probe, repair_probe, rollback_install, uninstall_probe
+
+    target = Path(str(plan["target_config_path"]))
+    actions = {
+        "disable": lambda: disable_probe(config_path=target),
+        "repair": lambda: repair_probe(config_path=target),
+        "uninstall": lambda: uninstall_probe(config_path=target),
+        "rollback": lambda: rollback_install(plan),
+    }
+    try:
+        result = actions[action]()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=f"Hermes probe {action} failed: {type(exc).__name__}") from exc
+    return _record_probe_lifecycle(store, plan, action, result, mutates=True)

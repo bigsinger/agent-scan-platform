@@ -65,10 +65,10 @@ def test_unknown_write_routes_do_not_fake_success(monkeypatch, tmp_path):
         json={"api_key": "sk-contracttestsecretvalue"},
     )
 
-    assert response.status_code == 501
+    assert response.status_code == 404
     body = response.json()
     detail = body["error"]["details"]
-    assert detail["code"] == "NOT_IMPLEMENTED"
+    assert detail["code"] == "ROUTE_NOT_FOUND"
     assert detail["mutates_installed_agents"] is False
     assert "PASS" not in json.dumps(body, ensure_ascii=False)
     assert "fixture" not in json.dumps(body, ensure_ascii=False)
@@ -76,7 +76,7 @@ def test_unknown_write_routes_do_not_fake_success(monkeypatch, tmp_path):
     with store.connect() as conn:
         row = conn.execute("SELECT action, payload_json FROM audit_event ORDER BY seq DESC LIMIT 1").fetchone()
     assert row["action"] == "unsupported.post.not-a-real-module.self-test"
-    assert "NOT_IMPLEMENTED" in row["payload_json"]
+    assert "REJECTED_UNKNOWN_ROUTE" in row["payload_json"]
     assert "sk-contracttestsecretvalue" not in row["payload_json"]
     assert "<REDACTED_SECRET>" in row["payload_json"]
 
@@ -91,7 +91,7 @@ def test_unknown_get_routes_do_not_fake_empty_success(monkeypatch, tmp_path):
     assert response.status_code == 404
     body = response.json()
     detail = body["error"]["details"]
-    assert detail["code"] == "NOT_IMPLEMENTED"
+    assert detail["code"] == "ROUTE_NOT_FOUND"
     assert detail["method"] == "GET"
     assert detail["route"] == "/not-a-real-module"
     assert detail["mutates_installed_agents"] is False
@@ -101,7 +101,7 @@ def test_unknown_get_routes_do_not_fake_empty_success(monkeypatch, tmp_path):
     with store.connect() as conn:
         row = conn.execute("SELECT action, payload_json FROM audit_event ORDER BY seq DESC LIMIT 1").fetchone()
     assert row["action"] == "unsupported.get.not-a-real-module"
-    assert "NOT_IMPLEMENTED" in row["payload_json"]
+    assert "REJECTED_UNKNOWN_ROUTE" in row["payload_json"]
     assert "mutates_installed_agents" in row["payload_json"]
 
 

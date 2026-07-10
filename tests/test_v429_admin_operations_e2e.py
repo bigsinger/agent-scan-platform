@@ -35,9 +35,12 @@ def test_v429_rules_scanners_schedules_integrations_operations():
 
 
 def test_v429_settings_sqlite_licenses_completeness_api_debug_and_security():
-    settings = client.post('/api/v1/settings', json={'bind_host':'0.0.0.0','host_platform_managed':False}).json()
-    assert settings.get('ok') is False or settings.get('rejected') or '0.0.0.0' in str(settings)
-    safe = client.post('/api/v1/settings', json={'bind_host':'127.0.0.1','admin_token_ref':'[REDACTED]'}).json()
+    rejected = client.post('/api/v1/settings', json={'bind_host':'0.0.0.0','host_platform_managed':False})
+    assert rejected.status_code == 422
+    assert rejected.json()['error']['validation_errors'][0]['field'] == 'bind_host'
+    safe_response = client.post('/api/v1/settings', json={'bind_host':'127.0.0.1','admin_token_ref':'[REDACTED]'})
+    assert safe_response.status_code == 200
+    safe = safe_response.json()
     assert safe.get('ok') is True
 
     assert client.get('/api/v1/sqlite').status_code == 200

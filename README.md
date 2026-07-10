@@ -1,42 +1,47 @@
-# Agent 安全测评能力模块 V4.1
+# Agent 安全测评与旁路可观测平台 v4.2.10
 
 本仓库按 `doc/agent_security_assessment_v4_1_full` 的全页面原型与 SPEC 实现为可独立运行的本地模块：
 
 - FastAPI REST/SSE API，Base Path 为 `/api/v1`。
 - SQLite 本地数据库，默认位置 `data/db/app.db`。
 - 正式前端静态资源：`/static/vendor/vue.global.prod.js`、`/static/assessment/app.js`、`/static/assessment/style.css`。
-- 48 个页面/详情视图入口与 141 个 V4.1 SPEC API 契约均可访问，并注入 FastAPI OpenAPI。
+- 58 个页面/详情视图入口与 180 个 SPEC API 契约均可访问，并注入 FastAPI OpenAPI。
 - 前端不依赖 CDN，Vue 已 vendoring 到本地并登记 `vendor-manifest.json`。
 - 本地只读扫描：Agent 发现、MCP 配置解析、Skill 扫描、规则命中、脱敏证据、HTML/JSON 报告。
 - stdio MCP Server 默认只生成审批记录，不自动启动。
 - 运行时页面只读取 SQLite 真实扫描记录；API 正常时空库展示空态，不再用原型 seed 填充假资产、假任务或假风险。
 - 旧版本遗留的已知原型 seed 记录会在启动初始化时从本系统 SQLite 清理，不触碰已安装 Agent。
 - 只读 Guard 防御监测：对已发现 Agent 配置、MCP、Skill 做哈希基线与变化检测，只写本系统 SQLite，不修改已安装 Agent。
+- 真实后台扫描任务：machine 扫描默认返回 HTTP 202，可查询阶段、事件、取消和重试；path/mcp 支持同步闭环。
+- 增量复扫复用文件分析缓存和已脱敏 Evidence；Finding 与 occurrence 分层持久化，避免相同逻辑风险重复堆叠。
+- 本地 OTel 旁路：独立 Receiver 接收 OTLP/HTTP JSON traces、logs、metrics，统一脱敏后持久化并构建行为链/异常。
+- 探针生命周期：Hermes 支持计划 ID 二次确认后的 plugin 安装、自测、禁用、修复、卸载和回滚；Codex 明确为 `DRY_RUN_ONLY`，不会猜测或写入不存在的 Hook 配置。
+- SQLite 使用 `001`-`003` 有版本、校验和、逐事务执行的 schema migration；升级前自动创建数据库备份，已应用 SQL 漂移会阻断启动。
+- 数据维护提供 retention dry-run/apply、artifact 完整性检查和引用感知 GC；真正清理前必须提交未漂移的计划 ID 和显式确认。
+- 最终交付包包含 wheel/sdist、锁文件、SBOM、OpenAPI、迁移清单、依赖漏洞审计、JUnit、浏览器截图、脱敏样例和逐文件 SHA-256。
 
 文档：
 
 - 运维部署：`doc/OPERATIONS_DEPLOYMENT.md`
 - 使用帮助：`doc/USER_GUIDE.md`
 
-运行：
+运行（同时启动主平台和本地 OTel Receiver）：
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m uvicorn assessment.main:app --reload --host 127.0.0.1 --port 8000
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1
 ```
 
 打开：
 
 ```text
 http://127.0.0.1:8000/assessment
+http://127.0.0.1:4318/healthz
 ```
 
 验证：
 
 ```powershell
-$env:PYTHONPATH='src'
-python tools/check_frontend_offline.py --html src/assessment/static/assessment/index.html --expect-pages 48
-pytest
+powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.ps1
 ```
 
 本机快速扫描：
@@ -48,7 +53,8 @@ $body = @{
   max_files = 500
 } | ConvertTo-Json
 
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
+$queued = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/quick-scans -Body $body -ContentType "application/json"
+Invoke-RestMethod "http://127.0.0.1:8000$($queued.poll)"
 ```
 
 回归样本快速扫描：
@@ -132,6 +138,17 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v1/reports/$($report.report.id
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/integrity-check
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/backup
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/sqlite/checkpoint
+```
+
+数据保留与 artifact 维护：
+
+```powershell
+$retention = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/retention/preview -Body (@{ policies = @{ events = 90; observability = 30; artifacts = 365 } } | ConvertTo-Json -Depth 5) -ContentType "application/json"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/retention/apply -Body (@{ plan_id = $retention.plan_id; policies = $retention.policies; confirmation = "APPLY_RETENTION" } | ConvertTo-Json -Depth 5) -ContentType "application/json"
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/artifacts/verify
+$gc = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/artifacts/gc-preview -Body (@{ min_age_days = 365 } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/artifacts/gc-apply -Body (@{ plan_id = $gc.plan_id; min_age_days = 365; confirmation = "APPLY_ARTIFACT_GC" } | ConvertTo-Json) -ContentType "application/json"
 ```
 
 证据包与脱敏证据下载：

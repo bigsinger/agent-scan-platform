@@ -17,6 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 from ..common.emitter import emit_normalized_event
+from ...security import SensitiveDataGuard
 from ...store import new_id, utc_now
 
 
@@ -75,9 +76,9 @@ def build_event(hook_event: str, payload: dict) -> dict:
     session_id = payload.get("sessionId") or payload.get("session_id", "")
     tool_call_id = payload.get("toolCallId") or payload.get("tool_id", "")
     tool_name = payload.get("toolName") or payload.get("name", "")
-    input_text = payload.get("input") or payload.get("text") or payload.get("command") or ""
-    output_text = payload.get("output") or payload.get("result") or ""
-    error_text = payload.get("error") or ""
+    input_text = str(payload.get("input") or payload.get("text") or payload.get("command") or "")
+    output_text = str(payload.get("output") or payload.get("result") or "")
+    error_text = str(payload.get("error") or "")
 
     event_type = {json.dumps(CODEX_HOOK_EVENTS)}.get(hook_event, hook_event)
     phase = "start" if "Pre" in hook_event or "SessionStart" in hook_event or "UserPrompt" in hook_event else \\
@@ -268,9 +269,9 @@ def parse_hook_event(hook_event: str, raw_payload: str) -> dict[str, Any]:
         "redaction_status": "redacted",
         "payload": {
             "hook_event": hook_event,
-            "input_preview": input_text[:200],
-            "output_preview": output_text[:200],
-            "error": error_text[:200] if error_text else None,
+            "input_preview": SensitiveDataGuard.redact_text(input_text, max_len=200),
+            "output_preview": SensitiveDataGuard.redact_text(output_text, max_len=200),
+            "error": SensitiveDataGuard.redact_text(error_text, max_len=200) if error_text else None,
         },
     }
 

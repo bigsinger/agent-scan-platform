@@ -1,4 +1,4 @@
-# Agent 安全测评能力模块 V4.1 使用帮助
+# Agent 安全测评与旁路可观测平台 v4.2.10 使用帮助
 
 本文档面向测评工程师、安全运营人员、企业 POC 评审人员和开发团队。系统目标是对本机或指定目录中的 Agent 配置、MCP Server、Skills、提示词和脚本进行本地只读安全测评，并生成证据和报告。
 
@@ -20,6 +20,8 @@ http://127.0.0.1:8000/assessment
 4. 点击“开始快速扫描”。
 5. 系统进入任务详情页，展示阶段、事件、P0/P1 数量。
 6. 打开“风险中心”“证据中心”“报告中心”查看结果。
+
+`machine` 模式默认创建真实后台任务并返回 HTTP 202。页面会按 `poll` 地址刷新 `QUEUED -> RUNNING_DISCOVERY -> RUNNING_STATIC -> RUNNING_REPORT -> COMPLETED/WAITING_CONSENT`，任务和 Job 可取消、失败后可重试；关闭页面不会把任务伪装成已完成。`path`、`mcp` 模式默认同步返回 Assessment、Finding、Evidence 和 Report，也可以显式请求异步执行。
 
 `tests\fixtures\sample_agent_project` 仍保留为开发和回归测试样本，不作为企业客户默认验收入口。
 
@@ -828,7 +830,7 @@ $readResponse.StatusCode
 $readResponse.Content
 ```
 
-未实现写接口返回 `501 NOT_IMPLEMENTED`，未实现读接口返回 `404 NOT_IMPLEMENTED`。两者都表示系统没有执行任何功能动作；写接口会保存脱敏后的请求摘要，读接口只记录路由、方法和安全边界。系统不会再因为路径后缀是 `self-test`、`test`、`sync`、`publish`、`run-now`，或因为读取未知集合，就返回固定成功结果或伪造空列表。
+未登记路由统一返回 `404 ROUTE_NOT_FOUND`。写请求会保存脱敏后的请求摘要，读请求只记录路由、方法和安全边界；两者都不会执行功能动作。系统不会因为路径后缀是 `self-test`、`test`、`sync`、`publish`、`run-now`，或因为读取未知集合，就返回固定成功结果或伪造空列表。
 
 ### 诊断场景
 
@@ -1481,7 +1483,7 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 
 1. 服务可在无公网环境启动。
 2. `/assessment` 页面无空白，无 CDN 依赖。
-3. 48 个页面/详情入口可打开。
+3. 58 个页面/详情入口可打开。
 4. 本机快速扫描能生成风险、证据和报告；回归样本可用于校验规则稳定性。
 5. MCP stdio Server 只生成审批，不自动启动。
 6. 证据和报告中不出现明文测试 Key。
@@ -1490,45 +1492,69 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile modul
 9. 报告能下载并离线打开。
 10. 修复后可重新扫描生成新报告。
 
-## v4.2.5 探针与可观测性验收流程
+## 17. 探针与 OTel 旁路
 
-1. 启动平台：`powershell -ExecutionPolicy Bypass -File .\start_services.ps1`。
-2. 打开 `http://127.0.0.1:8000/assessment/probes` 查看探针管理。
-3. 运行 `powershell -ExecutionPolicy Bypass -File .\send_test_event.ps1` 发送测试事件。
-4. 打开 `http://127.0.0.1:8000/assessment/behavior/chains` 点击「运行链重建」。
-5. 打开 `http://127.0.0.1:8000/assessment/behavior/anomalies` 查看异常规则结果。
-6. 打开 `http://127.0.0.1:8000/assessment/probes/install` 生成 dry-run 安装计划。
+启动平台与 Receiver：
 
-安全边界：本轮只生成 dry-run 计划，不修改 Codex/Hermes 配置，不写 hook/plugin 文件，不启动 stdio MCP，不保存 raw prompt/result。
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1
+Invoke-RestMethod http://127.0.0.1:4318/healthz
+```
 
-## v4.2.6 使用补充
+使用入口：
 
-- 探针管理：打开 `/assessment/probes`，查看探针状态和最近事件。
-- OTel Explorer：打开 `/assessment/otel/explorer`，查看 spans/logs/metrics，并从 span 进入 trace 详情。
-- 行为链：打开 `/assessment/behavior/chains`，点击「运行链重建」。重复运行是幂等的。
-- 异常分析：打开 `/assessment/behavior/anomalies`，查看 P0 规则结果；证据字段默认脱敏。
-- 报告证据：在报告预览中点击证据会打开右侧抽屉，不离开报告上下文。
-- 探针安装：打开 `/assessment/probes/install` 只生成 dry-run 安装计划；不会写入 Codex/Hermes 配置。
+- `/assessment/probes`：探针状态和最近事件。
+- `/assessment/probes/install`：能力探测、只读安装计划和生命周期操作。
+- `/assessment/otel/explorer`：spans、logs、metrics 与 trace 详情。
+- `/assessment/behavior/chains`：幂等重建行为链。
+- `/assessment/behavior/anomalies`：异常规则结果与脱敏证据。
 
-## v4.2.7 本机发现体验
+Hermes 接入流程：
 
-P04 本机发现现在使用类型化命中展示：Agent、Skill、MCP、Config 分别显示不同字段。Skill 行直接展示 Skill 名、描述、版本、文件数、脚本数、路径和风险摘要。点击名称或“详情”可打开右侧详情抽屉，关闭后保留当前筛选上下文。
+1. Agent 类型选择 `hermes`，Collector 保持 `http://127.0.0.1:4318/v1/logs`。
+2. 点击“生成只读安装计划”。该步骤只探测 Hermes 配置、插件能力和变更 Hash，不写文件。
+3. 审阅步骤、配置路径、备份路径和 `plan_id`。
+4. 只有确认接入时，完整输入 `plan_id`，勾选允许修改，再点击“应用计划”。
+5. 安装会先备份 Hermes 配置，原子写入用户插件，调用 Hermes 官方 plugin enable 命令，并执行不含真实 Prompt、无网络发送的合成自测。
+6. 可随时执行“合成自测”“禁用”“修复”“卸载”或“回滚”。若配置已被用户修改，卸载保留漂移内容，不用旧备份覆盖用户变更。
 
+Codex 当前显示 `DRY_RUN_ONLY`。平台可以发现和扫描 Codex，但不会猜测 Windows Codex 客户端未公开的 Hook schema，也不会修改 `~/.codex/config.toml`。后续只有在本机版本提供稳定、可验证的官方插件/Hook 接口后才允许升级为可安装状态。
 
-## v4.2.8 资产治理与 MCP/Skill 专项
+探针只发送脱敏 preview、输入/输出长度、SHA-256、工具与会话关联字段；`raw_capture_enabled=true` 会被 API 拒绝。发送发生在有界后台队列，Collector 不可达时 fail-open 并写入 1MiB 轮转缓冲，不阻断 Hermes 正常调用。
 
-Discovery 支持服务端搜索、类型筛选、分页和隐藏记录开关。Agent 资产默认按产品归一展示。
+Receiver 当前支持 OTLP/HTTP JSON 的 `/v1/traces`、`/v1/logs`、`/v1/metrics`，不支持 protobuf 或 gRPC。默认仅监听 loopback；非 loopback 必须配置管理 Token。
 
-## v4.2.9 企业试用流程
+## 18. 本机发现与上下文体验
 
-推荐流程：发现本机 -> 快速扫描 -> MCP/Skill 专项 -> 风险/证据/攻击路径 -> 报告 -> 复测 -> 导出最终交付包。
+本机发现使用类型化展示：Agent、Skill、MCP、Config 分别显示适合该类型的字段。Skill 行展示名称、描述、版本（缺失时为 `-`）、文件数、脚本数、路径和风险摘要。点击名称或“详情”打开右侧抽屉，关闭后保留搜索、筛选和分页上下文。
 
-## v4.2.10 企业发布门禁
+报告预览中的证据在当前页面抽屉展开；进入 Finding 后使用“返回报告”恢复原报告与滚动上下文。任务、风险、证据、报告之间的链接均使用真实 ID，不依赖重新搜索。
 
-发布前请运行：
+本仓库 `F:\bigsinger\agent-scan-platform` 的源码和 `doc` 默认排除；仅 `tests/fixtures` 等显式测试资产允许作为回归目标。发现和扫描不会执行 Skill、不会启动 Agent 或 stdio MCP。
+
+## 19. 企业发布门禁
+
+推荐试用流程：发现本机 -> 快速扫描 -> MCP/Skill 专项 -> 风险/证据/攻击路径 -> 报告 -> 复测 -> 导出最终交付包。
+
+发布前运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.ps1
 ```
 
-服务脚本只停止 `services.json` manifest 中属于本产品的进程；不会按端口杀任意进程。
+门禁使用隔离 SQLite/artifact/state，执行 8 条真实 Chromium 旅程、完整非浏览器测试、58 页完整度断言、真实 Codex/Hermes 只读发现与配置扫描、服务所有权测试、敏感数据审计、wheel/sdist 构建和离线安装验证。服务脚本只停止 `services.json` 中经 PID、启动时间、可执行路径、命令哈希与端口复核为本产品拥有的进程，不会按端口结束其他程序。
+
+## 20. 数据保留与制品维护
+
+企业长期试用不要直接删除 `data` 目录。先在 SQLite 维护页执行完整性检查和备份，再通过管理 API 生成保留计划：
+
+```powershell
+$preview = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/retention/preview -Body (@{ policies = @{ tasks = 180; events = 90; findings = 365; evidence = 365; reports = 365; observability = 30; artifacts = 365 } } | ConvertTo-Json -Depth 5) -ContentType "application/json"
+$preview.summary
+```
+
+只有确认候选数量正确后，才能把返回的 `plan_id`、同一组 `policies` 和 `confirmation=APPLY_RETENTION` 提交到 `/api/v1/maintenance/retention/apply`。候选集发生变化时旧计划会被拒绝，防止把过期预览用于新数据。
+
+`POST /api/v1/maintenance/artifacts/verify` 用于核对 artifact 文件是否存在以及 SHA-256 是否一致。Artifact GC 同样必须先调用 `/maintenance/artifacts/gc-preview`，再用未漂移的计划 ID 和 `APPLY_ARTIFACT_GC` 确认执行；被 Finding、Evidence、Report 或其他运行记录引用的制品不会进入候选，实际文件先移入本系统备份隔离目录，不接触 Agent、Skill 或 MCP 原始目录。
+
+数据库首次启动及升级会自动执行 `001`-`003` migration。已经应用的 SQL 受 SHA-256 保护，不能直接修改；升级失败时查看 `data/db/migration-backups/`，保留现场后新增更高版本迁移进行修复。

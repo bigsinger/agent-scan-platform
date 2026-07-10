@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
+from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse, urlunparse
 
 from ..reports import ReportRenderer
@@ -63,16 +65,36 @@ SKIP_DIRS = {
     ".ruff_cache",
 }
 
+RULE_CACHE_VERSION = file_digest(Path(__file__).with_name("rules.py"))
+
+
+class ScanCancelled(RuntimeError):
+    """Raised at a bounded read checkpoint after a scan cancellation request."""
+
 
 class LocalScanEngine:
-    def __init__(self, store: AssessmentStore) -> None:
+    def __init__(
+        self,
+        store: AssessmentStore,
+        *,
+        progress_callback: Callable[[str, int, dict[str, Any]], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> None:
         self.store = store
         self.discovery = DiscoveryEngine()
         self.reporter = ReportRenderer(store)
+        self.progress_callback = progress_callback
+        self.cancel_check = cancel_check
+
+    def _checkpoint(self, stage: str, progress: int, **details: Any) -> None:
+        if self.cancel_check and self.cancel_check():
+            raise ScanCancelled("scan cancellation requested")
+        if self.progress_callback:
+            self.progress_callback(stage, max(0, min(int(progress), 99)), details)
 
     def run_quick_scan(self, payload: dict[str, Any]) -> ScanResult:
         request = ScanRequest.from_payload(payload, default_path=REPO_ROOT)
-        return self.run_assessment(request, name="快速扫描")
+        return self.run_assessment(request, name="快速扫描", assessment_id=str(payload.get("_assessment_id") or "") or None)
 
     def precheck_quick_scan(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = ScanRequest.from_payload(payload, default_path=REPO_ROOT)
@@ -150,6 +172,12 @@ class LocalScanEngine:
             result.components = [component for component in result.components if component.get("type") != "Skill"]
             result.scan_paths = [path for path in result.scan_paths if not looks_like_skill_path(path)]
             result.skills = []
+        if not request.include_mcp:
+            result.hits = [hit for hit in result.hits if hit.get("type") != "MCP"]
+            result.components = [component for component in result.components if component.get("type") not in {"MCP", "MCP Server", "MCP Tool"}]
+            result.scan_paths = [path for path in result.scan_paths if not looks_like_mcp_path(path)]
+            result.mcp_servers = []
+            result.consents = []
         result.run.update(
             {
                 "scan_options": request.scan_options,
@@ -175,7 +203,62 @@ class LocalScanEngine:
             }
         )
 
-    def run_assessment(self, request: ScanRequest, name: str = "本地 Agent 安全测评") -> ScanResult:
+    @staticmethod
+    def _merge_cached_agent_probe(result: DiscoveryResult, cached_agents: list[dict[str, Any]]) -> None:
+        def agent_key(item: dict[str, Any]) -> str:
+            return str(item.get("adapter") or item.get("product") or item.get("name") or "").strip().lower()
+
+        cached_by_key: dict[str, dict[str, Any]] = {}
+        for item in cached_agents:
+            cached_key = agent_key(item)
+            if cached_key:
+                cached_by_key.setdefault(cached_key, item)
+        current_keys: set[str] = set()
+        probe_fields = {
+            "version",
+            "version_raw",
+            "version_source",
+            "version_probe",
+            "probe_method",
+            "probe_source",
+            "probe_status",
+            "probe_evidence",
+            "command_started",
+            "package_version",
+            "install_source",
+        }
+        for item in result.agents:
+            current_key = agent_key(item)
+            current_keys.add(current_key)
+            cached = cached_by_key.get(current_key)
+            if not cached:
+                continue
+            for field in probe_fields:
+                value = cached.get(field)
+                if value is not None and value != "" and value != []:
+                    item[field] = value
+            item["probe_cache_reused"] = True
+        for cached_key, cached in cached_by_key.items():
+            if cached_key and cached_key not in current_keys:
+                retained = dict(cached)
+                retained["probe_cache_reused"] = True
+                retained["status"] = retained.get("status") or "ACTIVE"
+                result.agents.append(retained)
+        result.run.update(
+            {
+                "installed_agent_probe_cached": True,
+                "installed_agent_probe_command_started": False,
+                "installed_agent_probe_cache_count": len(cached_by_key),
+                "installed_agent_probe_refresh_hint": "set refresh_agent_versions=true to execute a fresh read-only version probe",
+            }
+        )
+
+    def run_assessment(
+        self,
+        request: ScanRequest,
+        name: str = "本地 Agent 安全测评",
+        assessment_id: str | None = None,
+    ) -> ScanResult:
         target = request.target_path.expanduser() if request.target_path else None
         machine_mode = request.mode == "machine" and target is None
         mcp_mode = request.mode == "mcp"
@@ -189,7 +272,7 @@ class LocalScanEngine:
         scan_options = request.scan_options
         project_scope = self_project_scope(target)
         assessment = {
-            "id": new_id("asm"),
+            "id": assessment_id or new_id("asm"),
             "name": f"{name} · {request.mode}",
             "target": display_target,
             "adapter": request.adapter or "auto",
@@ -226,6 +309,7 @@ class LocalScanEngine:
             "self_project_source_excluded": project_scope.get("source_excluded", False),
         }
         self.store.upsert_record("assessment", assessment, status="RUNNING")
+        self._checkpoint("RUNNING_DISCOVERY", 5, target=display_target)
         events: list[dict[str, Any]] = []
         events.append(self._event(assessment["id"], "assessment.started", "测评已启动，进入本地只读扫描", {"target": display_target, "scan_options": scan_options}))
         events.append(
@@ -264,7 +348,24 @@ class LocalScanEngine:
             self._sync_state(assessment, empty_discovery, [], [], report, events)
             return ScanResult(assessment, empty_discovery, [], [], report, 0, 0, events)
 
-        discovery = self.discovery.discover(None if machine_mode else [target], scope=scan_options["effective_user_scope"] if machine_mode else "explicit-path")
+        cached_agents = (
+            self.store.list_records("agent_instance", limit=200)
+            if machine_mode and not request.refresh_agent_versions
+            else []
+        )
+        discovery = self.discovery.discover(
+            None if machine_mode else [target],
+            scope=scan_options["effective_user_scope"] if machine_mode else "explicit-path",
+            probe_installed=not bool(cached_agents) if machine_mode else False,
+        )
+        if cached_agents:
+            self._merge_cached_agent_probe(discovery, cached_agents)
+        self._checkpoint(
+            "RUNNING_STATIC",
+            25,
+            discovered_agents=len(discovery.agents),
+            discovered_files=len(discovery.scan_paths),
+        )
         self._apply_request_options(discovery, request)
         self._persist_discovery(discovery)
         events.append(
@@ -289,26 +390,73 @@ class LocalScanEngine:
         )
         files_scanned = 0
         files_skipped = 0
+        static_cache_hits = 0
         raw_matches: list[RuleMatch] = []
+        scanned_file_digests: dict[Path, str] = {}
+        file_cache = {
+            str(item.get("id")): item
+            for item in self.store.list_records("scan_file_cache", limit=5000)
+            if item.get("id")
+        }
+        file_cache_updates: list[dict[str, Any]] = []
+        cache_scope = stable_hash(f"{request.mode}:{target_root.resolve()}", 24)
         scan_paths = discovery.scan_paths[: request.limits.max_files] if machine_mode else iter_scan_files(target or REPO_ROOT, request.limits.max_files, request.limits.max_depth)
         if not request.include_skills:
             scan_paths = [path for path in scan_paths if not looks_like_skill_path(path)]
         if request.run_local_analyzers:
-            for path in scan_paths:
+            candidate_count = max(1, min(len(scan_paths), request.limits.max_files))
+            for index, path in enumerate(scan_paths, start=1):
+                self._checkpoint(
+                    "RUNNING_STATIC",
+                    25 + int(55 * min(index, candidate_count) / candidate_count),
+                    scanned_files=files_scanned,
+                    skipped_files=files_skipped,
+                    candidate_files=candidate_count,
+                    current_path=safe_display_path(path, target_root),
+                )
                 try:
-                    if path.stat().st_size > request.limits.max_file_bytes:
+                    stat = path.stat()
+                    if stat.st_size > request.limits.max_file_bytes:
                         files_skipped += 1
+                        continue
+                    path_hash = stable_hash(str(path.resolve()).lower(), 32)
+                    cache_id = "sfc_" + stable_hash(f"{cache_scope}:{path_hash}", 24)
+                    digest = file_digest(path)
+                    scanned_file_digests[path] = digest
+                    cached = file_cache.get(cache_id)
+                    restored = restore_cached_matches(path, cached) if cached and cached.get("file_sha256") == digest and cached.get("rule_cache_version") == RULE_CACHE_VERSION else None
+                    if restored is not None:
+                        files_scanned += 1
+                        static_cache_hits += 1
+                        raw_matches.extend(restored)
                         continue
                     text = read_text(path)
                     if text is None:
                         files_skipped += 1
                         continue
                     files_scanned += 1
-                    raw_matches.extend(analyze_text(path, text, target_root))
+                    matches = analyze_text(path, text, target_root)
+                    raw_matches.extend(matches)
+                    file_cache_updates.append(
+                        {
+                            "id": cache_id,
+                            "path_hash": path_hash,
+                            "display_path": safe_display_path(path, target_root),
+                            "file_sha256": digest,
+                            "file_size": stat.st_size,
+                            "file_mtime_ns": stat.st_mtime_ns,
+                            "rule_cache_version": RULE_CACHE_VERSION,
+                            "cache_scope": cache_scope,
+                            "matches": [cache_rule_match(match) for match in matches],
+                            "redaction_status": "redacted",
+                            "updated_at": utc_now(),
+                        }
+                    )
                 except OSError:
                     files_skipped += 1
                 if files_scanned >= request.limits.max_files:
                     break
+            self.store.upsert_records("scan_file_cache", file_cache_updates, status="READY")
         else:
             events.append(
                 self._event(
@@ -319,17 +467,28 @@ class LocalScanEngine:
                 )
             )
 
-        evidence = [self._evidence_from_match(assessment["id"], match, target_root) for match in raw_matches]
-        findings = self._findings_from_matches(assessment, raw_matches, evidence)
+        findings, evidence = self._rollup_matches(assessment, raw_matches, target_root, scanned_file_digests)
+        suppressed_findings = self._apply_finding_suppressions(findings, evidence)
         self.store.upsert_records("evidence", evidence, status="READY")
-        self.store.upsert_records("finding", findings, status="NEEDS_REVIEW")
+        self.store.upsert_records("finding", findings)
         self.store.upsert_records("rule", rule_catalog(), status="PUBLISHED")
+        reused_evidence = sum(1 for item in evidence if item.get("artifact_reused"))
         events.append(
             self._event(
                 assessment["id"],
                 "local_static.completed",
                 f"本地规则扫描完成：扫描 {files_scanned} 个文件，跳过 {files_skipped} 个文件，发现 {len(findings)} 项风险",
-                {"files_scanned": files_scanned, "files_skipped": files_skipped, "finding_count": len(findings)},
+                {
+                    "files_scanned": files_scanned,
+                    "files_skipped": files_skipped,
+                    "finding_count": len(findings),
+                    "occurrence_count": len(raw_matches),
+                    "evidence_count": len(evidence),
+                    "reused_evidence_count": reused_evidence,
+                    "suppressed_finding_count": suppressed_findings,
+                    "static_cache_hits": static_cache_hits,
+                    "static_cache_misses": len(file_cache_updates),
+                },
             )
         )
         if request.use_existing_sca:
@@ -351,8 +510,9 @@ class LocalScanEngine:
                 )
             )
 
-        p0 = len([f for f in findings if "P0" in f["severity"] or "严重" in f["severity"]])
-        p1 = len([f for f in findings if "P1" in f["severity"] or "高危" in f["severity"]])
+        active_findings = [finding for finding in findings if not finding.get("suppressed")]
+        p0 = len([f for f in active_findings if "P0" in f["severity"] or "严重" in f["severity"]])
+        p1 = len([f for f in active_findings if "P1" in f["severity"] or "高危" in f["severity"]])
         assessment.update(
             {
                 "stage": "REPORT",
@@ -364,6 +524,14 @@ class LocalScanEngine:
                 "files_scanned": files_scanned,
                 "files_skipped": files_skipped,
                 "finding_count": len(findings),
+                "active_finding_count": len(active_findings),
+                "suppressed_finding_count": suppressed_findings,
+                "occurrence_count": len(raw_matches),
+                "evidence_count": len(evidence),
+                "reused_evidence_count": reused_evidence,
+                "incremental_reuse": reused_evidence > 0,
+                "static_cache_hits": static_cache_hits,
+                "static_cache_misses": len(file_cache_updates),
                 "pending_consents": len(discovery.consents),
                 "scan_options": scan_options,
                 "self_project_scope": project_scope,
@@ -371,6 +539,7 @@ class LocalScanEngine:
             }
         )
         self.store.upsert_record("assessment", assessment, status="COMPLETED")
+        self._checkpoint("RUNNING_REPORT", 90, findings=len(findings), evidence=len(evidence))
         report = self.reporter.create_report(
             assessment,
             findings,
@@ -943,110 +1112,231 @@ class LocalScanEngine:
         event = self.store.scan_event(assessment_id, event_type, data)
         return {"seq": event["seq"], "time": event["created_at"], "type": event_type, "text": message, "payload": data}
 
-    def _evidence_from_match(self, assessment_id: str, match: RuleMatch, target_root: Path) -> dict[str, Any]:
-        evidence_id = "ev_" + stable_hash(f"{assessment_id}:{match.rule_id}:{match.display_path}:{match.line}:{match.snippet}", 20)
-        content = {
-            "rule_id": match.rule_id,
-            "path": match.display_path,
-            "line": match.line,
-            "snippet": match.snippet,
-            "reason": match.reason,
-        }
-        artifact = self.store.write_artifact(
-            "evidence-redacted",
-            json.dumps(content, ensure_ascii=False, indent=2),
-            suffix="json",
-            metadata={"assessment_id": assessment_id, "rule_id": match.rule_id},
-        )
-        try:
-            digest = file_digest(match.path)
-        except OSError:
-            digest = stable_hash(match.display_path, 64)
-        return {
-            "id": evidence_id,
-            "assessment_id": assessment_id,
-            "finding_id": "",
-            "type": "file-snippet",
-            "collector": "local-static",
-            "redaction": "已脱敏",
-            "path": match.display_path,
-            "location": f"{match.display_path}:{match.line}",
-            "line": match.line,
-            "sha256": digest,
-            "artifact_id": artifact["id"],
-            "artifact_path": artifact["relative_path"],
-            "content": match.snippet,
-            "text": f"{match.rule_id} 命中 {match.display_path}:{match.line}",
-            "level": severity_class(match.severity),
-            "time": utc_now(),
-            "status": "READY",
-        }
-
-    def _findings_from_matches(
+    def _rollup_matches(
         self,
         assessment: dict[str, Any],
         matches: list[RuleMatch],
-        evidence: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        evidence_by_key = {
-            f"{ev['path']}:{ev['line']}:{ev['content']}": ev for ev in evidence
-        }
-        findings: dict[str, dict[str, Any]] = {}
+        target_root: Path,
+        known_digests: dict[Path, str] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        grouped: dict[str, list[RuleMatch]] = {}
         for match in matches:
-            fingerprint = stable_hash(f"{match.rule_id}:{match.display_path}", 24)
+            fingerprint = stable_hash(f"{match.rule_id}:{match.display_path}:{match.category}", 24)
+            grouped.setdefault(fingerprint, []).append(match)
+
+        findings: list[dict[str, Any]] = []
+        evidence: list[dict[str, Any]] = []
+        instances: list[dict[str, Any]] = []
+        digest_cache: dict[Path, str] = dict(known_digests or {})
+        artifacts_by_id = {
+            str(item.get("id")): item
+            for item in self.store.list_records("artifact", limit=5000)
+            if item.get("id")
+        }
+        reusable_evidence: dict[str, dict[str, Any]] = {}
+        for item in self.store.list_records("evidence", limit=5000):
+            cache_key = str(item.get("scan_cache_key") or "")
+            artifact = artifacts_by_id.get(str(item.get("artifact_id") or ""))
+            if cache_key and artifact and Path(str(artifact.get("absolute_path") or "")).is_file():
+                reusable_evidence.setdefault(cache_key, item)
+        created_at = utc_now()
+        for fingerprint, occurrences in grouped.items():
+            first = occurrences[0]
             finding_id = "fnd_" + fingerprint
-            ev = evidence_by_key.get(f"{match.display_path}:{match.line}:{match.snippet}")
-            if ev:
-                ev["finding_id"] = finding_id
-            finding = findings.get(finding_id)
-            if finding is None:
-                finding = {
+            evidence_id = "ev_" + stable_hash(f"{assessment['id']}:{finding_id}", 20)
+            preview = [
+                {
+                    "line": item.line,
+                    "path": item.display_path,
+                    "snippet": item.snippet,
+                    "reason": item.reason,
+                    "context": item.context,
+                    "review_signal": item.review_signal,
+                }
+                for item in occurrences[:50]
+            ]
+            if first.path not in digest_cache:
+                try:
+                    digest_cache[first.path] = file_digest(first.path)
+                except OSError:
+                    digest_cache[first.path] = stable_hash(first.display_path, 64)
+            occurrence_signature = stable_hash(
+                json.dumps(
+                    [[item.line, item.snippet, item.reason, item.severity, item.context, item.review_signal] for item in occurrences],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                64,
+            )
+            cache_key = stable_hash(
+                f"{first.rule_id}:{first.display_path}:{digest_cache[first.path]}:{occurrence_signature}",
+                64,
+            )
+            content = {
+                "schema": "agent-security-evidence-rollup@4.2.10",
+                "assessment_id": assessment["id"],
+                "finding_id": finding_id,
+                "rule_id": first.rule_id,
+                "path": first.display_path,
+                "occurrence_count": len(occurrences),
+                "occurrences": preview,
+                "omitted_occurrences": max(0, len(occurrences) - len(preview)),
+            }
+            previous = reusable_evidence.get(cache_key)
+            if previous:
+                artifact = artifacts_by_id[str(previous["artifact_id"])]
+            else:
+                artifact = self.store.write_artifact(
+                    "evidence-redacted",
+                    json.dumps(content, ensure_ascii=False, indent=2),
+                    suffix="json",
+                    metadata={
+                        "assessment_id": assessment["id"],
+                        "finding_id": finding_id,
+                        "rule_id": first.rule_id,
+                        "occurrence_count": len(occurrences),
+                        "scan_cache_key": cache_key,
+                    },
+                )
+            ev = {
+                "id": evidence_id,
+                "assessment_id": assessment["id"],
+                "finding_id": finding_id,
+                "rule_id": first.rule_id,
+                "type": "file-snippet-rollup",
+                "collector": "local-static",
+                "redaction": "已脱敏",
+                "path": first.display_path,
+                "location": f"{first.display_path}:{first.line}",
+                "line": first.line,
+                "sha256": digest_cache[first.path],
+                "artifact_id": artifact["id"],
+                "artifact_path": artifact["relative_path"],
+                "artifact_reused": bool(previous),
+                "source_evidence_id": previous.get("id") if previous else None,
+                "scan_cache_key": cache_key,
+                "content": first.snippet,
+                "text": f"{first.rule_id} 在 {first.display_path} 命中 {len(occurrences)} 次",
+                "level": severity_class(first.severity),
+                "occurrence_count": len(occurrences),
+                "occurrences_preview": preview[:20],
+                "context": first.context,
+                "original_severity": first.original_severity or first.severity,
+                "review_signal": any(item.review_signal for item in occurrences),
+                "time": created_at,
+                "status": "READY",
+            }
+            evidence.append(ev)
+            findings.append(
+                {
                     "id": finding_id,
                     "assessment_id": assessment["id"],
-                    "title": match.title,
-                    "summary": f"{match.display_path}:{match.line} 命中 {match.rule_id}，需要安全复核。",
-                    "severity": match.severity,
-                    "sevClass": severity_class(match.severity),
-                    "rule": match.rule_id,
-                    "rule_id": match.rule_id,
-                    "source": match.source,
+                    "title": first.title,
+                    "summary": f"{first.display_path} 命中 {first.rule_id}，共 {len(occurrences)} 个 occurrence，需要安全复核。",
+                    "severity": first.severity,
+                    "original_severity": first.original_severity or first.severity,
+                    "sevClass": severity_class(first.severity),
+                    "rule": first.rule_id,
+                    "rule_id": first.rule_id,
+                    "source": first.source,
                     "agent": assessment.get("adapter") or "Local",
-                    "component": match.display_path,
-                    "confidence": f"{match.confidence:.2f}",
-                    "compat": compatible_code(match.rule_id),
-                    "evidence": match.snippet,
-                    "evidence_ids": [],
-                    "occurrence_count": 0,
+                    "component": first.display_path,
+                    "confidence": f"{first.confidence:.2f}",
+                    "context": first.context,
+                    "review_signal": any(item.review_signal for item in occurrences),
+                    "compat": compatible_code(first.rule_id),
+                    "evidence": first.snippet,
+                    "evidence_ids": [evidence_id],
+                    "occurrence_count": len(occurrences),
                     "file_count": 1,
-                    "occurrences_preview": [],
-                    "fix": match.remediation,
-                    "remediation": match.remediation,
+                    "occurrences_preview": [
+                        {"line": item.line, "path": item.display_path, "evidence_id": evidence_id}
+                        for item in occurrences[:20]
+                    ],
+                    "fix": first.remediation,
+                    "remediation": first.remediation,
                     "status": "待复核",
-                    "priority": priority_for(match.severity),
+                    "priority": priority_for(first.severity),
                     "fingerprint": fingerprint,
-                    "created_at": utc_now(),
+                    "created_at": created_at,
                 }
-                findings[finding_id] = finding
-            finding["occurrence_count"] = int(finding.get("occurrence_count") or 0) + 1
-            if len(finding["occurrences_preview"]) < 20:
-                finding["occurrences_preview"].append({"line": match.line, "path": match.display_path, "evidence_id": ev.get("id") if ev else ""})
-            if ev:
-                ev["finding_id"] = finding_id
-                instance = {
-                    "id": "fin_" + stable_hash(f"{finding_id}:{match.line}:{match.snippet}", 20),
-                    "finding_id": finding_id,
-                    "assessment_id": assessment["id"],
-                    "rule_id": match.rule_id,
-                    "path": match.display_path,
-                    "line": match.line,
-                    "evidence_id": ev["id"],
-                    "snippet": match.snippet,
-                    "created_at": utc_now(),
-                }
-                self.store.upsert_record("finding_instance", instance, status="READY")
-            if ev and ev["id"] not in finding["evidence_ids"]:
-                finding["evidence_ids"].append(ev["id"])
-        return list(findings.values())
+            )
+            for item in occurrences:
+                instances.append(
+                    {
+                        "id": "fin_" + stable_hash(f"{finding_id}:{item.line}:{item.snippet}", 20),
+                        "finding_id": finding_id,
+                        "assessment_id": assessment["id"],
+                        "rule_id": item.rule_id,
+                        "path": item.display_path,
+                        "line": item.line,
+                        "evidence_id": evidence_id,
+                        "snippet": item.snippet,
+                        "context": item.context,
+                        "original_severity": item.original_severity or item.severity,
+                        "review_signal": item.review_signal,
+                        "created_at": created_at,
+                    }
+                )
+        self.store.upsert_records("finding_instance", instances, status="READY")
+        return findings, evidence
+
+    def _apply_finding_suppressions(
+        self,
+        findings: list[dict[str, Any]],
+        evidence: list[dict[str, Any]],
+    ) -> int:
+        now = datetime.now(timezone.utc)
+        active: list[dict[str, Any]] = []
+        expired: list[dict[str, Any]] = []
+        for suppression in self.store.list_records("finding_suppression", limit=5000):
+            if str(suppression.get("status") or "").upper() != "ACTIVE":
+                continue
+            expires_at = str(suppression.get("expires_at") or "").strip()
+            if expires_at:
+                try:
+                    expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                    if expiry.tzinfo is None:
+                        expiry = expiry.replace(tzinfo=timezone.utc)
+                    if expiry <= now:
+                        suppression.update({"status": "EXPIRED", "expired_at": utc_now()})
+                        expired.append(suppression)
+                        continue
+                except ValueError:
+                    suppression.update({"status": "EXPIRED", "expired_at": utc_now(), "expiration_error": "invalid_timestamp"})
+                    expired.append(suppression)
+                    continue
+            active.append(suppression)
+        self.store.upsert_records("finding_suppression", expired)
+
+        suppressed_by_finding: dict[str, dict[str, Any]] = {}
+        for finding in findings:
+            component = str(finding.get("component") or "").replace("\\", "/").lower()
+            for suppression in active:
+                scope = str(suppression.get("scope") or "fingerprint").lower()
+                matched = scope == "fingerprint" and suppression.get("fingerprint") == finding.get("fingerprint")
+                if scope == "rule_path":
+                    path_glob = str(suppression.get("path_glob") or "").replace("\\", "/").lower()
+                    matched = suppression.get("rule_id") == finding.get("rule_id") and bool(path_glob) and fnmatch(component, path_glob)
+                if not matched:
+                    continue
+                finding.update(
+                    {
+                        "status": "已抑制",
+                        "suppressed": True,
+                        "suppression_id": suppression.get("id"),
+                        "suppression_scope": scope,
+                        "suppression_reason": suppression.get("reason"),
+                        "suppression_expires_at": suppression.get("expires_at"),
+                    }
+                )
+                suppressed_by_finding[str(finding["id"])] = suppression
+                break
+        for item in evidence:
+            suppression = suppressed_by_finding.get(str(item.get("finding_id") or ""))
+            if suppression:
+                item.update({"suppressed": True, "suppression_id": suppression.get("id")})
+        return len(suppressed_by_finding)
 
     def _sync_state(
         self,
@@ -1240,6 +1530,11 @@ def looks_like_skill_path(path: Path) -> bool:
     return path.name.lower() == "skill.md" or "skills" in parts
 
 
+def looks_like_mcp_path(path: Path) -> bool:
+    name = path.name.lower()
+    return name in {".mcp.json", "mcp.json", "mcp.yaml", "mcp.yml", "mcp.toml"} or "mcp" in name
+
+
 def discovery_options(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "include_agent_configs": flag(payload, ("include_agent_configs", "include_configs", "discovery_agent_configs", "discoveryAgentConfigs"), True),
@@ -1272,6 +1567,58 @@ def component_selected_by_options(component: dict[str, Any], options: dict[str, 
         source = str(component.get("source") or "")
         return source in kept_hit_paths
     return True
+
+
+def cache_rule_match(match: RuleMatch) -> dict[str, Any]:
+    return {
+        "rule_id": match.rule_id,
+        "title": match.title,
+        "severity": match.severity,
+        "category": match.category,
+        "confidence": match.confidence,
+        "remediation": match.remediation,
+        "display_path": match.display_path,
+        "line": match.line,
+        "snippet": match.snippet,
+        "reason": match.reason,
+        "source": match.source,
+        "context": match.context,
+        "original_severity": match.original_severity,
+        "review_signal": match.review_signal,
+    }
+
+
+def restore_cached_matches(path: Path, cached: dict[str, Any]) -> list[RuleMatch] | None:
+    raw_matches = cached.get("matches")
+    if not isinstance(raw_matches, list) or len(raw_matches) > 10000:
+        return None
+    restored: list[RuleMatch] = []
+    try:
+        for item in raw_matches:
+            if not isinstance(item, dict):
+                return None
+            restored.append(
+                RuleMatch(
+                    rule_id=str(item["rule_id"]),
+                    title=str(item["title"]),
+                    severity=str(item["severity"]),
+                    category=str(item["category"]),
+                    confidence=float(item["confidence"]),
+                    remediation=str(item["remediation"]),
+                    path=path,
+                    display_path=str(item["display_path"]),
+                    line=int(item["line"]),
+                    snippet=str(item["snippet"]),
+                    reason=str(item["reason"]),
+                    source=str(item.get("source") or "local-static"),
+                    context=str(item.get("context") or "unknown"),
+                    original_severity=str(item.get("original_severity") or ""),
+                    review_signal=bool(item.get("review_signal")),
+                )
+            )
+    except (KeyError, TypeError, ValueError):
+        return None
+    return restored
 
 
 def read_text(path: Path) -> str | None:

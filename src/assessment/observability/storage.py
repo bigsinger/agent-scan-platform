@@ -174,10 +174,26 @@ def _redacted_json(value: Any) -> str:
 
 # ── Probe Event CRUD ──────────────────────────────────────────
 
-def insert_probe_event(store: AssessmentStore, event: dict[str, Any]) -> dict[str, Any]:
-    """写入一条规范化 probe_event."""
+_PROBE_EVENT_COLUMNS = (
+    "event_id", "event_type", "timestamp", "trace_id", "span_id", "parent_span_id",
+    "source_agent", "adapter_id", "session_id", "run_id", "turn_id", "tool_call_id",
+    "tool_name", "tool_type", "mcp_server", "mcp_tool", "mcp_transport", "phase", "status",
+    "duration_ms", "input_size", "output_size", "input_hash", "output_hash", "redaction_status",
+    "risk_score", "risk_labels_json", "error_type", "error_message_redacted", "payload_json",
+    "hash_chain_prev", "hash_chain", "created_at",
+)
+_PROBE_EVENT_INSERT_SQL = f"""INSERT OR REPLACE INTO probe_event(
+    {', '.join(_PROBE_EVENT_COLUMNS)}
+) VALUES ({','.join('?' for _ in _PROBE_EVENT_COLUMNS)})"""
+
+
+def _prepare_probe_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Normalize and redact an event before it crosses the persistence boundary."""
+    event = SensitiveDataGuard.sanitize_for_persist(event)
+    if not isinstance(event, dict):
+        raise TypeError("probe event must be an object")
     now = utc_now()
-    row = {
+    return {
         "event_id": event.get("event_id", _dedup_id("evt", event)),
         "event_type": event.get("event_type", "unknown"),
         "timestamp": event.get("timestamp", now),
@@ -212,36 +228,34 @@ def insert_probe_event(store: AssessmentStore, event: dict[str, Any]) -> dict[st
         "hash_chain": event.get("hash_chain"),
         "created_at": now,
     }
+
+
+def insert_probe_event(store: AssessmentStore, event: dict[str, Any]) -> dict[str, Any]:
+    """写入一条规范化 probe_event."""
+    row = _prepare_probe_event(event)
     with store.connect() as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO probe_event(
-                event_id, event_type, timestamp, trace_id, span_id, parent_span_id,
-                source_agent, adapter_id, session_id, run_id, turn_id, tool_call_id,
-                tool_name, tool_type, mcp_server, mcp_tool, mcp_transport,
-                phase, status, duration_ms, input_size, output_size,
-                input_hash, output_hash, redaction_status, risk_score, risk_labels_json,
-                error_type, error_message_redacted, payload_json,
-                hash_chain_prev, hash_chain, created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            tuple(row.values()),
-        )
+        conn.execute(_PROBE_EVENT_INSERT_SQL, tuple(row[column] for column in _PROBE_EVENT_COLUMNS))
         conn.commit()
     return row
 
 
 def insert_events_batch(store: AssessmentStore, events: list[dict[str, Any]]) -> dict[str, Any]:
-    """批量写入事件, 返回 accepted/rejected 计数."""
-    accepted = 0
-    rejected = 0
+    """Redact and persist a receiver batch in one SQLite transaction."""
+    rows: list[dict[str, Any]] = []
     errors: list[str] = []
-    for event in events:
+    for index, event in enumerate(events):
         try:
-            insert_probe_event(store, event)
-            accepted += 1
+            rows.append(_prepare_probe_event(event))
         except Exception as exc:
-            rejected += 1
-            errors.append(f"event {event.get('event_id', '?')}: {exc}")
-    return {"accepted": accepted, "rejected": rejected, "errors": errors}
+            errors.append(f"event[{index}]: {type(exc).__name__}")
+    if rows:
+        with store.connect() as conn:
+            conn.executemany(
+                _PROBE_EVENT_INSERT_SQL,
+                (tuple(row[column] for column in _PROBE_EVENT_COLUMNS) for row in rows),
+            )
+            conn.commit()
+    return {"accepted": len(rows), "rejected": len(errors), "errors": errors}
 
 
 def list_probe_events(
@@ -305,16 +319,29 @@ def _decode_probe_event(row: sqlite3.Row) -> dict[str, Any]:
 
 # ── OTel Span CRUD ────────────────────────────────────────────
 
-def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, Any]:
+_OTEL_SPAN_COLUMNS = (
+    "span_id", "trace_id", "parent_span_id", "name", "kind", "start_time", "end_time",
+    "duration_ms", "status_code", "status_message", "resource_json", "scope_json",
+    "attrs_json", "created_at",
+)
+_OTEL_SPAN_INSERT_SQL = f"""INSERT OR REPLACE INTO otel_span(
+    {', '.join(_OTEL_SPAN_COLUMNS)}
+) VALUES ({','.join('?' for _ in _OTEL_SPAN_COLUMNS)})"""
+
+
+def _prepare_otel_span(span: dict[str, Any]) -> dict[str, Any]:
+    span = SensitiveDataGuard.sanitize_for_persist(span)
+    if not isinstance(span, dict):
+        raise TypeError("OTel span must be an object")
     attrs = attributes_to_dict(span.get("attributes"))
     resource = span.get("resource", {})
     scope = span.get("scope", {})
     now = utc_now()
-    row = {
+    return {
         "span_id": span.get("spanId") or span.get("span_id") or _dedup_id("span", span),
         "trace_id": span.get("traceId") or span.get("trace_id", ""),
         "parent_span_id": span.get("parentSpanId") or span.get("parent_span_id"),
-        "name": span.get("name", "unknown"),
+        "name": SensitiveDataGuard.redact_text(str(span.get("name") or "unknown")),
         "kind": span.get("kind"),
         "start_time": span.get("startTime") or span.get("start_time") or _otel_nano_to_iso(span.get("startTimeUnixNano")),
         "end_time": span.get("endTime") or span.get("end_time") or _otel_nano_to_iso(span.get("endTimeUnixNano")),
@@ -326,68 +353,124 @@ def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, 
         "attrs_json": _redacted_json(attrs),
         "created_at": now,
     }
+
+
+def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, Any]:
+    row = _prepare_otel_span(span)
     with store.connect() as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO otel_span(
-                span_id, trace_id, parent_span_id, name, kind,
-                start_time, end_time, duration_ms,
-                status_code, status_message,
-                resource_json, scope_json, attrs_json, created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            tuple(row.values()),
-        )
+        conn.execute(_OTEL_SPAN_INSERT_SQL, tuple(row[column] for column in _OTEL_SPAN_COLUMNS))
         conn.commit()
     return row
 
 
+def insert_otel_spans_batch(store: AssessmentStore, spans: list[dict[str, Any]]) -> int:
+    rows = [_prepare_otel_span(span) for span in spans]
+    if rows:
+        with store.connect() as conn:
+            conn.executemany(
+                _OTEL_SPAN_INSERT_SQL,
+                (tuple(row[column] for column in _OTEL_SPAN_COLUMNS) for row in rows),
+            )
+            conn.commit()
+    return len(rows)
+
+
 # ── Behavior Chain ────────────────────────────────────────────
 
-def insert_otel_log(store: AssessmentStore, log: dict[str, Any]) -> dict[str, Any]:
+_OTEL_LOG_COLUMNS = (
+    "id", "trace_id", "span_id", "timestamp", "severity_text", "body_redacted",
+    "resource_json", "attrs_json", "created_at",
+)
+_OTEL_LOG_INSERT_SQL = f"""INSERT OR REPLACE INTO otel_log(
+    {', '.join(_OTEL_LOG_COLUMNS)}
+) VALUES ({','.join('?' for _ in _OTEL_LOG_COLUMNS)})"""
+
+
+def _prepare_otel_log(log: dict[str, Any]) -> dict[str, Any]:
+    log = SensitiveDataGuard.sanitize_for_persist(log)
+    if not isinstance(log, dict):
+        raise TypeError("OTel log must be an object")
     attrs = attributes_to_dict(log.get("attributes"))
     now = utc_now()
-    row = {
+    return {
         "id": log.get("id") or _dedup_id("log", log),
         "trace_id": log.get("traceId") or log.get("trace_id"),
         "span_id": log.get("spanId") or log.get("span_id"),
         "timestamp": _otel_nano_to_iso(log.get("timeUnixNano")) or log.get("timestamp") or now,
         "severity_text": log.get("severityText") or log.get("severity_text"),
-        "body_redacted": str(log.get("body_redacted") or redact_payload({"body": log.get("body")}).get("body") or ""),
-        "resource_json": json.dumps(log.get("resource", {}), ensure_ascii=False),
-        "attrs_json": json.dumps(attrs, ensure_ascii=False),
+        "body_redacted": SensitiveDataGuard.redact_text(str(log.get("body_redacted") or redact_payload({"body": log.get("body")}).get("body") or "")),
+        "resource_json": _redacted_json(log.get("resource", {})),
+        "attrs_json": _redacted_json(attrs),
         "created_at": now,
     }
+
+
+def insert_otel_log(store: AssessmentStore, log: dict[str, Any]) -> dict[str, Any]:
+    row = _prepare_otel_log(log)
     with store.connect() as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO otel_log(id, trace_id, span_id, timestamp, severity_text, body_redacted, resource_json, attrs_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            tuple(row.values()),
-        )
+        conn.execute(_OTEL_LOG_INSERT_SQL, tuple(row[column] for column in _OTEL_LOG_COLUMNS))
         conn.commit()
     return row
 
 
-def insert_otel_metric_point(store: AssessmentStore, point: dict[str, Any]) -> dict[str, Any]:
+def insert_otel_logs_batch(store: AssessmentStore, logs: list[dict[str, Any]]) -> int:
+    rows = [_prepare_otel_log(log) for log in logs]
+    if rows:
+        with store.connect() as conn:
+            conn.executemany(
+                _OTEL_LOG_INSERT_SQL,
+                (tuple(row[column] for column in _OTEL_LOG_COLUMNS) for row in rows),
+            )
+            conn.commit()
+    return len(rows)
+
+
+_OTEL_METRIC_COLUMNS = (
+    "id", "metric_name", "metric_type", "timestamp", "value", "unit", "resource_json",
+    "attrs_json", "created_at",
+)
+_OTEL_METRIC_INSERT_SQL = f"""INSERT OR REPLACE INTO otel_metric_point(
+    {', '.join(_OTEL_METRIC_COLUMNS)}
+) VALUES ({','.join('?' for _ in _OTEL_METRIC_COLUMNS)})"""
+
+
+def _prepare_otel_metric_point(point: dict[str, Any]) -> dict[str, Any]:
+    point = SensitiveDataGuard.sanitize_for_persist(point)
+    if not isinstance(point, dict):
+        raise TypeError("OTel metric point must be an object")
     attrs = attributes_to_dict(point.get("attributes"))
     now = utc_now()
-    row = {
-        "id": point.get("id") or new_id("omp"),
-        "metric_name": point.get("metric_name") or point.get("name") or "unknown",
+    return {
+        "id": point.get("id") or _dedup_id("metric", point),
+        "metric_name": SensitiveDataGuard.redact_text(str(point.get("metric_name") or point.get("name") or "unknown")),
         "metric_type": point.get("metric_type") or point.get("type") or "gauge",
         "timestamp": _otel_nano_to_iso(point.get("timeUnixNano")) or _otel_nano_to_iso(point.get("timestamp")) or point.get("timestamp") or now,
         "value": point.get("value"),
         "unit": point.get("unit"),
-        "resource_json": json.dumps(point.get("resource", {}), ensure_ascii=False),
-        "attrs_json": json.dumps(attrs, ensure_ascii=False),
+        "resource_json": _redacted_json(point.get("resource", {})),
+        "attrs_json": _redacted_json(attrs),
         "created_at": now,
     }
+
+
+def insert_otel_metric_point(store: AssessmentStore, point: dict[str, Any]) -> dict[str, Any]:
+    row = _prepare_otel_metric_point(point)
     with store.connect() as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO otel_metric_point(id, metric_name, metric_type, timestamp, value, unit, resource_json, attrs_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            tuple(row.values()),
-        )
+        conn.execute(_OTEL_METRIC_INSERT_SQL, tuple(row[column] for column in _OTEL_METRIC_COLUMNS))
         conn.commit()
     return row
+
+
+def insert_otel_metric_points_batch(store: AssessmentStore, points: list[dict[str, Any]]) -> int:
+    rows = [_prepare_otel_metric_point(point) for point in points]
+    if rows:
+        with store.connect() as conn:
+            conn.executemany(
+                _OTEL_METRIC_INSERT_SQL,
+                (tuple(row[column] for column in _OTEL_METRIC_COLUMNS) for row in rows),
+            )
+            conn.commit()
+    return len(rows)
 
 
 # ── Behavior Chain ────────────────────────────────────────────

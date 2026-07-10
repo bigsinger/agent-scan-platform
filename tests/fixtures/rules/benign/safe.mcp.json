@@ -1,0 +1,6 @@
+{
+  "transport": "http",
+  "url": "https://mcp.example.invalid/v1",
+  "approval": true,
+  "env": {"OPENAI_API_KEY": "secret://vault/openai"}
+}

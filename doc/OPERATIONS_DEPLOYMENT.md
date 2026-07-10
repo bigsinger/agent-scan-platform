@@ -1,22 +1,28 @@
-# Agent 安全测评能力模块 V4.1 运维部署手册
+# Agent 安全测评与旁路可观测平台 v4.2.10 运维部署手册
 
-本文档面向本地试用、企业 POC、内网测评环境和后续私有化交付。当前实现是单进程 FastAPI + SQLite + 本地静态前端，默认不依赖云服务、Redis、PostgreSQL、对象存储或公网 CDN。
+本文档面向本地试用、企业 POC、内网测评环境和私有化交付。当前实现由 FastAPI 主平台、本地 OTLP/HTTP JSON Receiver、SQLite 和离线静态前端组成，默认不依赖云服务、Redis、PostgreSQL、对象存储或公网 CDN。
 
 ## 1. 交付物清单
 
 | 路径 | 用途 |
 | --- | --- |
 | `src/assessment/main.py` | FastAPI 应用入口，挂载 `/api/v1` 和 `/assessment` |
-| `src/assessment/api/v1.py` | REST/SSE API，注入 V4.1 API 契约；已实现操作走真实本地逻辑，未实现写接口返回 `501 NOT_IMPLEMENTED`，未实现读接口返回 `404 NOT_IMPLEMENTED` |
+| `src/assessment/api/v1.py` | REST/SSE API，注入 180 个 SPEC 契约；契约内操作走真实本地逻辑，未登记路由统一返回可审计的 `404 ROUTE_NOT_FOUND` |
+| `src/assessment/api/findings.py` / `maintenance.py` | Finding suppression 生命周期，以及 retention、artifact 完整性和引用感知 GC 管理 API |
 | `src/assessment/scanning/` | 本地发现、静态规则、证据脱敏、扫描编排 |
+| `src/assessment/scanning/jobs.py` | 有界后台扫描队列、状态机、取消、重试和启动恢复 |
 | `src/assessment/scanning/guard.py` | 只读 Guard 防御监测，负责配置哈希基线、变化检测和防御建议 |
+| `src/assessment/probes/` | Codex/Hermes 能力探测、Hermes observe-only 插件与 fail-open emitter |
+| `src/assessment/observability/` | OTLP Receiver、统一脱敏、行为链和异常分析 |
 | `src/assessment/reports/` | HTML/JSON 报告渲染器 |
+| `src/assessment/persistence/migrations/` | `001`-`003` 可执行 schema migration、校验和和升级链 |
 | `src/assessment/static/` | 离线 Vue 前端与本地 vendor 资源 |
 | `data/db/app.db` | SQLite 主库，首次启动自动创建 |
 | `data/artifacts/` | 脱敏证据制品 |
 | `data/reports/` | HTML/JSON 报告制品 |
 | `data/backups/` | SQLite Online Backup 输出 |
 | `tests/fixtures/` | 本地回归样本 |
+| `start_services.ps1` / `stop_services.ps1` | 受 PID manifest 保护的主平台与 Receiver 启停 |
 
 ## 2. 运行边界
 
@@ -33,13 +39,16 @@
 9. 动态红队默认为本地 deterministic dry-run，不调用外部模型、不启动真实 Tool、不读取敏感路径。
 10. 新建空库启动后，运行时 API 返回真实空态；前端不会用原型 seed 生成假 Agent、假任务、假风险或假执行队列。静态 `seed.json/seed.js` 仅保留导航、向导、维度和契约矩阵等 UI 配置；后端暂不可用时也不会展示样例 Agent 或固定 fixture 结果。试用数据必须由本机发现、快速扫描或显式 API 写入产生。
 11. 从旧版本升级时，启动初始化会清理本系统 SQLite 中已知原型 seed 记录，例如 `agt_cc_001`、`asm_v4_001`、`claude-code-repo-demo` 等；该迁移只删除本模块数据库内的原型记录，不访问或修改 Agent 安装目录。
-12. 未实现的写操作不会按路径后缀伪造 `PASS`、`QUEUED`、`DONE` 等成功状态；未实现读操作不会返回 `items=[]` 伪造空集合。写接口返回 `501 NOT_IMPLEMENTED`，读接口返回 `404 NOT_IMPLEMENTED`，并写入审计事件说明系统没有执行任何功能动作。
+12. 未知或明确不在契约内的操作不会按路径后缀伪造 `PASS`、`QUEUED`、`DONE`，也不会返回 `items=[]` 伪造空集合；所有方法统一返回 `404 ROUTE_NOT_FOUND`，并记录拒绝审计而不执行功能动作。
+13. Hermes 探针默认只生成计划；实际安装必须精确确认 `plan_id` 和配置修改授权，先备份再原子写入，支持禁用、修复、卸载和回滚。Codex 保持 `DRY_RUN_ONLY`。
+14. Probe/OTel 禁止 raw capture，源头、发送前和持久化前均执行脱敏。Receiver 当前仅承诺 OTLP/HTTP JSON，不承诺 protobuf/gRPC。
 
 ## 3. 环境要求
 
 最低要求：
 
 - Python 3.12 或更高版本。
+- `uv`，用于锁定依赖、验收隔离环境和构建交付包。
 - Windows 10/11、Windows Server、Linux x86_64 或 macOS。
 - 可写工作目录，用于 `data/` 和 `logs/`。
 - 浏览器：Chrome、Edge、Firefox 任一现代版本。
@@ -61,29 +70,38 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-启动服务：
+启动主平台和 OTel Receiver：
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m uvicorn assessment.main:app --host 127.0.0.1 --port 8000
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1
 ```
 
 访问：
 
 ```text
 http://127.0.0.1:8000/assessment
+http://127.0.0.1:4318/healthz
 ```
 
 健康检查：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+Invoke-RestMethod http://127.0.0.1:4318/healthz
 $selfTest = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 $supervisor = Invoke-RestMethod http://127.0.0.1:8000/api/v1/execution-supervisor
 $selfTest.self_test.status
 $selfTest.self_test.download
 $supervisor.supervisor.state
 ```
+
+停止服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\stop_services.ps1
+```
+
+脚本不按端口杀进程。启动时若端口已被其他程序占用会失败；停止时必须同时匹配 manifest 中的 PID、进程启动时间、可执行路径、命令哈希、父子关系和监听端口。
 
 `/api/v1/health/self-test` 会执行企业 POC 前建议的本地控制面自检：SQLite 状态、SQLite 完整性、本地静态资源、规则目录、执行中心和 artifact 写入能力。该接口只写本系统 SQLite 与 `data/artifacts/system-health-self-test`，不会启动或修改 Codex、Hermes、Claude Code、Cursor、MCP Server 或任何已安装 Agent。
 
@@ -109,7 +127,7 @@ $readResponse.StatusCode
 $readResponse.Content
 ```
 
-企业验收时，未知或暂未实现的写接口应返回 `501`，未知读接口应返回 `404`，响应中都应包含 `NOT_IMPLEMENTED` 和 `mutates_installed_agents=false`。系统会把请求摘要或读取路由写入 `audit_event`，不会执行扫描、发布、启动、停止、同步或修改已安装 Agent 的动作，也不会用 `items=[]` 伪造已实现集合。
+企业验收时，未登记的读写接口均应返回 `404`，响应中包含 `ROUTE_NOT_FOUND`、请求方法、路由和 `mutates_installed_agents=false`。系统会把脱敏请求摘要或读取路由写入 `audit_event`，不会执行扫描、发布、启动、停止、同步或修改已安装 Agent 的动作，也不会用固定成功或空集合伪造实现。已经登记但输入不合法的接口按语义返回 `4xx`，不得回落到通用成功分支。
 
 诊断场景只生成当前状态快照，不改写运行数据：
 
@@ -472,7 +490,7 @@ $completeness = Invoke-RestMethod http://127.0.0.1:8000/api/v1/completeness/expo
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($completeness.download)" -OutFile completeness-export.json
 ```
 
-`/api/v1/completeness` 的 `summary` 会从当前 V4.1 契约、`doc/agent_security_assessment_v4_1_full` 的 prototype/spec 文件、本机 SQLite 状态和本地规则目录派生。`/api/v1/completeness/export` 会写入 `completeness-export` artifact，并记录 `get.completeness.export` 审计事件；artifact 包含完整性行、汇总、prototype/spec/global spec/API contract/acceptance checklist/运行时代码文件的 `sha256` 与存在性。`E2E=NOT_ASSERTED` 表示当前只有契约/文档覆盖，尚未由自动化端到端用例证明；运维评审时不要把它解释为验收通过。完整性导出只读取本仓库和本系统 SQLite，不启动、不扫描、不修改已安装 Agent。
+`/api/v1/completeness` 的 `summary` 会从当前 180 个契约、`doc/agent_security_assessment_v4_1_full` 的 prototype/spec、SQLite 状态、本地规则和 commit 绑定的 E2E 结果派生。`/api/v1/completeness/export` 会写入 `completeness-export` artifact，并记录 `get.completeness.export` 审计事件。只有 JUnit XML 无失败/错误/跳过、声明测试名全部存在、8 个浏览器旅程与 PNG SHA/尺寸有效、结果未超过 72 小时且 commit 与当前 HEAD 一致时，58 页才能显示 `E2E=PASS`；缺失、过期或 commit 漂移均回落 `NOT_ASSERTED`，不能手工标记 PASS。完整性导出只读取本仓库和本系统 SQLite，不启动、不扫描、不修改已安装 Agent。
 
 完整性矩阵页面筛选验收：在 `/assessment/completeness` 输入页面、Route、API 或实体关键字，并切换分组和状态下拉，列表应只过滤当前 `/api/v1/completeness` 运行态行。筛选本身不得调用 `/export`、不得写 SQLite、不得扫描客户目录、不得执行脚本或启动/修改 Codex、Hermes、Claude Code、stdio MCP。
 
@@ -943,7 +961,7 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.asses
 Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/tasks/$($scan.assessment.id)/cancel" -Body (@{ reason = "维护窗口取消" } | ConvertTo-Json) -ContentType "application/json"
 ```
 
-`retry` 会基于原任务生成一个新的 `QUEUED` 测评记录和 `task.retry_queued` 事件，保留 `source_task_id` / `retry_of` 便于审计。该操作不复用旧结果、不启动 Codex/Hermes、不启动 stdio MCP Server，也不会发送 kill 或修改外部配置。
+`retry` 会基于原任务生成新的 `QUEUED` 测评和 `scan_job`，随后由有界 worker 执行真实发现、静态分析和报告阶段，并保留 `source_task_id` / `retry_of`、`process_execution`、`task_event` 与 `scan_event`。取消使用协作式检查点终止本系统扫描，不发送 OS kill，不启动或终止 Codex/Hermes/stdio MCP，也不修改外部配置。服务重启时残留 RUNNING 状态会被恢复为可审计失败状态，避免永久“运行中”。
 
 前端任务列表、任务详情页和失败 Job 行的“重试”按钮均调用同一个 `/api/v1/tasks/{id}/retry`，企业验收时可通过新任务 ID、事件流和 `audit_event` 交叉确认没有触碰外部 Agent 进程。
 
@@ -1218,70 +1236,122 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8000$($licenses.download)" -OutFile thi
 
 本仓库没有复制上述项目源码；当前交付以本地规则和自有 FastAPI/SQLite 管线为主。
 
-## v4.2.5 本地可观测性组件
+## 15. 本地可观测性与探针运维
 
 | 组件 | 地址 | 用途 |
 |---|---|---|
-| 主平台 API | `127.0.0.1:8000` | FastAPI + SPA |
-| OTel Receiver | `127.0.0.1:4318` | OTLP HTTP JSON traces/logs/metrics |
+| 主平台 API | `127.0.0.1:8000` | FastAPI、SPA、资产/扫描/报告/行为分析 API |
+| OTel Receiver | `127.0.0.1:4318` | OTLP/HTTP JSON traces、logs、metrics |
+
+Receiver 单独启动：
+
+```powershell
+$env:PYTHONPATH='src'
+.\.venv\Scripts\python.exe -m assessment.observability.receiver --host 127.0.0.1 --port 4318
+```
 
 健康检查：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/observability/health
-Invoke-RestMethod http://127.0.0.1:4318/healthz
-```
-
-关键表：`probe_event`、`otel_span`、`otel_log`、`otel_metric_point`、`behavior_edge`、`behavior_chain`、`behavior_anomaly`、`probe_install_plan`。
-
-故障处理：Collector 不可达时探针应 fail-open；SQLite 锁需停止重复 receiver；重复链通过 `chain_key` 幂等 upsert 避免重复创建。
-
-## v4.2.6 运维补充
-
-### OTel Receiver 单独启动
-
-```powershell
-$env:PYTHONPATH='src'
-python -m assessment.observability.receiver --host 127.0.0.1 --port 4318
-```
-
-### OTLP HTTP JSON 健康检查
-
-```powershell
 Invoke-RestMethod http://127.0.0.1:4318/healthz
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/observability/health
 ```
 
-`/api/v1/observability/health` 区分 `platform_api` 与独立 `receiver`。未启动独立 receiver 时不得把 receiver 误报为 ok。
+`/api/v1/observability/health` 区分主平台和独立 Receiver；Receiver 未启动时不得显示为健康。当前传输支持 OTLP/HTTP JSON 的 `/v1/traces`、`/v1/logs`、`/v1/metrics`，不支持 protobuf/gRPC。请求受 Content-Length、解压后体积、批次、事件、时间戳和 Trace/Span ID 校验约束。非 loopback 监听必须设置 `ASSESSMENT_ADMIN_TOKEN`。
 
-### 验收脚本
+关键表：`probe_event`、`otel_span`、`otel_log`、`otel_metric_point`、`behavior_edge`、`behavior_chain`、`behavior_anomaly`、`probe_install_plan`。入库前统一脱敏 resource、attributes、body 和事件元数据；`raw_capture_enabled=true` 被拒绝。
+
+Hermes 探针运维：
+
+1. 在 `/assessment/probes/install` 生成计划并核对 `before_hash`、备份、插件目录和 Collector。
+2. 默认操作不写 Agent；应用、禁用、修复、卸载、回滚必须提交精确 `plan_id` 与显式确认。
+3. 安装使用 Hermes 用户 plugin API，observe-only、fail-open；回调只入 2048 项有界队列，网络发送在后台线程执行，超时 200ms。
+4. Receiver 不可达时事件写入权限收紧的 1MiB 轮转缓冲，不阻断 Hermes；恢复后当前版本不自动重放，需由运维审批后导入。
+5. 卸载仅在配置 Hash 未漂移时精确恢复备份；检测到用户变更时只移除本产品 marker/plugin 并保留漂移内容。
+6. Codex 为 `DRY_RUN_ONLY`，不得用脚本直接写入 `~/.codex/config.toml`。
+
+发现命中 `display` 仅来源于只读解析，不执行 Skill、不启动 Agent/stdio MCP。本项目源码和 `doc` 被排除；`tests/fixtures` 等显式测试资产保留为 `test_asset`。
+
+## 16. 数据维护与交付
+
+Schema migration 在 `AssessmentStore.initialize()` 中自动执行。每个 SQL 文件按三位版本号排序，在独立事务中应用并写入 `schema_migration(version, checksum_sha256, applied_at)`；现有数据库有待执行迁移时，先在数据库同级 `migration-backups/` 创建 Online Backup。修改已应用迁移的内容会因 SHA-256 不一致而阻断启动，修复方式是新增更高版本迁移，不能覆盖历史 SQL。
+
+检查迁移状态：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\verify_v426_acceptance.ps1
+$env:PYTHONPATH = "src"
+@'
+from assessment.store import get_store
+store = get_store()
+store.initialize()
+with store.connect() as conn:
+    for row in conn.execute("SELECT version, checksum_sha256, applied_at FROM schema_migration ORDER BY version"):
+        print(dict(row))
+'@ | .\.venv\Scripts\python.exe -
 ```
 
-脚本优先使用 `uv run --with pytest --with httpx2` 隔离 pytest 环境，并清空外部 `PYTHONPATH`，避免宿主 Hermes venv 污染。
+当前发布必须看到 `001`、`002`、`003`。迁移失败时当前迁移事务回滚，启动失败并保留升级前备份；不要手工删除 `schema_migration` 绕过校验。
 
-## v4.2.7 Discovery 运维说明
+重置运行态数据：
 
-发现命中 `display` 字段仅来源于只读解析，不执行 Skill、不启动 Agent、不启动 stdio MCP。默认列表会隐藏本项目源码/文档历史命中，并标记 `self_project_policy=legacy_stale`；测试 fixture 保留为 `test_asset`。
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\reset_demo_state.ps1
+```
 
+脚本先使用 SQLite Backup API 备份，再清理任务、扫描、发现、风险、证据、报告、OTel 与行为分析运行表；产品规则、页面契约和模块设置保留。`-KeepDiscovery` 可保留真实发现资产。该脚本不扫描或修改 Agent 目录。
 
-## v4.2.8 运维补充
+敏感数据审计默认只读：
 
-验收脚本：`tools\verify_v428_asset_mcp_skill.ps1`。支持 `ASSESSMENT_DB_PATH`、`ASSESSMENT_STATE_ROOT` 指向临时目录。
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\audit_sensitive_data.ps1 -DataRoot .\data
+```
 
-## v4.2.9 一键交付
+只有显式 `-Apply` 才会先备份再原子脱敏本系统 SQLite/artifact，并在修改后重新审计；不会读取或写入 Codex/Hermes 配置。
 
-- 验收：`tools\verify_v429_final_acceptance.ps1`
-- 重置演示：`tools\reset_demo_state.ps1`
-- 导出交付包：`tools\export_final_delivery_package.ps1`
+正式保留策略先预览、后绑定计划执行：
 
-验收脚本会设置 `ASSESSMENT_DB_PATH`、`ASSESSMENT_ARTIFACT_ROOT`、`ASSESSMENT_STATE_ROOT` 到临时目录，避免污染正式库。
+```powershell
+$policies = @{ tasks = 180; events = 90; findings = 365; evidence = 365; reports = 365; observability = 30; artifacts = 365 }
+$preview = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/retention/preview -Body (@{ policies = $policies } | ConvertTo-Json -Depth 5) -ContentType "application/json"
+$preview.summary
 
-## v4.2.10 运维门禁
+$apply = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/retention/apply -Body (@{ policies = $preview.policies; plan_id = $preview.plan_id; confirmation = "APPLY_RETENTION" } | ConvertTo-Json -Depth 5) -ContentType "application/json"
+$apply.status
+$apply.backup
+```
 
-- `start_services.ps1`：拒绝占用端口，不杀外部进程。
-- `stop_services.ps1`：仅按 PID manifest 停止自有进程。
-- `tools/audit_sensitive_data.ps1`：扫描 SQLite/artifact 中的 Secret 形态。
-- `tools/export_final_delivery_package.ps1` + `tools/verify_delivery_package.ps1`：生成并离线校验发布包。
+执行时会重新计算候选集；计划已漂移则返回 `409`，必须重新预览。Apply 先备份 SQLite，再在单事务内清理到期的本系统运行记录，并对未被 Finding、Evidence、Report 等记录引用的过期 artifact 执行 GC。该流程不遍历、不移动、不删除 Codex/Hermes/Skill/MCP 的原始文件。
+
+Artifact 完整性与单独 GC：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/maintenance/artifacts/verify
+$gc = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/artifacts/gc-preview -Body (@{ min_age_days = 365 } | ConvertTo-Json) -ContentType "application/json"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/maintenance/artifacts/gc-apply -Body (@{ min_age_days = 365; plan_id = $gc.plan_id; confirmation = "APPLY_ARTIFACT_GC" } | ConvertTo-Json) -ContentType "application/json"
+```
+
+完整性检查验证 artifact 记录对应文件和 SHA-256。GC 只处理 artifact root 内未被引用且超过期限的文件，先备份数据库，再移动到 `<state>/backups/artifact-gc-*` 隔离目录并写 manifest；出现异常时已移动文件会恢复原位。
+
+## 17. v4.2.10 企业发布门禁
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.ps1
+```
+
+门禁顺序：Python/Node 语法 -> 58 页离线前端 -> 8 条真实 Chromium 旅程 -> 完整非浏览器测试 -> JUnit/PNG/commit 绑定验收结果 -> 58/58 完整度 -> 本机 Codex/Hermes 只读发现与配置级扫描 -> 自有服务/外部进程隔离 -> 敏感数据审计 -> wheel/sdist/SBOM/OpenAPI/样例证据打包 -> manifest SHA 和全新 venv 离线安装验证。
+
+门禁将 `ASSESSMENT_DB_PATH`、`ASSESSMENT_ARTIFACT_ROOT`、`ASSESSMENT_STATE_ROOT` 和 E2E 结果全部指向临时目录，并在开始/结束计算正式 SQLite、正式 artifact 与 Codex/Hermes 配置指纹。任一受保护文件变化即失败。
+
+交付包：
+
+- `dist/*.whl`、`dist/*.tar.gz`、`uv.lock`、SBOM、OpenAPI。
+- 运维脚本、用户/部署/安全/验收文档。
+- 8 张真实浏览器截图、两份 JUnit XML、commit 绑定验收 JSON。
+- 隔离 fixture 扫描样例及脱敏 artifact。
+- 全文件 SHA-256 manifest；绝对开发机路径会在 staging 阶段替换。
+
+发布包不包含正式数据库、客户扫描数据、Agent 配置或明文 Secret。验证命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify_delivery_package.ps1 -PackagePath <zip-path>
+```

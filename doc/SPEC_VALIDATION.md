@@ -1,4 +1,4 @@
-# V4.1 SPEC 生成与校验记录
+# V4.1 基线与 v4.2.10 企业发布校验记录
 
 生成时间：2026-06-26
 
@@ -87,7 +87,7 @@ v4.2.6 acceptance verification passed
 ## v4.2.7 Discovery Experience 验收
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\erify_v427_discovery.ps1
+powershell -ExecutionPolicy Bypass -File tools\verify_v427_discovery.ps1
 ```
 
 核心检查：
@@ -132,4 +132,23 @@ powershell -ExecutionPolicy Bypass -File tools\verify_v429_final_acceptance.ps1
 powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.ps1
 ```
 
-关键断言：58 页面、58 audit PASS、58 contract PASS、58 E2E PASS、0 gaps；E2E PASS 必须绑定当前 commit、测试名和真实 PNG 截图 SHA。
+关键断言：
+
+- 58 页面、58 audit PASS、58 contract PASS、58 E2E PASS、0 gaps。
+- E2E PASS 必须由无 failure/error/skip 的 JUnit XML生成，绑定当前 commit、声明测试名和 8 张真实 PNG 的 SHA-256/尺寸；结果超过 72 小时或 commit 漂移即失效。
+- 8 条 Chromium 旅程检查 console/page error、外网请求、页面动作和 Codex/Hermes 配置前后哈希。
+- 在隔离数据库中真实发现本机 Codex/Hermes，并分别对发现到的配置做有界只读扫描，生成 Finding/Evidence/Report 摘要；配置逐文件 Hash 必须不变。
+- Hermes 探针生命周期只在临时 Home 中测试 apply/self-test/disable/uninstall/rollback；真实本机验收只生成 dry-run 计划，不应用探针。
+- 服务所有权测试必须证明外部端口进程存活、伪造 manifest 被拒绝、自有主平台和 Receiver 可启动并精确停止。
+- 敏感数据审计、交付包 manifest 校验和全新 venv wheel import smoke 均通过。
+
+验收输出位于脚本打印的临时 `run root`，包含 `latest-e2e-result.json`、JUnit、浏览器截图、`live-machine-readonly.json` 和最终 ZIP。发布结论必须引用该次实际输出，不能沿用历史 PASS 文本。
+
+提交前收敛回归（2026-07-10）：
+
+```text
+tests --ignore=tests/browser: 208 passed in 300.96s
+tests/browser/test_enterprise_journeys.py: 8 passed in 61.03s
+```
+
+本轮新增验证覆盖 schema migration 校验和/回滚、retention 计划绑定、artifact 引用感知 GC、10,000 事件批量/幂等/脱敏、增量复扫、任务取消/恢复、报告上下文返回和 1366/1440/1920/390 四类视口。上述数字是提交前开发证据；正式 PASS 仍以提交后运行 `verify_v4210_enterprise_release.ps1` 的机器结果为准。

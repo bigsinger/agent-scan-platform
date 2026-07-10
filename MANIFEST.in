@@ -1,0 +1,5 @@
+prune tests
+prune doc
+prune data
+prune logs
+global-exclude __pycache__ *.py[cod] *.db *.db-wal *.db-shm

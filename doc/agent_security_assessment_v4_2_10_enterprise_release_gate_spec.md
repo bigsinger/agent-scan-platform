@@ -2,7 +2,7 @@
 
 版本：`v4.2.10-enterprise-release-gate`
 
-文档状态：开发基线 / 企业发布阻断项整改
+文档状态：开发基线 / 已实施；第 1-2 章保留整改前历史评估，最终闭环见第 15 章
 
 适用仓库：`F:\bigsinger\agent-scan-platform`
 
@@ -11,6 +11,8 @@
 评估日期：2026-07-10
 
 目标读者：直接实施本迭代的开发 AI、测试人员、产品验收人员、企业 POC 运维人员
+
+> 阅读说明：第 1-2 章记录基线提交 `ad82350` 的整改前 FAIL 事实，不代表当前工作树或最终提交结论。实现完成状态、回归结果和剩余边界统一以第 15 章及提交后机器发布门禁为准。
 
 ## 1. 结论先行
 
@@ -954,5 +956,44 @@ powershell -ExecutionPolicy Bypass -File tools\verify_delivery_package.ps1 -Pack
 12. 最终交付包路径、大小和 manifest SHA-256
 13. 已知限制和未完成项
 ```
+
+## 15. v4.2.10 实施闭环（2026-07-10）
+
+### 15.1 任务完成矩阵
+
+| 任务 | 状态 | 实现与机器证据 |
+|---|---|---|
+| T01 | DONE | E2E 结果解析 JUnit，绑定 Git HEAD、测试名、72 小时有效期和 8 张 PNG SHA/尺寸；所有门禁完成前只写 pending 文件 |
+| T02 | DONE | `SensitiveDataGuard` 覆盖 SQLite、artifact、audit、Probe 解析/发送/buffer 和 OTel normalize/storage；发布门禁执行隔离与本机运行根双重审计 |
+| T03 | DONE | 服务 PID manifest 校验 PID、启动时间、可执行路径、命令哈希、父子关系和端口；外部进程、伪造 manifest、自有生命周期均有测试 |
+| T04 | DONE | 逻辑 Finding rollup，occurrence 写 `finding_instance`；规则样本建立 precision/recall 门禁；suppression 支持创建、到期和撤销 |
+| T05 | DONE | machine 默认异步 202；Task/Job/Process/Event 持久化，支持协作取消、重试、冷启动恢复和文件分析/Evidence 增量复用 |
+| T06 | DONE | loopback 默认、非 loopback 强 Token、管理 API Token、Trusted Host/CORS、安全响应头、实际 body 限制、下载根目录/大小限制和关联 ID 审计 |
+| T07 | DONE | Hermes 真实 user plugin 生命周期需计划 ID、确认、备份、漂移检查和回滚；Codex 无稳定 Hook 时诚实返回 `DRY_RUN_ONLY` |
+| T08 | DONE | OTLP/HTTP JSON traces/logs/metrics 校验、限流、有界 gzip、批量事务、幂等、全字段脱敏和 retention；10,000 事件基准进入自动测试 |
+| T09 | DONE | 重置先备份且 `KeepDiscovery` 可验证；`001`-`003` 事务 migration 带校验和/升级备份；retention 和 artifact GC 均使用未漂移计划 ID |
+| T10 | DONE | ZIP 包含 wheel/sdist、lock、SBOM、OpenAPI、migration、依赖审计、敏感审计、JUnit/PNG/验收 JSON、样例 Evidence 和逐文件 SHA；全新 venv smoke |
+| T11 | DONE | 版本统一为 4.2.10 / 58 页面；运维、用户、安全、验收和发布文档同步真实能力边界 |
+| T12 | DONE | 8 条真实 Chromium 旅程覆盖 1366、1440、1920 和 390 视口，检查 label、根级溢出、console/page error、外网请求和报告返回上下文 |
+| T13 | DONE (minimum RC split) | 删除 v429 临时/失效分支；Finding、maintenance、observability 拆为 router/service，前端运行时请求/鉴权/错误归一拆到 `runtime.js`；其余页面域继续渐进拆分，不阻断单机 RC |
+
+### 15.2 提交前回归结果
+
+```text
+non-browser pytest: 208 passed in 300.96s
+Chromium enterprise journeys: 8 passed in 61.03s
+targeted OTel 10,000 events: accepted=10,000, persisted=10,000, plaintext secret=0
+git diff --check: no whitespace errors
+```
+
+上述结果均使用临时 DB、state 和 artifact 根目录；浏览器夹具还比较 Codex/Hermes 配置前后 SHA-256。最终提交后仍必须执行 `tools/verify_v4210_enterprise_release.ps1`，只有该脚本输出退出码 0、发布 commit 绑定结果和完整 ZIP，才把本版本判定为企业本地 POC/客户测评可交付。
+
+### 15.3 明确交付边界
+
+- 稳定交付格式为 HTML/JSON；PDF 不是 v4.2.10 必交项。
+- Codex 可发现、扫描和 Guard 检查，但没有已验证官方 Hook 时不安装探针。
+- Hermes 探针默认不安装，只有客户显式确认计划后才修改其用户插件配置；常规验收只在临时 Home 演练生命周期。
+- 本版本面向 loopback 单机和受控内网私有化评估；多租户 IAM、OTLP protobuf/gRPC、集群调度和 HA 需要由企业主平台提供或进入后续版本。
+- 这些边界不影响本版本目标：本地立即测试、真实发现/扫描/证据/报告/Guard/OTel 闭环，以及在不干扰已安装 Agent 前提下供企业客户实际测评。
 
 任何未完成项必须保持 FAIL/NOT_ASSERTED，禁止通过改文档或 manifest 隐藏。

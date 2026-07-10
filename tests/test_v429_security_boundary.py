@@ -9,9 +9,11 @@ def test_v429_security_boundary_localhost_and_admin_protection():
     health = client.get('/api/v1/health').json()
     assert health['status'] == 'ok'
     assert 'secret' not in str(health).lower()
-    rejected = client.post('/api/v1/settings', json={'bind_host': '0.0.0.0', 'host_platform_managed': False}).json()
-    assert rejected.get('rejected') is True or rejected.get('ok') is False
-    allowed = client.post('/api/v1/settings', json={'bind_host': '127.0.0.1', 'host_platform_managed': False}).json()
+    rejected = client.post('/api/v1/settings', json={'bind_host': '0.0.0.0', 'host_platform_managed': False})
+    assert rejected.status_code == 422
+    allowed_response = client.post('/api/v1/settings', json={'bind_host': '127.0.0.1', 'host_platform_managed': False})
+    assert allowed_response.status_code == 200
+    allowed = allowed_response.json()
     assert allowed.get('ok') is True
 
 

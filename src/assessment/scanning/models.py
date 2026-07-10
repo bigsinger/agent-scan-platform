@@ -32,6 +32,7 @@ class ScanRequest:
     user_scope: str = "current-user"
     execution_mode: str = "readonly"
     dry_run_redteam_requested: bool = False
+    refresh_agent_versions: bool = False
     limits: ScanLimits = field(default_factory=ScanLimits)
 
     @classmethod
@@ -70,6 +71,7 @@ class ScanRequest:
             user_scope=normalize_user_scope(payload.get("user_scope") or payload.get("userScope") or payload.get("scope")),
             execution_mode=normalize_execution_mode(payload.get("execution_mode") or payload.get("executionMode")),
             dry_run_redteam_requested=flag(payload, ("dry_run_redteam_requested", "dryRunRedteamRequested"), False),
+            refresh_agent_versions=flag(payload, ("refresh_agent_versions", "refreshAgentVersions"), False),
             limits=ScanLimits(max_files=max_files, max_file_bytes=max_file_bytes, max_depth=max_depth),
         )
 
@@ -99,6 +101,7 @@ class ScanRequest:
             "agent_runtime_started": False,
             "dry_run_redteam_requested": dry_run_requested,
             "dry_run_redteam_executed": False,
+            "refresh_agent_versions": self.refresh_agent_versions,
         }
 
 
@@ -179,6 +182,9 @@ class RuleMatch:
     snippet: str
     reason: str
     source: str = "local-static"
+    context: str = "unknown"
+    original_severity: str = ""
+    review_signal: bool = False
 
 
 @dataclass(slots=True)

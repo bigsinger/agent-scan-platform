@@ -8,7 +8,10 @@ from assessment.contracts import completeness_rows
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "src" / "assessment" / "static"
-REMOTE_PATTERN = re.compile(r"https?://|//unpkg|//cdn|//cdnjs|fonts\.googleapis", re.IGNORECASE)
+REMOTE_PATTERN = re.compile(
+    r"https?://(?!127\.0\.0\.1(?::\d+)?(?:/|$)|localhost(?::\d+)?(?:/|$)|\[::1\](?::\d+)?(?:/|$))|//unpkg|//cdn|//cdnjs|fonts\.googleapis",
+    re.IGNORECASE,
+)
 
 
 def test_frontend_assets_are_local_and_boot_guarded():
@@ -20,10 +23,22 @@ def test_frontend_assets_are_local_and_boot_guarded():
     for path in [
         STATIC / "assessment" / "index.html",
         STATIC / "assessment" / "app.js",
+        STATIC / "assessment" / "runtime.js",
         STATIC / "assessment" / "seed.js",
         STATIC / "assessment" / "style.css",
     ]:
         assert not REMOTE_PATTERN.search(path.read_text(encoding="utf-8")), path
+
+
+def test_frontend_runtime_module_owns_api_and_accessibility_boundaries():
+    runtime = (STATIC / "assessment" / "runtime.js").read_text(encoding="utf-8")
+    html = (STATIC / "assessment" / "index.html").read_text(encoding="utf-8")
+    app = (STATIC / "assessment" / "app.js").read_text(encoding="utf-8")
+    assert '/static/assessment/runtime.js?v=4.2.10' in html
+    assert 'window.AssessmentRuntime = {request, describeError, enhanceAccessibility, installAccessibility}' in runtime
+    assert "sessionStorage.getItem('assessment_admin_token')" in runtime
+    assert "label.htmlFor = control.id" in runtime
+    assert "window.AssessmentRuntime.request(path, options)" in app
 
 
 def test_vendor_manifest_matches_vue_runtime():

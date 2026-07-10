@@ -10,7 +10,8 @@ client = TestClient(app)
 NEW_IDS = {"P49","P50","P51","P52","P53","P54","D19","D20","D21","D22"}
 
 
-def test_v426_observability_routes_and_page_contracts():
+def test_v426_observability_routes_and_page_contracts(monkeypatch, tmp_path):
+    monkeypatch.setenv('ASSESSMENT_E2E_RESULT_PATH', str(tmp_path / 'missing-result.json'))
     html = client.get('/assessment/probes').text
     assert 'id="app"' in html
     payload = client.get('/api/v1/completeness?page_size=200').json()
@@ -19,7 +20,7 @@ def test_v426_observability_routes_and_page_contracts():
     for pid in NEW_IDS:
         assert rows[pid]['audit'] == 'PASS'
         assert rows[pid]['contract'] == 'PASS'
-        assert rows[pid]['e2e'] == 'PASS'
+        assert rows[pid]['e2e'] == 'NOT_ASSERTED'
         assert rows[pid]['e2e_evidence']['test_file_exists'] is True
 
 
