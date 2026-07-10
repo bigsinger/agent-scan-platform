@@ -60,8 +60,21 @@ try {
         if (-not (Test-Path -LiteralPath $path) -or (Get-FileSha256 $path) -ne ([string]$entry.sha256).ToLowerInvariant()) { throw "sample evidence hash mismatch: $($entry.path)" }
     }
     $dependencyAudit = Get-Content -LiteralPath (Join-Path $Temp "dependency-audit.json") -Raw | ConvertFrom-Json
-    $vulnerabilityCount = @($dependencyAudit.dependencies | ForEach-Object { @($_.vulns) }).Count
+    $vulnerabilities = @(
+        foreach ($dependency in @($dependencyAudit.dependencies)) {
+            foreach ($vulnerability in @($dependency.vulns)) {
+                if ($null -ne $vulnerability) { $vulnerability }
+            }
+        }
+    )
+    $vulnerabilityCount = $vulnerabilities.Count
     if ($vulnerabilityCount -ne 0) { throw "dependency audit contains $vulnerabilityCount vulnerabilities" }
+    $unexpectedSkips = @(
+        $dependencyAudit.dependencies | Where-Object {
+            $_.skip_reason -and $_.name -ne "agent-security-assessment"
+        }
+    )
+    if ($unexpectedSkips.Count -ne 0) { throw "dependency audit unexpectedly skipped $($unexpectedSkips.Count) third-party dependencies" }
     $migrationManifest = Get-Content -LiteralPath (Join-Path $Temp "migration-manifest.json") -Raw | ConvertFrom-Json
     if ($migrationManifest.current_version -ne "4.2.10" -or @($migrationManifest.migrations).Count -lt 3) { throw "migration manifest is incomplete" }
     foreach ($migration in $migrationManifest.migrations) {
@@ -77,16 +90,17 @@ try {
 
     $wheel = Get-ChildItem -LiteralPath (Join-Path $Temp "dist") -Filter "*.whl" -File | Select-Object -First 1
     $Venv = Join-Path $Temp "wheel-smoke-venv"
+    $env:PYTHONPATH = ""
+    $env:PYTHONNOUSERSITE = "1"
     & python -m venv --system-site-packages $Venv
     if ($LASTEXITCODE -ne 0) { throw "fresh wheel smoke venv creation failed" }
     $VenvPython = Join-Path $Venv "Scripts\python.exe"
-    & $VenvPython -m pip install --no-deps $wheel.FullName | Out-Null
+    & $VenvPython -m pip install --force-reinstall --no-deps $wheel.FullName | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "wheel installation failed" }
     $env:ASSESSMENT_DB_PATH = Join-Path $Temp "wheel-smoke.db"
     $env:ASSESSMENT_STATE_ROOT = Join-Path $Temp "wheel-smoke-state"
     $env:ASSESSMENT_ARTIFACT_ROOT = Join-Path $Temp "wheel-smoke-artifacts"
-    $env:PYTHONPATH = ""
-    & $VenvPython -c "from assessment.main import app; assert app.version == '4.2.10'; print('wheel import smoke PASS')"
+    & $VenvPython -c "import sys; from pathlib import Path; import assessment; from assessment.main import app; module=Path(assessment.__file__).resolve(); prefix=Path(sys.prefix).resolve(); assert module.is_relative_to(prefix), f'{module} is outside {prefix}'; assert app.version == '4.2.10'; print(f'wheel import smoke PASS: {module}')"
     if ($LASTEXITCODE -ne 0) { throw "installed wheel import smoke failed" }
     Write-Host "delivery package verified: $PackagePath"
 }

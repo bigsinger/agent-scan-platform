@@ -211,6 +211,11 @@ Path(sys.argv[3]).write_text(json.dumps(summary, ensure_ascii=False, indent=2), 
         $content = Get-Content -LiteralPath $_.FullName -Raw
         $sanitized = $content.Replace("F:\bigsinger\agent-scan-platform", "<install-root>")
         $sanitized = [regex]::Replace($sanitized, '(?i)C:\\Users\\[^\\\s"'']+', '<user-home>')
+        $sanitized = [regex]::Replace(
+            $sanitized,
+            'sk-[A-Za-z0-9_-]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}',
+            '<redacted-secret>'
+        )
         if ($sanitized -ne $content) { Set-Content -LiteralPath $_.FullName -Value $sanitized -Encoding UTF8 }
     }
 

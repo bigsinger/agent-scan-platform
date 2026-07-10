@@ -4,6 +4,8 @@ import sqlite3
 import subprocess
 import hashlib
 import datetime
+import re
+import zipfile
 from pathlib import Path
 
 
@@ -47,4 +49,18 @@ def test_v4210_delivery_package_manifest_contains_hashes(tmp_path, monkeypatch):
     data = json.loads(manifest.read_text(encoding='utf-8-sig'))
     assert data['schema'] == 'agent-security-final-delivery@4.2.10'
     assert any(item['path'].startswith('dist/') and item['sha256'] for item in data['files'])
-    assert list(out.glob('agent-security-assessment-v4.2.10-*.zip'))
+    packages = list(out.glob('agent-security-assessment-v4.2.10-*.zip'))
+    assert packages
+    with zipfile.ZipFile(packages[0]) as archive:
+        packaged_text = '\n'.join(
+            archive.read(name).decode('utf-8-sig', errors='replace')
+            for name in archive.namelist()
+            if Path(name).suffix.lower() in {'.json', '.md', '.txt', '.ps1', '.toml', '.yaml', '.yml', '.html'}
+            and archive.getinfo(name).file_size < 5 * 1024 * 1024
+        )
+    assert not re.search(r'sk-[A-Za-z0-9_-]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}', packaged_text)
+    verified = subprocess.run(
+        ['powershell', '-ExecutionPolicy', 'Bypass', '-File', 'tools/verify_delivery_package.ps1', '-PackagePath', str(packages[0])],
+        cwd=Path.cwd(), capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120,
+    )
+    assert verified.returncode == 0, verified.stdout + verified.stderr
