@@ -446,7 +446,7 @@ def install_contract_openapi(app: FastAPI) -> None:
                 continue
             operation: dict[str, Any] = {
                 "tags": ["assessment"],
-                "summary": f"V4.1 contract: {method} {path}",
+                "summary": f"V4.2.10 contract: {method} {path}",
                 "operationId": operation_id(method, path),
                 "responses": {
                     "200": {

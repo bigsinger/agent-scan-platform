@@ -197,3 +197,13 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/settings/test -
 $export = Invoke-RestMethod http://127.0.0.1:8000/api/v1/settings/export
 Invoke-WebRequest -Uri "http://127.0.0.1:8000$($export.download)" -OutFile module-settings.json
 ```
+
+## v4.2.10 Enterprise Release Gate
+
+Run the enterprise release gate before delivery:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.ps1
+```
+
+The gate uses isolated DB/artifact/state roots, real Chromium journeys, commit-bound E2E evidence, sensitive-data audit, and offline delivery-package verification.

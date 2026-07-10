@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from .contracts import completeness_rows
+from .security import SensitiveDataError, SensitiveDataGuard
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -366,7 +367,7 @@ class AssessmentStore:
         now = utc_now()
         conn.execute(
             "INSERT OR REPLACE INTO app_metadata(key, value, updated_at) VALUES (?, ?, ?)",
-            ("app_version", "4.1.0", now),
+            ("app_version", "4.2.10", now),
         )
         existing = conn.execute("SELECT value_json FROM app_setting WHERE key='ui_state'").fetchone()
         if existing:
@@ -477,7 +478,7 @@ class AssessmentStore:
             record = {**record, "id": new_id(table[:3])}
         now = utc_now()
         row_status = status or str(record.get("status") or "ACTIVE")
-        row = dict(record)
+        row = SensitiveDataGuard.sanitize_for_persist(dict(record))
         row.setdefault("status", row_status)
         with self._lock, self.connect() as conn:
             existing = conn.execute(f"SELECT created_at FROM {table} WHERE id=?", (row["id"],)).fetchone()
@@ -597,18 +598,19 @@ class AssessmentStore:
         base_dir = ARTIFACT_ROOT / directory / today.strftime("%Y") / today.strftime("%m")
         base_dir.mkdir(parents=True, exist_ok=True)
         path = base_dir / f"{artifact_id}.{safe_suffix}"
-        if isinstance(content, bytes):
-            path.write_bytes(content)
+        safe_content = SensitiveDataGuard.sanitize_for_persist(content)
+        if isinstance(safe_content, bytes):
+            path.write_bytes(safe_content)
         else:
-            path.write_text(content, encoding="utf-8")
+            path.write_text(str(safe_content), encoding="utf-8")
         relative_path = str(path.relative_to(DATA_DIR)).replace("\\", "/") if DATA_DIR in path.parents else str((Path("artifacts") / directory / today.strftime("%Y") / today.strftime("%m") / path.name)).replace("\\", "/")
         mirror_path = DATA_DIR / relative_path
         if mirror_path.resolve() != path.resolve():
             mirror_path.parent.mkdir(parents=True, exist_ok=True)
-            if isinstance(content, bytes):
-                mirror_path.write_bytes(content)
+            if isinstance(safe_content, bytes):
+                mirror_path.write_bytes(safe_content)
             else:
-                mirror_path.write_text(content, encoding="utf-8")
+                mirror_path.write_text(str(safe_content), encoding="utf-8")
         record = {
             "id": artifact_id,
             "kind": kind,
@@ -617,7 +619,7 @@ class AssessmentStore:
             "sha256": file_sha256(path),
             "size": path.stat().st_size,
             "content_type": content_type_for_suffix(safe_suffix),
-            "metadata": metadata or {},
+            "metadata": SensitiveDataGuard.sanitize_for_persist(metadata or {}),
             "created_at": utc_now(),
         }
         return self.upsert_record("artifact", record, status="READY")
@@ -642,7 +644,7 @@ class AssessmentStore:
             INSERT INTO audit_event(actor, action, object_type, object_id, payload_json, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            ("local-user", action, object_type, object_id, json.dumps(payload, ensure_ascii=False), created_at),
+            ("local-user", action, object_type, object_id, json.dumps(SensitiveDataGuard.sanitize_for_persist(payload), ensure_ascii=False), created_at),
         )
         seq = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         return {
@@ -715,7 +717,7 @@ class AssessmentStore:
             "relative_path": str(destination.relative_to(DATA_DIR)).replace("\\", "/"),
             "sha256": sha256,
             "size": destination.stat().st_size,
-            "schema_version": "4.1.0",
+            "schema_version": "4.2.10",
             "created_at": utc_now(),
         }
         with self._lock, self.connect() as conn:
@@ -781,7 +783,7 @@ def runtime_empty_seed_state(state: dict) -> dict:
         {
             "adapter": "auto-detect",
             "target": "local-machine",
-            "profile": "standard-complete@4.1.0",
+            "profile": "standard-complete@4.2.10",
             "safe_mode": "local-readonly",
             "remote_analysis": False,
             "mutates_installed_agents": False,

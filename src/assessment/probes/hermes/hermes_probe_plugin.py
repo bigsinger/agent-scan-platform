@@ -223,65 +223,192 @@ if register_hook:
 '''
 
 
-# ── Install Plan 生成 ────────────────────────────────────────
+# ── Install Plan 与能力生命周期 ────────────────────────────────
 
-def generate_install_plan(dry_run: bool = True) -> dict[str, Any]:
-    """生成 Hermes 探针安装计划 (dry-run 模式)."""
-    hermes_config = _find_hermes_config()
-    steps: list[dict[str, Any]] = []
-    rollback: list[dict[str, Any]] = []
+PROBE_MARKER_BEGIN = "# agent-scan-platform hermes probe begin"
+PROBE_MARKER_END = "# agent-scan-platform hermes probe end"
+PROBE_DISABLED_MARKER = "# agent-scan-platform hermes probe disabled"
+PROBE_HOOK_EVENTS = ("pre_llm_call", "post_llm_call", "pre_tool_call", "post_tool_call")
 
-    if not hermes_config:
-        return {
-            "agent_type": "hermes",
-            "install_status": "not_found",
-            "note": "未发现 Hermes 配置文件 (~/.hermes/config.yaml 或 config.yml)",
-            "steps": [],
-            "rollback": [],
-        }
 
-    backup_path = hermes_config.parent / "config.yaml.probe_backup"
-    before_hash = _file_hash(hermes_config)
-    hooks_exist = _check_hooks_exist(hermes_config)
+def _default_command_runner(command: list[str]) -> tuple[int, str, str]:
+    """Run a read-only Hermes capability command with a bounded timeout."""
+    import subprocess
 
-    steps.append({
-        "action": "backup",
-        "description": f"备份当前配置到 {backup_path}",
-        "source": str(hermes_config),
-        "target": str(backup_path),
-    })
-    rollback.insert(0, {
-        "action": "restore",
-        "description": f"从 {backup_path} 恢复配置",
-        "source": str(backup_path),
-        "target": str(hermes_config),
-    })
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=2, check=False)
+        return completed.returncode, completed.stdout or "", completed.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", type(exc).__name__
 
-    if not hooks_exist:
-        steps.append({
-            "action": "modify_config",
-            "description": "在 Hermes 配置中添加 hooks/probe_plugin 段落",
-            "target": str(hermes_config),
-            "before_hash": before_hash,
-            "diff_preview": "添加 hooks.probe_plugin 章节, 注册 pre_llm_call/ post_llm_call/ pre_tool_call/ post_tool_call",
-        })
-        rollback.insert(0, {
-            "action": "restore_config",
-            "description": "从备份还原 Hermes 配置",
-            "target": str(hermes_config),
-            "before_hash": before_hash,
-        })
 
+def _probe_marker_state(config_path: Path) -> str:
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return "absent"
+    if PROBE_MARKER_BEGIN not in text or PROBE_MARKER_END not in text:
+        return "absent"
+    return "disabled" if PROBE_DISABLED_MARKER in text else "enabled"
+
+
+def capability_probe(
+    *,
+    config_path: Path | None = None,
+    command_runner: Any | None = None,
+) -> dict[str, Any]:
+    """Read capability evidence without treating generic config text as a probe.
+
+    An active probe is recognized only by this product's bounded marker. Command
+    output is retained as evidence, but an empty plugin listing can never promote
+    a generic ``hooks:`` stanza to an installed probe.
+    """
+    config = config_path or _find_hermes_config()
+    runner = command_runner or _default_command_runner
+    commands = [["hermes", "--version"], ["hermes", "hooks", "list"], ["hermes", "hooks", "doctor"], ["hermes", "plugins", "list", "--plain", "--no-bundled"]]
+    evidence = []
+    for command in commands:
+        try:
+            code, stdout, stderr = runner(command)
+        except Exception as exc:  # capability inspection is always fail-open
+            code, stdout, stderr = 127, "", type(exc).__name__
+        evidence.append({"command": command, "exit_code": int(code), "stdout": str(stdout)[:1000], "stderr": str(stderr)[:500]})
+
+    marker_state = _probe_marker_state(config) if config else "absent"
+    installed = marker_state == "enabled"
     return {
         "agent_type": "hermes",
-        "install_status": "installed" if hooks_exist else "ready_to_install",
-        "target_config_path": str(hermes_config),
-        "backup_path": str(backup_path),
-        "before_hash": before_hash,
-        "steps": steps,
-        "rollback": rollback,
-        "hooks_exist": hooks_exist,
+        "status": "INSTALLED_DEGRADED" if installed else "NOT_INSTALLED",
+        "installed": installed,
+        "capability_status": "SUPPORTED_PARTIAL" if config else "NOT_INSTALLED",
+        "config_path": str(config) if config else None,
+        "marker_state": marker_state,
+        "evidence": evidence,
+        "supports_apply": bool(config),
+        "supports_uninstall": bool(config),
+        "supports_rollback": bool(config),
+        "supports_synthetic_self_test": bool(config),
     }
+
+
+def _file_hash(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _plan_id(config_path: Path, before_hash: str) -> str:
+    return "hermes-plan-" + hashlib.sha256(f"{config_path}:{before_hash}".encode()).hexdigest()[:16]
+
+
+def generate_install_plan(dry_run: bool = True, *, config_path: Path | str | None = None) -> dict[str, Any]:
+    """Return a truthful, non-mutating Hermes installation plan.
+
+    This function never applies a configuration change, even when callers pass
+    ``dry_run=False``; apply is a separate plan-ID-confirmed operation.
+    """
+    config = Path(config_path) if config_path else _find_hermes_config()
+    if not config or not config.is_file():
+        return {
+            "agent_type": "hermes", "install_status": "NOT_INSTALLED", "capability_status": "NOT_INSTALLED",
+            "dry_run": True, "note": "未发现 Hermes 配置文件，未生成可应用计划", "steps": [], "rollback": [],
+        }
+    before_hash = _file_hash(config)
+    backup = config.with_name(config.name + ".agent_scan_probe_backup")
+    plugin_path = config.parent / "agent_scan_hermes_probe.py"
+    capability = capability_probe(config_path=config)
+    if capability["installed"]:
+        return {
+            "agent_type": "hermes", "install_status": "INSTALLED_DEGRADED", "capability_status": "INSTALLED_DEGRADED",
+            "dry_run": True, "plan_id": _plan_id(config, before_hash), "target_config_path": str(config),
+            "steps": [], "rollback": [], "note": "已发现本产品探针标记；仍需运行自测确认健康状态", "capability": capability,
+        }
+    steps = [
+        {"action": "backup", "source": str(config), "target": str(backup), "before_hash": before_hash},
+        {"action": "write_plugin", "target": str(plugin_path), "content_hash": hashlib.sha256(generate_hermes_plugin_code().encode()).hexdigest()},
+        {"action": "atomic_replace_config", "target": str(config), "diff_preview": "添加受限 agent-scan Hermes probe 配置标记；事件=" + ",".join(PROBE_HOOK_EVENTS), "timeout_ms": 200},
+        {"action": "synthetic_self_test", "description": "仅构造 probe.health 事件，不发送真实用户 Prompt"},
+    ]
+    rollback = [
+        {"action": "restore_config", "source": str(backup), "target": str(config)},
+        {"action": "delete_file", "target": str(plugin_path)},
+    ]
+    return {
+        "agent_type": "hermes", "install_status": "SUPPORTED_PARTIAL", "capability_status": "SUPPORTED_PARTIAL",
+        "dry_run": True, "plan_id": _plan_id(config, before_hash), "target_config_path": str(config),
+        "backup_path": str(backup), "plugin_path": str(plugin_path), "before_hash": before_hash,
+        "steps": steps, "rollback": rollback, "hooks_exist": False, "capability": capability,
+    }
+
+
+def _probe_config_block(disabled: bool = False) -> str:
+    lines = [PROBE_MARKER_BEGIN]
+    if disabled:
+        lines.append(PROBE_DISABLED_MARKER)
+    lines.extend(["# lifecycle events: " + ", ".join(PROBE_HOOK_EVENTS), "# fail_open: true; timeout_ms: 200", PROBE_MARKER_END])
+    return "\n".join(lines) + "\n"
+
+
+def _write_atomic(path: Path, content: str) -> None:
+    temporary = path.with_name(path.name + ".agent_scan_probe_tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+
+
+def apply_install_plan(plan: dict[str, Any], *, confirmed_plan_id: str) -> dict[str, Any]:
+    """Apply exactly one reviewed Hermes plan after explicit ID confirmation."""
+    if not confirmed_plan_id or confirmed_plan_id != plan.get("plan_id"):
+        raise ValueError("explicit confirmation for this plan_id is required")
+    config = Path(plan["target_config_path"])
+    if not config.is_file() or _file_hash(config) != plan.get("before_hash"):
+        raise ValueError("target configuration changed or is unavailable; regenerate the plan")
+    backup = Path(plan["backup_path"])
+    plugin_path = Path(plan["plugin_path"])
+    backup.write_bytes(config.read_bytes())
+    try:
+        plugin_path.write_text(generate_hermes_plugin_code(), encoding="utf-8")
+        current = config.read_text(encoding="utf-8")
+        _write_atomic(config, current.rstrip() + "\n" + _probe_config_block())
+    except Exception:
+        if backup.exists():
+            _write_atomic(config, backup.read_text(encoding="utf-8"))
+        raise
+    return {"status": "INSTALLED_DEGRADED", "plan_id": plan["plan_id"], "config_path": str(config), "self_test_required": True}
+
+
+def run_synthetic_self_test(*, config_path: Path | str) -> dict[str, Any]:
+    """Validate only the installed marker and generated plugin; no agent command runs."""
+    config = Path(config_path)
+    state = _probe_marker_state(config)
+    return {"passed": state == "enabled", "status": "INSTALLED_DEGRADED" if state == "enabled" else "NOT_INSTALLED", "event_type": "probe.health", "synthetic": True}
+
+
+def disable_probe(*, config_path: Path | str) -> dict[str, Any]:
+    config = Path(config_path)
+    text = config.read_text(encoding="utf-8")
+    if _probe_marker_state(config) == "enabled":
+        _write_atomic(config, text.replace(PROBE_MARKER_BEGIN, PROBE_MARKER_BEGIN + "\n" + PROBE_DISABLED_MARKER, 1))
+    return {"status": "INSTALLED_DEGRADED", "enabled": False}
+
+
+def uninstall_probe(*, config_path: Path | str) -> dict[str, Any]:
+    config = Path(config_path)
+    text = config.read_text(encoding="utf-8")
+    start, end = text.find(PROBE_MARKER_BEGIN), text.find(PROBE_MARKER_END)
+    if start >= 0 and end >= start:
+        end = text.find("\n", end)
+        _write_atomic(config, (text[:start] + text[end + 1:]).rstrip() + "\n")
+    return {"status": "NOT_INSTALLED", "enabled": False}
+
+
+def rollback_install(plan: dict[str, Any]) -> dict[str, Any]:
+    config, backup = Path(plan["target_config_path"]), Path(plan["backup_path"])
+    if not backup.is_file():
+        raise ValueError("rollback backup is unavailable")
+    _write_atomic(config, backup.read_text(encoding="utf-8"))
+    Path(plan["plugin_path"]).unlink(missing_ok=True)
+    return {"status": "NOT_INSTALLED", "rolled_back": True}
 
 
 # ── 辅助函数 ────────────────────────────────────────────────
@@ -297,20 +424,3 @@ def _find_hermes_config() -> Path | None:
         if path.exists():
             return path
     return None
-
-
-def _check_hooks_exist(config_path: Path) -> bool:
-    """检查配置是否已有 hooks 段落."""
-    try:
-        text = config_path.read_text(encoding="utf-8")
-        return "hooks:" in text.lower() or "probe" in text.lower()
-    except Exception:
-        return False
-
-
-def _file_hash(path: Path) -> str:
-    try:
-        import hashlib
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except Exception:
-        return ""

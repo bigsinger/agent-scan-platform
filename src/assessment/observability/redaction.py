@@ -10,6 +10,8 @@ import hashlib
 import re
 from typing import Any
 
+from ..security import SensitiveDataGuard
+
 # ── 敏感字段正则 ──────────────────────────────────────────────
 SENSITIVE_FIELD_RE = re.compile(
     r"token|secret|password|key|credential|cookie|authorization|bearer|session",
@@ -50,7 +52,7 @@ def _redact_string(text: str, max_sample: int = MAX_SAMPLE_CHARS) -> str:
     redacted = re.sub(r"(api[_-]?key[\s\"'=:]+)[^\s\"',;}\]]{3,}", r"\1" + REDACTED_PLACEHOLDER, redacted, flags=re.IGNORECASE)
     if len(redacted) > max_sample:
         redacted = redacted[:max_sample] + "...[TRUNCATED]"
-    return redacted
+    return SensitiveDataGuard.redact_text(redacted, max_len=max_sample)
 
 
 def stable_hash(text: str) -> str:

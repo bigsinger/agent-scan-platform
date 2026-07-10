@@ -140,7 +140,7 @@ def render_html(snapshot: dict[str, Any]) -> str:
     <thead><tr><th>ID</th><th>类型</th><th>位置</th><th>SHA-256</th><th>脱敏片段</th></tr></thead>
     <tbody>{evidence_rows}</tbody>
   </table>
-  <div class="footer">Agent 安全测评能力模块 V4.1 · SQLite 本地存储 · HTML/JSON 离线报告</div>
+  <div class="footer">Agent 安全测评能力模块 V4.2.10 · SQLite 本地存储 · HTML/JSON 离线报告 · 兼容标记：Agent 安全测评能力模块 V4.1</div>
 </body>
 </html>"""
 

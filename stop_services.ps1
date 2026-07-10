@@ -1,45 +1,19 @@
-﻿<#
-.SYNOPSIS
-    Agent Security Assessment v4.2 - Stop all services
-.DESCRIPTION
-    Frees ports 8000 and 4318 by terminating holding processes
-.NOTES
-    Usage: powershell -ExecutionPolicy Bypass -File stop_services.ps1
-#>
-
-Clear-Host
-Write-Host "================================================" -ForegroundColor Cyan
-Write-Host '  Stopping Agent Security services...' -ForegroundColor Cyan
-Write-Host "================================================" -ForegroundColor Cyan
-Write-Host ''
-
-$stopped = 0
-
-# Find and kill processes holding our ports via netstat
-foreach ($port in @(8000, 4318)) {
-    $connections = netstat -ano | Select-String (':' + $port + '\s') | Select-String 'LISTEN'
-    if ($connections) {
-        $procIds = $connections | ForEach-Object { $_ -split '\s+' | Select-Object -Last 1 } | Where-Object { $_ -ne '' } | Sort-Object -Unique
-        foreach ($procId in $procIds) {
-            try {
-                Stop-Process -Id $procId -Force -ErrorAction Stop
-                Write-Host ('  [OK] Freed port ' + $port + ' (PID ' + $procId + ')') -ForegroundColor Green
-                $stopped++
-            } catch {
-                Write-Host ('  [!] Failed to free port ' + $port + ' (PID ' + $procId + ')') -ForegroundColor DarkYellow
-            }
-        }
-    } else {
-        Write-Host ('  - Port ' + $port + ' is already free') -ForegroundColor DarkGray
-    }
+﻿param([string]$DataRoot="",[int]$GraceSeconds=5)
+$ErrorActionPreference="Stop"
+$ProjectDir=Split-Path -Parent $MyInvocation.MyCommand.Path
+if(-not $DataRoot){$DataRoot=Join-Path $ProjectDir "data"}
+$Manifest=Join-Path $DataRoot "run\services.json"
+if(-not (Test-Path $Manifest)){Write-Host "No service manifest found"; exit 0}
+$data=Get-Content $Manifest -Raw | ConvertFrom-Json
+$stopped=0
+foreach($svc in $data.services){
+  try{
+    $proc=Get-Process -Id ([int]$svc.pid) -ErrorAction Stop
+    if($proc.Path -ne $svc.executable_path){ Write-Warning "PID $($svc.pid) identity mismatch; refusing to stop"; continue }
+    $proc.CloseMainWindow() | Out-Null
+    Start-Sleep -Seconds $GraceSeconds
+    if(-not $proc.HasExited){ Stop-Process -Id $proc.Id -Force }
+    $stopped++
+  }catch{ Write-Warning $_.Exception.Message }
 }
-
-Write-Host ''
-if ($stopped -gt 0) {
-    Write-Host ('  Stopped ' + $stopped + ' processes') -ForegroundColor Green
-} else {
-    Write-Host '  No running services found' -ForegroundColor DarkGray
-}
-Write-Host '  All services stopped' -ForegroundColor Green
-Write-Host "================================================" -ForegroundColor Cyan
-pause
+Write-Host "Stopped owned services: $stopped"

@@ -139,83 +139,92 @@ if __name__ == "__main__":
 '''
 
 
-# ── Install Plan 生成 ────────────────────────────────────────
+# ── Install Plan 与能力探测 ───────────────────────────────────
 
-def generate_install_plan(dry_run: bool = True) -> dict[str, Any]:
-    """生成 Codex 探针安装计划 (dry-run 模式)."""
-    codex_config = _find_codex_config()
-    steps: list[dict[str, Any]] = []
-    rollback: list[dict[str, Any]] = []
+def _default_command_runner(command: list[str]) -> tuple[int, str, str]:
+    """Run only read-only Codex capability commands with a short timeout."""
+    import subprocess
 
-    if not codex_config:
-        return {
-            "agent_type": "codex",
-            "install_status": "not_found",
-            "note": "未发现 Codex 配置文件 (~/.codex/config.toml)",
-            "steps": [],
-            "rollback": [],
-        }
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=2, check=False)
+        return completed.returncode, completed.stdout or "", completed.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", type(exc).__name__
 
-    # 备份步骤
-    backup_path = codex_config.parent / "config.toml.probe_backup"
-    steps.append({
-        "action": "backup",
-        "description": f"备份当前配置到 {backup_path}",
-        "source": str(codex_config),
-        "target": str(backup_path),
-    })
-    rollback.insert(0, {
-        "action": "restore",
-        "description": f"从 {backup_path} 恢复配置",
-        "source": str(backup_path),
-        "target": str(codex_config),
-    })
 
-    # 检查是否已有 hooks 配置
-    hooks_exist = _check_hooks_exist(codex_config)
+def capability_probe(
+    *,
+    config_path: Path | str | None = None,
+    command_runner: Any | None = None,
+) -> dict[str, Any]:
+    """Return evidence-backed Codex capability without guessing a hook schema.
 
-    if not hooks_exist:
-        hook_script = generate_hook_script()
-        hook_path = codex_config.parent / "probe_hook.py"
-        before_hash = _file_hash(codex_config)
-
-        steps.append({
-            "action": "write_hook",
-            "description": f"写入探针 hook 脚本到 {hook_path}",
-            "target": str(hook_path),
-            "content_preview": hook_script[:200] + "...",
-        })
-        rollback.insert(0, {
-            "action": "delete_file",
-            "description": f"删除 hook 脚本 {hook_path}",
-            "target": str(hook_path),
-        })
-
-        steps.append({
-            "action": "modify_config",
-            "description": "在 config.toml 中注册 hook 命令",
-            "target": str(codex_config),
-            "diff_preview": "添加 [hooks] 章节, 注册 UserPromptSubmit/PreToolUse/PostToolUse 等事件",
-        })
-        rollback.insert(0, {
-            "action": "restore_config",
-            "description": "从备份还原 config.toml",
-            "target": str(codex_config),
-            "before_hash": before_hash,
-        })
-
+    Codex's locally verified public schema is not established by a generic
+    ``[hooks]`` table. Consequently this adapter intentionally remains
+    ``DRY_RUN_ONLY`` until a supported schema/evidence source is supplied.
+    """
+    config = Path(config_path) if config_path else _find_codex_config()
+    runner = command_runner or _default_command_runner
+    evidence = []
+    for command in (["codex", "--version"], ["codex", "--help"]):
+        try:
+            code, stdout, stderr = runner(command)
+        except Exception as exc:
+            code, stdout, stderr = 127, "", type(exc).__name__
+        evidence.append({"command": command, "exit_code": int(code), "stdout": str(stdout)[:1000], "stderr": str(stderr)[:500]})
     return {
         "agent_type": "codex",
-        "install_status": "installed" if hooks_exist else "ready_to_install",
-        "target_config_path": str(codex_config),
-        "backup_path": str(backup_path),
-        "before_hash": _file_hash(codex_config),
-        "steps": steps,
-        "rollback": rollback,
-        "hooks_exist": hooks_exist,
+        "status": "DRY_RUN_ONLY" if config else "NOT_INSTALLED",
+        "installed": False,
+        "capability_status": "DRY_RUN_ONLY" if config else "NOT_INSTALLED",
+        "config_path": str(config) if config else None,
+        "evidence": evidence,
+        "supports_apply": False,
+        "supports_uninstall": False,
+        "supports_rollback": False,
+        "reason": "当前本地能力探测未证明 Codex hooks 配置 schema；不写入推测的 [hooks] 配置。",
     }
 
 
+def generate_install_plan(dry_run: bool = True, *, config_path: Path | str | None = None) -> dict[str, Any]:
+    """Produce a non-mutating Codex plan; never invent a hooks configuration."""
+    config = Path(config_path) if config_path else _find_codex_config()
+    capability = capability_probe(config_path=config)
+    return {
+        "agent_type": "codex",
+        "install_status": capability["status"],
+        "capability_status": capability["capability_status"],
+        "dry_run": True,
+        "target_config_path": str(config) if config else None,
+        "steps": [],
+        "rollback": [],
+        "hooks_exist": False,
+        "diff_preview": "",
+        "capability": capability,
+        "note": capability["reason"],
+    }
+
+
+# ── 辅助函数 ────────────────────────────────────────────────
+
+def _find_codex_config() -> Path | None:
+    """查找 Codex 配置文件."""
+    candidates = [
+        Path.home() / ".codex" / "config.toml",
+        Path.home() / "AppData" / "Local" / "Codex" / "config.toml",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _file_hash(path: Path) -> str:
+    """计算文件 SHA-256."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
 def parse_hook_event(hook_event: str, raw_payload: str) -> dict[str, Any]:
     """解析 Codex hook 事件 payload 为规范化探针事件.
 

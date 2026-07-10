@@ -16,11 +16,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+
+from ..security import SensitiveDataGuard
 
 from ..store import AssessmentStore, get_store, new_id, utc_now
 from .normalizer import attributes_to_dict
@@ -123,6 +126,10 @@ CREATE INDEX IF NOT EXISTS idx_probe_event_session ON probe_event(session_id);
 CREATE INDEX IF NOT EXISTS idx_probe_event_tool ON probe_event(tool_name);
 CREATE INDEX IF NOT EXISTS idx_probe_event_risk ON probe_event(risk_score);
 CREATE INDEX IF NOT EXISTS idx_otel_span_trace ON otel_span(trace_id);
+CREATE INDEX IF NOT EXISTS idx_otel_span_created ON otel_span(created_at);
+CREATE INDEX IF NOT EXISTS idx_otel_log_trace ON otel_log(trace_id);
+CREATE INDEX IF NOT EXISTS idx_otel_log_created ON otel_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_otel_metric_created ON otel_metric_point(created_at);
 CREATE INDEX IF NOT EXISTS idx_behavior_edge_chain ON behavior_edge(chain_id);
 """
 
@@ -156,13 +163,22 @@ def _json_loads_or_value(value: Any) -> Any:
     return value
 
 
+def _dedup_id(prefix: str, value: dict[str, Any]) -> str:
+    canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+    return f"{prefix}_{hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _redacted_json(value: Any) -> str:
+    return json.dumps(SensitiveDataGuard.sanitize_for_persist(value), ensure_ascii=False)
+
+
 # ── Probe Event CRUD ──────────────────────────────────────────
 
 def insert_probe_event(store: AssessmentStore, event: dict[str, Any]) -> dict[str, Any]:
     """写入一条规范化 probe_event."""
     now = utc_now()
     row = {
-        "event_id": event.get("event_id", f"evt_{uuid4().hex[:12]}"),
+        "event_id": event.get("event_id", _dedup_id("evt", event)),
         "event_type": event.get("event_type", "unknown"),
         "timestamp": event.get("timestamp", now),
         "trace_id": event.get("trace_id"),
@@ -188,10 +204,10 @@ def insert_probe_event(store: AssessmentStore, event: dict[str, Any]) -> dict[st
         "output_hash": event.get("output_hash"),
         "redaction_status": event.get("redaction_status", "not_required"),
         "risk_score": event.get("risk_score", 0),
-        "risk_labels_json": json.dumps(event.get("risk_labels", []), ensure_ascii=False),
+        "risk_labels_json": _redacted_json(event.get("risk_labels", [])),
         "error_type": event.get("error_type"),
-        "error_message_redacted": event.get("error_message_redacted"),
-        "payload_json": json.dumps(event.get("payload", {}), ensure_ascii=False),
+        "error_message_redacted": SensitiveDataGuard.redact_text(str(event.get("error_message_redacted") or "")),
+        "payload_json": _redacted_json(event.get("payload", {})),
         "hash_chain_prev": event.get("hash_chain_prev"),
         "hash_chain": event.get("hash_chain"),
         "created_at": now,
@@ -295,7 +311,7 @@ def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, 
     scope = span.get("scope", {})
     now = utc_now()
     row = {
-        "span_id": span.get("spanId") or span.get("span_id", f"span_{uuid4().hex[:12]}"),
+        "span_id": span.get("spanId") or span.get("span_id") or _dedup_id("span", span),
         "trace_id": span.get("traceId") or span.get("trace_id", ""),
         "parent_span_id": span.get("parentSpanId") or span.get("parent_span_id"),
         "name": span.get("name", "unknown"),
@@ -304,10 +320,10 @@ def insert_otel_span(store: AssessmentStore, span: dict[str, Any]) -> dict[str, 
         "end_time": span.get("endTime") or span.get("end_time") or _otel_nano_to_iso(span.get("endTimeUnixNano")),
         "duration_ms": span.get("duration_ms") or span.get("durationMs"),
         "status_code": span.get("status", {}).get("code") if isinstance(span.get("status"), dict) else span.get("status_code"),
-        "status_message": span.get("status", {}).get("message") if isinstance(span.get("status"), dict) else span.get("status_message"),
-        "resource_json": json.dumps(resource, ensure_ascii=False),
-        "scope_json": json.dumps(scope, ensure_ascii=False),
-        "attrs_json": json.dumps(attrs, ensure_ascii=False),
+        "status_message": SensitiveDataGuard.redact_text(str(span.get("status", {}).get("message") if isinstance(span.get("status"), dict) else span.get("status_message") or "")),
+        "resource_json": _redacted_json(resource),
+        "scope_json": _redacted_json(scope),
+        "attrs_json": _redacted_json(attrs),
         "created_at": now,
     }
     with store.connect() as conn:
@@ -330,7 +346,7 @@ def insert_otel_log(store: AssessmentStore, log: dict[str, Any]) -> dict[str, An
     attrs = attributes_to_dict(log.get("attributes"))
     now = utc_now()
     row = {
-        "id": log.get("id") or new_id("olg"),
+        "id": log.get("id") or _dedup_id("log", log),
         "trace_id": log.get("traceId") or log.get("trace_id"),
         "span_id": log.get("spanId") or log.get("span_id"),
         "timestamp": _otel_nano_to_iso(log.get("timeUnixNano")) or log.get("timestamp") or now,

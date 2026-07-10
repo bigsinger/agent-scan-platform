@@ -1278,3 +1278,10 @@ powershell -ExecutionPolicy Bypass -File tools\verify_v426_acceptance.ps1
 - 导出交付包：`tools\export_final_delivery_package.ps1`
 
 验收脚本会设置 `ASSESSMENT_DB_PATH`、`ASSESSMENT_ARTIFACT_ROOT`、`ASSESSMENT_STATE_ROOT` 到临时目录，避免污染正式库。
+
+## v4.2.10 运维门禁
+
+- `start_services.ps1`：拒绝占用端口，不杀外部进程。
+- `stop_services.ps1`：仅按 PID manifest 停止自有进程。
+- `tools/audit_sensitive_data.ps1`：扫描 SQLite/artifact 中的 Secret 形态。
+- `tools/export_final_delivery_package.ps1` + `tools/verify_delivery_package.ps1`：生成并离线校验发布包。

@@ -42,7 +42,7 @@ BUILTIN_SCANNERS = [
         "runtime": "python",
         "capability": "本地规则、快速扫描预检、证据脱敏",
         "entry": "assessment.scanning.LocalScanEngine",
-        "version": "4.1.0",
+        "version": "4.2.10",
         "deps": "内置规则 + SQLite + artifact writer",
         "status": "未自测",
         "success": "未运行",
@@ -56,7 +56,7 @@ BUILTIN_SCANNERS = [
         "runtime": "python",
         "capability": "本机 Agent 发现、配置快照、MCP/Skill 枚举",
         "entry": "assessment.scanning.DiscoveryEngine",
-        "version": "4.1.0",
+        "version": "4.2.10",
         "deps": "只读文件系统探测",
         "status": "未自测",
         "success": "未运行",
@@ -70,7 +70,7 @@ BUILTIN_SCANNERS = [
         "runtime": "python",
         "capability": "MCP Server / Tool 静态签名与风险派生",
         "entry": "assessment.scanning.mcp_static",
-        "version": "4.1.0",
+        "version": "4.2.10",
         "deps": "本地 JSON/TOML/URL 解析",
         "status": "未自测",
         "success": "未运行",
@@ -84,7 +84,7 @@ BUILTIN_SCANNERS = [
         "runtime": "python",
         "capability": "Skill 指令、脚本和供应链风险静态分析",
         "entry": "assessment.scanning.rules",
-        "version": "4.1.0",
+        "version": "4.2.10",
         "deps": "本地规则目录",
         "status": "未自测",
         "success": "未运行",
@@ -274,7 +274,7 @@ async def bootstrap() -> dict:
         git_hash = ""
     return {
         "state": runtime_state(),
-        "version": "4.2.9",
+        "version": "4.2.10",
         "git_short_hash": git_hash,
     }
 
@@ -310,9 +310,9 @@ async def health_self_test() -> dict:
 @router.get("/version")
 async def version() -> dict:
     return {
-        "app": "4.2.9",
-        "spec": "V4.2.9",
-        "rules": "baseline@4.2.9",
+        "app": "4.2.10",
+        "spec": "V4.2.10",
+        "rules": "baseline@4.2.10",
         "agent_scan": {"version": "0.5.12", "mode": "vendored-compatible"},
     }
 
@@ -1033,6 +1033,24 @@ async def handle_write(path: str, request: Request, body: dict, method: str) -> 
     if path == "/quick-scans":
         scan_body = normalize_local_scan_payload(body)
         validate_public_quick_scan_mode(scan_body)
+        if body.get("async_scan") or body.get("execution_mode") == "async":
+            task = {
+                "id": new_id("task"),
+                "name": "Async quick scan",
+                "status": "QUEUED",
+                "stage": "QUEUED",
+                "state_code": "QUEUED",
+                "progress": 0,
+                "scan_request": scan_body,
+                "safe_mode": "local-readonly",
+                "mutates_installed_agents": False,
+                "created_at": utc_now(),
+            }
+            store.upsert_record("task", task, status="QUEUED")
+            store.upsert_record("scan_job", {**task, "id": "job_" + task["id"], "task_id": task["id"]}, status="QUEUED")
+            store.scan_event(task["id"], "task.queued", {"message": "异步扫描已进入队列", "state_code": "QUEUED"})
+            result.update({"status_code": 202, "task": task, "job": {"id": "job_" + task["id"], "task_id": task["id"], "status": "QUEUED"}, "poll": f"/api/v1/tasks/{task['id']}", "mutates_installed_agents": False})
+            return result
         try:
             scan = LocalScanEngine(store).run_quick_scan(scan_body)
         except ValueError as exc:
@@ -1958,6 +1976,77 @@ def completeness_doc_root() -> Path:
     return candidate if candidate.exists() else REPO_ROOT / "doc"
 
 
+
+def current_git_commit() -> str:
+    try:
+        import subprocess
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return "UNKNOWN"
+
+
+def acceptance_result_path() -> Path:
+    override = os.environ.get("ASSESSMENT_E2E_RESULT_PATH")
+    return Path(override) if override else (DATA_DIR / "acceptance" / "latest-e2e-result.json")
+
+
+def load_acceptance_result() -> dict:
+    path = acceptance_result_path()
+    if not path.exists():
+        return {"status": "MISSING", "path": str(path)}
+    try:
+        result = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"status": "INVALID_JSON", "path": str(path)}
+    result["_path"] = str(path)
+    return result
+
+
+def validate_acceptance_page(page_id: str, evidence: dict) -> tuple[str, dict]:
+    result = load_acceptance_result()
+    details = {"acceptance_status": result.get("status"), "acceptance_path": result.get("_path") or result.get("path")}
+    if result.get("status") not in {"PASS", "PASSED"}:
+        return "NOT_ASSERTED", details
+    if result.get("commit") != current_git_commit():
+        details["reason"] = "commit_mismatch"
+        details["result_commit"] = result.get("commit")
+        details["current_commit"] = current_git_commit()
+        return "STALE", details
+    tests = result.get("tests") or {}
+    test_file = str(evidence.get("test_file") or "")
+    test_names = evidence.get("test_names") or []
+    if not test_file or test_file not in tests:
+        details["reason"] = "missing_test_file_result"
+        return "NOT_ASSERTED", details
+    test_result = tests.get(test_file) or {}
+    declared = set(test_names or [])
+    passed_names = set(test_result.get("passed_tests") or [])
+    if test_result.get("exit_code") != 0 or (declared and not declared.issubset(passed_names)):
+        details["reason"] = "test_failed_or_missing_name"
+        details["declared"] = sorted(declared)
+        details["passed"] = sorted(passed_names)
+        return "NOT_ASSERTED", details
+    screenshots = result.get("screenshots") or []
+    for shot in screenshots:
+        path = Path(str(shot.get("path") or ""))
+        if not path.is_absolute():
+            path = REPO_ROOT / path
+        if not path.exists() or file_sha256(path) != shot.get("sha256"):
+            details["reason"] = "screenshot_hash_mismatch"
+            details["screenshot"] = str(path)
+            return "STALE", details
+        try:
+            with path.open("rb") as handle:
+                if handle.read(8) != bytes([137, 80, 78, 71, 13, 10, 26, 10]):
+                    details["reason"] = "invalid_png_signature"
+                    return "STALE", details
+        except Exception:
+            details["reason"] = "screenshot_unreadable"
+            return "STALE", details
+    details["result_commit"] = result.get("commit")
+    details["assertion_count"] = result.get("assertion_count")
+    return "PASS", details
+
 def completeness_e2e_manifest(doc_root: Path | None = None) -> dict[str, dict]:
     root = doc_root or completeness_doc_root()
     path = root / "e2e_manifest.json"
@@ -2004,8 +2093,9 @@ def completeness_runtime_rows() -> list[dict]:
         item["audit"] = "PASS" if audit_ok else "MISSING_DOC"
         item["contract"] = "PASS" if contract_ok else "MISSING_API"
         evidence = e2e_manifest.get(str(item.get("id")))
-        item["e2e"] = "PASS" if evidence and evidence.get("test_file_exists") and evidence.get("status") == "PASS" else "NOT_ASSERTED"
-        item["e2e_evidence"] = evidence or {}
+        e2e_status, e2e_details = validate_acceptance_page(str(item.get("id")), evidence) if evidence and evidence.get("test_file_exists") else ("NOT_ASSERTED", {})
+        item["e2e"] = e2e_status
+        item["e2e_evidence"] = {**(evidence or {}), **e2e_details}
         item["status"] = "待验证" if item["e2e"] != "PASS" else "已验收"
         item["prototype_exists"] = prototype_path.exists()
         item["spec_exists"] = spec_path.exists()
@@ -3522,6 +3612,7 @@ def evaluate_guard_preflight(store: Any, state: dict, body: dict) -> dict:
         "agent_runtime_started": False,
         "stdio_mcp_started": False,
         "raw_sensitive_evidence": "not-included",
+        "redaction_marker": "<REDACTED>",
     }
     artifact = store.write_artifact(
         "guard-preflight-decision",
@@ -3886,7 +3977,7 @@ def embed_context(store: Any, state: dict) -> dict:
     return {
         "schema": "agent-security-platform-embed-context@4.1",
         "module": "agent-security-assessment",
-        "version": "4.1.0",
+        "version": "4.2.10",
         "managed_by": "local",
         "host_mode": "standalone-or-embedded",
         "route": "/assessment/platform-embed",
@@ -7263,7 +7354,7 @@ def build_assessment_plan(body: dict, state: dict) -> dict:
     return {
         "id": new_id("plan"),
         "target": body.get("target") or body.get("target_path") or state.get("selectedAsset", {}).get("name") or "local",
-        "profile_id": body.get("profile_id", "standard-complete@4.1.0"),
+        "profile_id": body.get("profile_id", "standard-complete@4.2.10"),
         "safe_mode": body.get("safe_mode", "read_only"),
         "mcp_policy": body.get("mcp_policy", "per-server-consent"),
         "remote_analysis": False,
@@ -11648,7 +11739,7 @@ def redacted_body_summary(body: dict) -> dict:
     return {
         "keys": keys,
         "sha256_16": stable_hash(text, length=16),
-        "redacted": redact_text(text, max_len=1000),
+        "redacted": redact_text(text, max_len=1000).replace("[REDACTED]", "<REDACTED_SECRET>").replace("<REDACTED>", "<REDACTED_SECRET>"),
     }
 
 
@@ -11827,7 +11918,7 @@ def default_runtime_plan(state: dict) -> dict:
     return {
         "adapter": target.get("adapter") or "auto-detect",
         "target": target.get("id") or target.get("name") or "local-machine",
-        "profile": "standard-complete@4.1.0",
+        "profile": "standard-complete@4.2.10",
         "safe_mode": "local-readonly",
         "remote_analysis": False,
         "remote_analysis_requested": False,
@@ -11835,7 +11926,7 @@ def default_runtime_plan(state: dict) -> dict:
         "scan_options": local_scan_boundary({})["scan_options"],
         "mutates_installed_agents": False,
         "stages": ["DISCOVERY", "LOCAL_STATIC", "MCP_CONSENT", "REPORT"],
-        "rules": ["baseline@4.1.0", "local-agent-scan@4.1.0"],
+        "rules": ["baseline@4.2.10", "local-agent-scan@4.2.10"],
         "stdio_mcp": "per-server-consent",
         "limits": {"parallel_jobs": 2, "timeout_seconds": 7200},
     }

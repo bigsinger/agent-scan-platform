@@ -104,7 +104,7 @@ def _group_events(events: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]
         session_id = ev.get("session_id")
         if session_id:
             agent = ev.get("source_agent") or "unknown"
-            groups.setdefault(f"session:{agent}:{session_id}", []).append(ev)
+            groups.setdefault(f"sid:{agent}:{session_id}", []).append(ev)
             used.add(ev["event_id"])
 
     orphans = [ev for ev in events if ev["event_id"] not in used]

@@ -393,9 +393,9 @@ class LocalScanEngine:
                 {"report_id": report["id"], "html_path": report.get("html_path"), "json_path": report.get("json_path")},
             )
         )
-        assessment["progress"] = 100
         assessment["stage"] = "DONE" if not discovery.consents else "WAITING_CONSENT"
-        self.store.upsert_record("assessment", assessment, status="COMPLETED")
+        assessment["progress"] = 100 if not discovery.consents else 95
+        self.store.upsert_record("assessment", assessment, status="COMPLETED" if not discovery.consents else "WAITING_CONSENT")
         self._sync_state(assessment, discovery, findings, evidence, report, events)
         return ScanResult(assessment, discovery, findings, evidence, report, files_scanned, files_skipped, events)
 
@@ -993,7 +993,7 @@ class LocalScanEngine:
         }
         findings: dict[str, dict[str, Any]] = {}
         for match in matches:
-            fingerprint = stable_hash(f"{match.rule_id}:{match.display_path}:{match.line}:{match.snippet}", 24)
+            fingerprint = stable_hash(f"{match.rule_id}:{match.display_path}", 24)
             finding_id = "fnd_" + fingerprint
             ev = evidence_by_key.get(f"{match.display_path}:{match.line}:{match.snippet}")
             if ev:
@@ -1016,6 +1016,9 @@ class LocalScanEngine:
                     "compat": compatible_code(match.rule_id),
                     "evidence": match.snippet,
                     "evidence_ids": [],
+                    "occurrence_count": 0,
+                    "file_count": 1,
+                    "occurrences_preview": [],
                     "fix": match.remediation,
                     "remediation": match.remediation,
                     "status": "待复核",
@@ -1024,6 +1027,23 @@ class LocalScanEngine:
                     "created_at": utc_now(),
                 }
                 findings[finding_id] = finding
+            finding["occurrence_count"] = int(finding.get("occurrence_count") or 0) + 1
+            if len(finding["occurrences_preview"]) < 20:
+                finding["occurrences_preview"].append({"line": match.line, "path": match.display_path, "evidence_id": ev.get("id") if ev else ""})
+            if ev:
+                ev["finding_id"] = finding_id
+                instance = {
+                    "id": "fin_" + stable_hash(f"{finding_id}:{match.line}:{match.snippet}", 20),
+                    "finding_id": finding_id,
+                    "assessment_id": assessment["id"],
+                    "rule_id": match.rule_id,
+                    "path": match.display_path,
+                    "line": match.line,
+                    "evidence_id": ev["id"],
+                    "snippet": match.snippet,
+                    "created_at": utc_now(),
+                }
+                self.store.upsert_record("finding_instance", instance, status="READY")
             if ev and ev["id"] not in finding["evidence_ids"]:
                 finding["evidence_ids"].append(ev["id"])
         return list(findings.values())

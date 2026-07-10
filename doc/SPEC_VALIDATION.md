@@ -125,3 +125,11 @@ powershell -ExecutionPolicy Bypass -File tools\verify_v429_final_acceptance.ps1
 ```
 
 目标：`pages=58`、`audit_passed=58`、`contract_passed=58`、`e2e_passed=58`、`gaps=0`。
+
+## v4.2.10 Enterprise Release Gate
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.ps1
+```
+
+关键断言：58 页面、58 audit PASS、58 contract PASS、58 E2E PASS、0 gaps；E2E PASS 必须绑定当前 commit、测试名和真实 PNG 截图 SHA。

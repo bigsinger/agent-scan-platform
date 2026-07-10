@@ -7,8 +7,14 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import hmac
 import json
 import logging
+import os
+import re
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,6 +40,113 @@ from .normalizer import attributes_to_dict, span_to_probe_event, log_to_probe_ev
 from .redaction import redact_payload
 
 logger = logging.getLogger(__name__)
+
+MAX_REQUEST_BYTES = 1 * 1024 * 1024
+MAX_BATCH_ITEMS = 10_000
+MAX_EVENT_BYTES = 64 * 1024
+MAX_REQUESTS_PER_MINUTE = 120
+MAX_INFLIGHT_REQUESTS = 8
+OTLP_JSON_CONTENT_TYPES = {"application/json", "application/x-json"}
+_TRACE_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+_SPAN_ID_RE = re.compile(r"^[0-9a-fA-F]{16}$")
+
+_rate_lock = threading.Lock()
+_rate_windows: dict[str, list[float]] = {}
+_inflight = threading.BoundedSemaphore(MAX_INFLIGHT_REQUESTS)
+
+
+class ReceiverError(ValueError):
+    def __init__(self, status_code: int, code: str, message: str, rejected_field: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.rejected_field = rejected_field
+
+
+def _receiver_error(status_code: int, code: str, message: str, rejected_field: str) -> JSONResponse:
+    _receiver_state["rejected"] += 1
+    return JSONResponse(
+        {
+            "partialSuccess": {rejected_field: 0},
+            "error": {"code": code, "message": message},
+        },
+        status_code=status_code,
+    )
+
+
+def _is_loopback(host: str | None) -> bool:
+    value = (host or "").strip().lower()
+    return value in {"127.0.0.1", "::1", "localhost", "testclient", "testserver"}
+
+
+def _require_loopback_or_token(request: Request) -> None:
+    if _is_loopback(request.client.host if request.client else None):
+        return
+    expected = os.environ.get("ASSESSMENT_OTEL_TOKEN", "")
+    supplied = request.headers.get("X-OTel-Token", "")
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise ReceiverError(401, "OTEL_AUTH_REQUIRED", "receiver requires a token for non-loopback clients", "rejected")
+
+
+def _check_rate_limit(request: Request) -> None:
+    client = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    with _rate_lock:
+        window = [then for then in _rate_windows.get(client, []) if now - then < 60]
+        if len(window) >= MAX_REQUESTS_PER_MINUTE:
+            _rate_windows[client] = window
+            raise ReceiverError(429, "OTEL_RATE_LIMITED", "receiver rate limit exceeded", "rejected")
+        window.append(now)
+        _rate_windows[client] = window
+
+
+async def _read_otlp_json(request: Request) -> dict[str, Any]:
+    _require_loopback_or_token(request)
+    _check_rate_limit(request)
+    if not _inflight.acquire(blocking=False):
+        raise ReceiverError(429, "OTEL_BACKPRESSURE", "receiver is at capacity; retry later", "rejected")
+    try:
+        content_type = request.headers.get("content-type", "application/json").split(";", 1)[0].strip().lower()
+        if content_type not in OTLP_JSON_CONTENT_TYPES:
+            raise ReceiverError(415, "OTEL_UNSUPPORTED_CONTENT_TYPE", "only OTLP/HTTP JSON is supported", "rejected")
+        raw = await request.body()
+        if request.headers.get("content-encoding", "").lower() == "gzip":
+            try:
+                raw = gzip.decompress(raw)
+            except OSError as exc:
+                raise ReceiverError(400, "OTEL_INVALID_GZIP", "invalid gzip request body", "rejected") from exc
+        if len(raw) > MAX_REQUEST_BYTES:
+            raise ReceiverError(413, "OTEL_REQUEST_TOO_LARGE", "request body exceeds receiver limit", "rejected")
+        try:
+            body = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ReceiverError(400, "OTEL_INVALID_JSON", "invalid OTLP JSON payload", "rejected") from exc
+        if not isinstance(body, dict):
+            raise ReceiverError(400, "OTEL_INVALID_PAYLOAD", "OTLP JSON payload must be an object", "rejected")
+        return body
+    finally:
+        _inflight.release()
+
+
+def _validate_identifiers(items: list[dict[str, Any]], kind: str) -> None:
+    for item in items:
+        if kind in {"trace", "log"}:
+            trace_id = item.get("traceId") or item.get("trace_id")
+            if trace_id and not _TRACE_ID_RE.fullmatch(str(trace_id)):
+                raise ReceiverError(400, "OTEL_INVALID_TRACE_ID", "trace ID must be 32 hexadecimal characters", f"rejected{kind.title()}s")
+        span_id = item.get("spanId") or item.get("span_id")
+        if span_id and not _SPAN_ID_RE.fullmatch(str(span_id)):
+            raise ReceiverError(400, "OTEL_INVALID_SPAN_ID", "span ID must be 16 hexadecimal characters", f"rejected{kind.title()}s")
+
+
+def _validate_batch(items: list[dict[str, Any]], kind: str) -> None:
+    if len(items) > MAX_BATCH_ITEMS:
+        raise ReceiverError(413, "OTEL_BATCH_TOO_LARGE", "OTLP batch exceeds item limit", f"rejected{kind.title()}s")
+    for item in items:
+        if len(json.dumps(item, ensure_ascii=False, default=str).encode("utf-8")) > MAX_EVENT_BYTES:
+            raise ReceiverError(413, "OTEL_EVENT_TOO_LARGE", "OTLP event exceeds item size limit", f"rejected{kind.title()}s")
+    _validate_identifiers(items, kind)
+
 
 # ── 运行状态 ──────────────────────────────────────────────────
 _receiver_state: dict[str, Any] = {
@@ -74,10 +187,11 @@ def create_receiver_app() -> FastAPI | None:
 
     @app.post("/v1/traces")
     async def post_traces(request: Request):
-        """接收 OTLP/HTTP JSON traces."""
+        """Receive OTLP/HTTP JSON traces; protobuf is intentionally unsupported."""
         try:
-            body = await request.json()
+            body = await _read_otlp_json(request)
             spans = _extract_spans_from_otlp(body)
+            _validate_batch(spans, "trace")
             store = get_store()
             generated_events = 0
             for span in spans:
@@ -87,19 +201,21 @@ def create_receiver_app() -> FastAPI | None:
                     insert_probe_event(store, event)
                     generated_events += 1
             _receiver_state["accepted_traces"] += len(spans)
-            _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
-            return JSONResponse({"partialSuccess": {}, "error": "", "accepted": len(spans), "generated_events": generated_events}, status_code=200)
-        except Exception as exc:
-            _receiver_state["rejected"] += 1
-            logger.warning("OTLP traces parse error: %s", exc)
-            return JSONResponse({"partialSuccess": {"rejectedSpans": []}, "error": str(exc)}, status_code=400)
+            _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            return JSONResponse({"partialSuccess": {}, "accepted": len(spans), "generated_events": generated_events}, status_code=200)
+        except ReceiverError as exc:
+            return _receiver_error(exc.status_code, exc.code, str(exc), exc.rejected_field)
+        except Exception:
+            logger.warning("OTLP traces ingestion failed", exc_info=True)
+            return _receiver_error(400, "OTEL_INVALID_TRACE_PAYLOAD", "invalid OTLP trace payload", "rejectedSpans")
 
     @app.post("/v1/logs")
     async def post_logs(request: Request):
-        """接收 OTLP/HTTP JSON logs."""
+        """Receive OTLP/HTTP JSON logs; raw message data is redacted before persistence."""
         try:
-            body = await request.json()
+            body = await _read_otlp_json(request)
             logs = _extract_logs_from_otlp(body)
+            _validate_batch(logs, "log")
             store = get_store()
             for log in logs:
                 body_obj = log.get("body")
@@ -109,27 +225,62 @@ def create_receiver_app() -> FastAPI | None:
                 if event:
                     insert_probe_event(store, event)
             _receiver_state["accepted_logs"] += len(logs)
-            _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
-            return JSONResponse({"partialSuccess": {}, "error": "", "accepted": len(logs)}, status_code=200)
-        except Exception as exc:
-            _receiver_state["rejected"] += 1
-            return JSONResponse({"partialSuccess": {"rejectedLogRecords": []}, "error": str(exc)}, status_code=400)
+            _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            return JSONResponse({"partialSuccess": {}, "accepted": len(logs)}, status_code=200)
+        except ReceiverError as exc:
+            return _receiver_error(exc.status_code, exc.code, str(exc), exc.rejected_field)
+        except Exception:
+            logger.warning("OTLP logs ingestion failed", exc_info=True)
+            return _receiver_error(400, "OTEL_INVALID_LOG_PAYLOAD", "invalid OTLP log payload", "rejectedLogRecords")
 
     @app.post("/v1/metrics")
     async def post_metrics(request: Request):
-        """接收 OTLP/HTTP JSON metrics."""
+        """Receive OTLP/HTTP JSON metrics."""
         try:
-            body = await request.json()
+            body = await _read_otlp_json(request)
             points = _extract_metric_points_from_otlp(body)
+            _validate_batch(points, "metric")
             store = get_store()
             for point in points:
                 insert_otel_metric_point(store, point)
             _receiver_state["accepted_metrics"] += len(points)
-            _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
-            return JSONResponse({"partialSuccess": {}, "error": "", "accepted": len(points)}, status_code=200)
-        except Exception as exc:
-            _receiver_state["rejected"] += 1
-            return JSONResponse({"partialSuccess": {"rejectedDataPoints": []}, "error": str(exc)}, status_code=400)
+            _receiver_state["last_event_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            return JSONResponse({"partialSuccess": {}, "accepted": len(points)}, status_code=200)
+        except ReceiverError as exc:
+            return _receiver_error(exc.status_code, exc.code, str(exc), exc.rejected_field)
+        except Exception:
+            logger.warning("OTLP metrics ingestion failed", exc_info=True)
+            return _receiver_error(400, "OTEL_INVALID_METRIC_PAYLOAD", "invalid OTLP metric payload", "rejectedDataPoints")
+
+    @app.post("/retention")
+    async def retention(request: Request):
+        body = await request.json()
+        days = int(body.get("days", 30))
+        apply = bool(body.get("apply", False))
+        cutoff = time.time() - days * 86400
+        store = get_store()
+        counts = {"probe_event": 0, "otel_span": 0, "otel_log": 0, "otel_metric_point": 0}
+        with store.connect() as conn:
+            for table in counts:
+                try:
+                    rows = conn.execute(f"SELECT rowid, created_at FROM {table}").fetchall()
+                except Exception:
+                    continue
+                delete_ids = []
+                for row in rows:
+                    created = row["created_at"] if hasattr(row, "keys") else row[1]
+                    try:
+                        dt = datetime.fromisoformat(str(created).replace("Z", "+00:00")).timestamp()
+                    except Exception:
+                        dt = time.time()
+                    if dt < cutoff:
+                        delete_ids.append(row["rowid"] if hasattr(row, "keys") else row[0])
+                counts[table] = len(delete_ids)
+                if apply and delete_ids:
+                    conn.executemany(f"DELETE FROM {table} WHERE rowid=?", [(rid,) for rid in delete_ids])
+            if apply:
+                conn.commit()
+        return {"dry_run": not apply, "days": days, "counts": counts, "mutates_installed_agents": False}
 
     _receiver_state["started_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "Z"
     return app

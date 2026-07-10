@@ -1522,3 +1522,13 @@ Discovery 支持服务端搜索、类型筛选、分页和隐藏记录开关。A
 ## v4.2.9 企业试用流程
 
 推荐流程：发现本机 -> 快速扫描 -> MCP/Skill 专项 -> 风险/证据/攻击路径 -> 报告 -> 复测 -> 导出最终交付包。
+
+## v4.2.10 企业发布门禁
+
+发布前请运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.ps1
+```
+
+服务脚本只停止 `services.json` manifest 中属于本产品的进程；不会按端口杀任意进程。

@@ -1,10 +1,9 @@
 {
-  "schema": "agent-security-e2e-manifest@4.2.9",
+  "schema": "agent-security-e2e-manifest@4.2.10",
   "updated_at": "2026-07-10T00:00:00Z",
   "items": [
     {
       "page_id": "P01",
-      "status": "PASS",
       "test_file": "tests/test_v429_dashboard_create_profiles_e2e.py",
       "test_names": [
         "test_v429_dashboard_and_assessment_draft_flow"
@@ -18,11 +17,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P02",
-      "status": "PASS",
       "test_file": "tests/test_v427_core_local_assessment_flow.py",
       "test_names": [
         "test_v427_core_local_assessment_flow"
@@ -37,11 +36,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P03",
-      "status": "PASS",
       "test_file": "tests/test_v429_dashboard_create_profiles_e2e.py",
       "test_names": [
         "test_v429_dashboard_and_assessment_draft_flow"
@@ -55,11 +54,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P04",
-      "status": "PASS",
       "test_file": "tests/test_v427_core_local_assessment_flow.py",
       "test_names": [
         "test_v427_core_local_assessment_flow"
@@ -74,11 +73,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P05",
-      "status": "PASS",
       "test_file": "tests/test_v427_core_local_assessment_flow.py",
       "test_names": [
         "test_v427_core_local_assessment_flow"
@@ -93,11 +92,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P06",
-      "status": "PASS",
       "test_file": "tests/test_v427_core_local_assessment_flow.py",
       "test_names": [
         "test_v427_core_local_assessment_flow"
@@ -112,11 +111,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P07",
-      "status": "PASS",
       "test_file": "tests/test_v428_abom_adapter_e2e.py",
       "test_names": [
         "test_v428_abom_and_adapter_e2e"
@@ -130,11 +129,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P08",
-      "status": "PASS",
       "test_file": "tests/test_v428_abom_adapter_e2e.py",
       "test_names": [
         "test_v428_abom_and_adapter_e2e"
@@ -148,11 +147,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P09",
-      "status": "PASS",
       "test_file": "tests/test_v429_dashboard_create_profiles_e2e.py",
       "test_names": [
         "test_v429_profiles_adapter_detail_export_flow"
@@ -166,11 +165,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P10",
-      "status": "PASS",
       "test_file": "tests/test_v428_agent_scan_mapping_e2e.py",
       "test_names": [
         "test_v428_agent_scan_mapping_e2e"
@@ -184,11 +183,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P11",
-      "status": "PASS",
       "test_file": "tests/test_v428_mcp_static_consent_e2e.py",
       "test_names": [
         "test_v428_mcp_static_consent_e2e"
@@ -202,11 +201,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P12",
-      "status": "PASS",
       "test_file": "tests/test_v428_mcp_static_consent_e2e.py",
       "test_names": [
         "test_v428_mcp_static_consent_e2e"
@@ -220,11 +219,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P13",
-      "status": "PASS",
       "test_file": "tests/test_v428_skill_scan_detail_e2e.py",
       "test_names": [
         "test_v428_skill_scan_detail_e2e"
@@ -238,11 +237,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P14",
-      "status": "PASS",
       "test_file": "tests/test_v428_skill_scan_detail_e2e.py",
       "test_names": [
         "test_v428_skill_scan_detail_e2e"
@@ -256,11 +255,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P15",
-      "status": "PASS",
       "test_file": "tests/test_v429_task_execution_redteam_e2e.py",
       "test_names": [
         "test_v429_tasks_and_execution_aliases"
@@ -274,11 +273,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P16",
-      "status": "PASS",
       "test_file": "tests/test_v427_core_local_assessment_flow.py",
       "test_names": [
         "test_v427_core_local_assessment_flow"
@@ -293,11 +292,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P17",
-      "status": "PASS",
       "test_file": "tests/test_v427_core_local_assessment_flow.py",
       "test_names": [
         "test_v427_core_local_assessment_flow"
@@ -312,11 +311,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P18",
-      "status": "PASS",
       "test_file": "tests/test_v429_task_execution_redteam_e2e.py",
       "test_names": [
         "test_v429_redteam_case_dry_run_detail"
@@ -330,11 +329,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P19",
-      "status": "PASS",
       "test_file": "tests/test_v429_task_execution_redteam_e2e.py",
       "test_names": [
         "test_v429_tasks_and_execution_aliases"
@@ -348,11 +347,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P20",
-      "status": "PASS",
       "test_file": "tests/test_v427_core_local_assessment_flow.py",
       "test_names": [
         "test_v427_core_local_assessment_flow"
@@ -367,11 +366,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P21",
-      "status": "PASS",
       "test_file": "tests/test_v429_result_closure_e2e.py",
       "test_names": [
         "test_v429_finding_evidence_attack_path_chain"
@@ -385,11 +384,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P22",
-      "status": "PASS",
       "test_file": "tests/test_v429_result_closure_e2e.py",
       "test_names": [
         "test_v429_finding_evidence_attack_path_chain"
@@ -403,11 +402,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P23",
-      "status": "PASS",
       "test_file": "tests/test_v429_result_closure_e2e.py",
       "test_names": [
         "test_v429_finding_evidence_attack_path_chain"
@@ -421,11 +420,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P24",
-      "status": "PASS",
       "test_file": "tests/test_v429_result_closure_e2e.py",
       "test_names": [
         "test_v429_finding_evidence_attack_path_chain"
@@ -439,11 +438,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P25",
-      "status": "PASS",
       "test_file": "tests/test_v429_result_closure_e2e.py",
       "test_names": [
         "test_v429_reports_and_retests_delivery_package"
@@ -457,11 +456,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P26",
-      "status": "PASS",
       "test_file": "tests/test_v429_result_closure_e2e.py",
       "test_names": [
         "test_v429_reports_and_retests_delivery_package"
@@ -475,11 +474,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P27",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_rules_scanners_schedules_integrations_operations"
@@ -493,11 +492,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P28",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_rules_scanners_schedules_integrations_operations"
@@ -511,11 +510,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P29",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_rules_scanners_schedules_integrations_operations"
@@ -529,11 +528,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P30",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_rules_scanners_schedules_integrations_operations"
@@ -547,11 +546,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P31",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_settings_sqlite_licenses_completeness_api_debug_and_security"
@@ -565,11 +564,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P32",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_settings_sqlite_licenses_completeness_api_debug_and_security"
@@ -583,11 +582,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P33",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_settings_sqlite_licenses_completeness_api_debug_and_security"
@@ -601,11 +600,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P34",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_settings_sqlite_licenses_completeness_api_debug_and_security"
@@ -619,11 +618,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D01",
-      "status": "PASS",
       "test_file": "tests/test_v429_dashboard_create_profiles_e2e.py",
       "test_names": [
         "test_v429_profiles_adapter_detail_export_flow"
@@ -637,11 +636,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D02",
-      "status": "PASS",
       "test_file": "tests/test_v429_dashboard_create_profiles_e2e.py",
       "test_names": [
         "test_v429_profiles_adapter_detail_export_flow"
@@ -655,11 +654,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D03",
-      "status": "PASS",
       "test_file": "tests/test_v429_dashboard_create_profiles_e2e.py",
       "test_names": [
         "test_v429_profiles_adapter_detail_export_flow"
@@ -673,11 +672,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D04",
-      "status": "PASS",
       "test_file": "tests/test_v429_dashboard_create_profiles_e2e.py",
       "test_names": [
         "test_v429_profiles_adapter_detail_export_flow"
@@ -691,11 +690,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D05",
-      "status": "PASS",
       "test_file": "tests/test_v428_agent_scan_mapping_e2e.py",
       "test_names": [
         "test_v428_agent_scan_mapping_e2e"
@@ -709,11 +708,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D06",
-      "status": "PASS",
       "test_file": "tests/test_v428_mcp_static_consent_e2e.py",
       "test_names": [
         "test_v428_mcp_static_consent_e2e"
@@ -727,11 +726,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D07",
-      "status": "PASS",
       "test_file": "tests/test_v428_mcp_static_consent_e2e.py",
       "test_names": [
         "test_v428_mcp_static_consent_e2e"
@@ -745,11 +744,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D08",
-      "status": "PASS",
       "test_file": "tests/test_v429_task_execution_redteam_e2e.py",
       "test_names": [
         "test_v429_redteam_case_dry_run_detail"
@@ -763,11 +762,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D09",
-      "status": "PASS",
       "test_file": "tests/test_v427_core_local_assessment_flow.py",
       "test_names": [
         "test_v427_core_local_assessment_flow"
@@ -782,11 +781,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D10",
-      "status": "PASS",
       "test_file": "tests/test_v429_dashboard_create_profiles_e2e.py",
       "test_names": [
         "test_v429_profiles_adapter_detail_export_flow"
@@ -800,11 +799,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D11",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_rules_scanners_schedules_integrations_operations"
@@ -818,11 +817,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D12",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_rules_scanners_schedules_integrations_operations"
@@ -836,11 +835,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D13",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_rules_scanners_schedules_integrations_operations"
@@ -854,11 +853,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D14",
-      "status": "PASS",
       "test_file": "tests/test_v429_admin_operations_e2e.py",
       "test_names": [
         "test_v429_settings_sqlite_licenses_completeness_api_debug_and_security"
@@ -872,11 +871,11 @@
         "stdio_mcp_started=false",
         "agent_runtime_started=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P49",
-      "status": "PASS",
       "test_file": "tests/test_v426_observability_pages.py",
       "test_names": [
         "test_v426_observability_routes_and_page_contracts"
@@ -890,11 +889,11 @@
       "safety_invariants": [
         "mutates_installed_agents=false",
         "no raw secret"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P50",
-      "status": "PASS",
       "test_file": "tests/test_v426_otel_receiver_ingestion.py",
       "test_names": [
         "test_v426_observability_health_has_platform_and_receiver_semantics"
@@ -905,11 +904,11 @@
       ],
       "safety_invariants": [
         "receiver status not misleading"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P51",
-      "status": "PASS",
       "test_file": "tests/test_v426_behavior_anomaly_rules.py",
       "test_names": [
         "test_v426_behavior_chain_and_anomaly_idempotency"
@@ -920,11 +919,11 @@
       ],
       "safety_invariants": [
         "no duplicate anomalies"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P52",
-      "status": "PASS",
       "test_file": "tests/test_v426_behavior_anomaly_rules.py",
       "test_names": [
         "test_v426_p0_rules_emit_deduped_redacted_anomalies"
@@ -935,11 +934,11 @@
       ],
       "safety_invariants": [
         "evidence redacted"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P53",
-      "status": "PASS",
       "test_file": "tests/test_v426_otel_receiver_ingestion.py",
       "test_names": [
         "test_v426_receiver_ingests_traces_logs_metrics_and_query_api"
@@ -950,11 +949,11 @@
       ],
       "safety_invariants": [
         "secret redacted"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "P54",
-      "status": "PASS",
       "test_file": "tests/test_v426_probe_install_safety.py",
       "test_names": [
         "test_v426_probe_install_plan_dry_run_does_not_modify_fake_agent_files"
@@ -965,11 +964,11 @@
       ],
       "safety_invariants": [
         "hash before equals after"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D19",
-      "status": "PASS",
       "test_file": "tests/test_v426_observability_pages.py",
       "test_names": [
         "test_v426_observability_detail_routes_have_drawer_contract"
@@ -980,11 +979,11 @@
       ],
       "safety_invariants": [
         "drawer redaction fields"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D20",
-      "status": "PASS",
       "test_file": "tests/test_v426_observability_pages.py",
       "test_names": [
         "test_v426_observability_detail_routes_have_drawer_contract"
@@ -995,11 +994,11 @@
       ],
       "safety_invariants": [
         "return context preserved"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D21",
-      "status": "PASS",
       "test_file": "tests/test_v426_otel_receiver_ingestion.py",
       "test_names": [
         "test_v426_trace_detail_api_returns_related_objects"
@@ -1010,11 +1009,11 @@
       ],
       "safety_invariants": [
         "secret redacted"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     },
     {
       "page_id": "D22",
-      "status": "PASS",
       "test_file": "tests/test_v426_probe_install_safety.py",
       "test_names": [
         "test_v426_probe_install_plan_dry_run_does_not_modify_fake_agent_files"
@@ -1025,7 +1024,8 @@
       ],
       "safety_invariants": [
         "no file writes"
-      ]
+      ],
+      "evidence_kind": "runtime-result-required"
     }
   ]
 }

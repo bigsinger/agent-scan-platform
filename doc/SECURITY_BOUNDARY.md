@@ -29,3 +29,10 @@ ASSESSMENT_ADMIN_TOKEN
 ## 管理口保护
 
 写接口可在托管模式下接入 token 校验。本地独立模式以 localhost 绑定和危险配置拒绝作为默认保护。
+
+## v4.2.10 强化边界
+
+- `SensitiveDataGuard` 统一 SQLite、artifact、audit、probe/OTel 脱敏。
+- Admin Token 开启后写接口与导出/下载受 `X-Assessment-Token` 保护。
+- OTel Receiver 仅支持 loopback 或 token，限制 JSON/body/batch/event 大小。
+- 服务停止只认产品 PID manifest，不按端口杀进程。
