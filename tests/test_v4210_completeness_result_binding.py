@@ -1,3 +1,4 @@
+import ast
 import binascii
 import json
 import struct
@@ -8,6 +9,9 @@ from pathlib import Path
 from assessment.api import v1
 from assessment.contracts import completeness_rows
 from assessment.store import file_sha256
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _chunk(name: bytes, data: bytes) -> bytes:
@@ -85,3 +89,23 @@ def test_v4210_completeness_rejects_stale_commit_timestamp_and_invalid_png(monke
     _result(result, v1.current_git_commit(), evidence["test_file"], evidence["test_names"][0], shots)
     shots[0].write_text("not png", encoding="utf-8")
     assert v1.completeness_runtime_rows()[0]["e2e"] == "STALE"
+
+
+def test_v4210_manifest_references_existing_test_functions():
+    missing: list[str] = []
+    functions_by_file: dict[str, set[str]] = {}
+    for page_id, evidence in v1.completeness_e2e_manifest().items():
+        relative = str(evidence.get("test_file") or "").replace("\\", "/")
+        path = ROOT / relative
+        if not path.is_file():
+            missing.append(f"{page_id}:{relative}:missing-file")
+            continue
+        if relative not in functions_by_file:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            functions_by_file[relative] = {
+                node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+        for test_name in evidence.get("test_names") or []:
+            if test_name not in functions_by_file[relative]:
+                missing.append(f"{page_id}:{relative}::{test_name}")
+    assert not missing, "E2E manifest references missing tests: " + ", ".join(missing)

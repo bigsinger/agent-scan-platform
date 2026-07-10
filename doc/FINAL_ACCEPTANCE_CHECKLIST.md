@@ -13,7 +13,7 @@ powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.p
 | pages / audit / contract / E2E | 58 / 58 / 58 / 58 |
 | gaps | 0 |
 | Chromium journeys / PNG | 8 / 8 |
-| non-browser pytest | 208 passed / 0 failed / 0 skipped |
+| non-browser pytest | 209 passed / 0 failed / 0 skipped |
 | JUnit failures / errors / skips | 0 / 0 / 0 |
 | 本机 Agent | Codex、Hermes 均真实发现 |
 | 配置 Hash 变化 | 0 |

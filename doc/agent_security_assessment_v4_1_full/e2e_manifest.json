@@ -926,7 +926,7 @@
       "page_id": "P52",
       "test_file": "tests/test_v426_behavior_anomaly_rules.py",
       "test_names": [
-        "test_v426_p0_rules_emit_deduped_redacted_anomalies"
+        "test_v426_behavior_chain_and_anomaly_idempotency"
       ],
       "command": "python -m pytest tests/test_v426_behavior_anomaly_rules.py -q",
       "assertions": [
@@ -1001,7 +1001,7 @@
       "page_id": "D21",
       "test_file": "tests/test_v426_otel_receiver_ingestion.py",
       "test_names": [
-        "test_v426_trace_detail_api_returns_related_objects"
+        "test_v426_receiver_ingests_traces_logs_metrics_and_query_api"
       ],
       "command": "python -m pytest tests/test_v426_otel_receiver_ingestion.py -q",
       "assertions": [

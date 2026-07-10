@@ -980,7 +980,7 @@ powershell -ExecutionPolicy Bypass -File tools\verify_delivery_package.ps1 -Pack
 ### 15.2 提交前回归结果
 
 ```text
-non-browser pytest: 208 passed in 300.96s
+non-browser pytest: 209 passed（最终提交门禁；含 manifest 引用真实性契约）
 Chromium enterprise journeys: 8 passed in 61.03s
 targeted OTel 10,000 events: accepted=10,000, persisted=10,000, plaintext secret=0
 git diff --check: no whitespace errors

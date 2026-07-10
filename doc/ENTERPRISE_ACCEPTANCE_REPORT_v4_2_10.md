@@ -28,13 +28,13 @@
 2026-07-10 在隔离 SQLite、state 和 artifact 根目录执行：
 
 ```text
-non-browser pytest: 208 passed
+non-browser pytest: 209 passed
 Chromium enterprise journeys: 8 passed
 browser console/page errors: 0
 external browser requests: 0
 ```
 
-该快照用于证明开发收敛，不是发布 PASS 的替代物。最终签收必须重新执行下方一键验收，使结果绑定提交后的 Git HEAD，并由脚本在最后一个门禁完成后才发布 `latest-e2e-result.json`。
+该快照包含 manifest 文件/函数存在性契约，用于证明开发收敛，不是发布 PASS 的替代物。最终签收必须重新执行下方一键验收，使结果绑定提交后的 Git HEAD，并由脚本在最后一个门禁完成后才发布 `latest-e2e-result.json`。
 
 ## 一键验收
 

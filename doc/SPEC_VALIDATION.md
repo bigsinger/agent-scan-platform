@@ -147,8 +147,8 @@ powershell -ExecutionPolicy Bypass -File tools\verify_v4210_enterprise_release.p
 提交前收敛回归（2026-07-10）：
 
 ```text
-tests --ignore=tests/browser: 208 passed in 300.96s
+tests --ignore=tests/browser: 209 passed（最终提交门禁；含 manifest 引用真实性契约）
 tests/browser/test_enterprise_journeys.py: 8 passed in 61.03s
 ```
 
-本轮新增验证覆盖 schema migration 校验和/回滚、retention 计划绑定、artifact 引用感知 GC、10,000 事件批量/幂等/脱敏、增量复扫、任务取消/恢复、报告上下文返回和 1366/1440/1920/390 四类视口。上述数字是提交前开发证据；正式 PASS 仍以提交后运行 `verify_v4210_enterprise_release.ps1` 的机器结果为准。
+本轮新增验证覆盖 schema migration 校验和/回滚、retention 计划绑定、artifact 引用感知 GC、10,000 事件批量/幂等/脱敏、增量复扫、任务取消/恢复、报告上下文返回、manifest 引用真实性和 1366/1440/1920/390 四类视口。上述数字是开发收敛目标；正式 PASS 仍以提交后运行 `verify_v4210_enterprise_release.ps1` 的机器结果为准。
