@@ -5,6 +5,7 @@ param(
     [int]$OtelPort = 4318,
     [string]$DataRoot = "",
     [string]$LogRoot = "",
+    [switch]$Lite,
     [switch]$Foreground,
     [string]$ListenHost = "127.0.0.1"
 )
@@ -55,7 +56,9 @@ function Wait-Healthy([string]$Url, [Diagnostics.Process]$Process, [string]$LogP
 if ($ListenHost -notin @("127.0.0.1", "localhost", "::1") -and -not $env:ASSESSMENT_ADMIN_TOKEN) {
     throw "Non-loopback binding requires ASSESSMENT_ADMIN_TOKEN."
 }
-foreach ($port in @($MainPort, $OtelPort)) {
+$requiredPorts = @($MainPort)
+if (-not $Lite) { $requiredPorts += $OtelPort }
+foreach ($port in $requiredPorts) {
     $owner = Get-ListenPid $port
     if ($owner) { throw "Port $port is occupied by PID $owner; refusing to stop or replace a non-owned process." }
 }
@@ -122,13 +125,17 @@ function Resolve-OwnedIdentity($Service) {
 
 try {
     $main = Start-Owned "main" $MainPort "assessment.main:app"
-    $otel = Start-Owned "otel" $OtelPort "assessment.observability.receiver:create_receiver_app" -Factory
     Wait-Healthy $main.health_url $main.process $main.stderr_log
-    Wait-Healthy $otel.health_url $otel.process $otel.stderr_log
     $main = Resolve-OwnedIdentity $main
-    $otel = Resolve-OwnedIdentity $otel
+    $serviceList = @($main)
+    if (-not $Lite) {
+        $otel = Start-Owned "otel" $OtelPort "assessment.observability.receiver:create_receiver_app" -Factory
+        Wait-Healthy $otel.health_url $otel.process $otel.stderr_log
+        $otel = Resolve-OwnedIdentity $otel
+        $serviceList += $otel
+    }
     $entries = @()
-    foreach ($service in @($main, $otel)) {
+    foreach ($service in $serviceList) {
         $entry = [ordered]@{}
         foreach ($key in @("name", "pid", "process_start_time", "executable_path", "command_line_hash", "launcher_pid", "launcher_start_time", "launcher_executable_path", "launcher_command_line_hash", "listen_host", "listen_port", "health_url", "run_root", "stdout_log", "stderr_log")) { $entry[$key] = $service[$key] }
         $entries += $entry
@@ -137,12 +144,14 @@ try {
         schema = "agent-security-service-manifest@4.2.10"
         created_at = (Get-Date).ToUniversalTime().ToString("o")
         project_dir = $ProjectDir
+        mode = $(if ($Lite) { "lite" } else { "full" })
         services = $entries
         mutates_foreign_processes = $false
     } | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath $Manifest
     if (-not $NoBrowser) { Start-Process "http://127.0.0.1:$MainPort/assessment" }
     Write-Host "Main service: http://127.0.0.1:$MainPort/assessment"
-    Write-Host "OTel receiver: http://127.0.0.1:$OtelPort/healthz"
+    if ($Lite) { Write-Host "OTel receiver: skipped (lite mode)" }
+    else { Write-Host "OTel receiver: http://127.0.0.1:$OtelPort/healthz" }
     Write-Host "Service manifest: $Manifest"
     if ($Foreground) { Wait-Process -Id $main.pid }
 }

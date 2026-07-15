@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent 本机安全检查</title>
+  <link rel="stylesheet" href="/static/assessment/lite.css?v=4.2.10">
+</head>
+<body>
+  <div id="lite-app" class="lite-shell">
+    <header class="lite-header">
+      <a class="lite-brand" href="/assessment" aria-label="Agent 安全检查首页">
+        <span class="brand-mark" aria-hidden="true">AS</span>
+        <span><strong>Agent 安全检查</strong><small id="version-text">本机版</small></span>
+      </a>
+      <div class="header-actions">
+        <span class="safety-chip"><span class="status-dot"></span>本机只读</span>
+        <a class="text-link" href="/assessment/advanced">专业模式</a>
+      </div>
+    </header>
+
+    <main class="lite-main">
+      <section class="intro" aria-labelledby="page-heading">
+        <div>
+          <p class="eyebrow">LOCAL AGENT SECURITY</p>
+          <h1 id="page-heading">检查本机 Agent 安全风险</h1>
+          <p class="intro-copy">覆盖 Agent 配置、MCP 和 Skill，检查过程不启动 Agent 或 stdio MCP，也不修改已有配置。</p>
+        </div>
+        <div class="intro-actions">
+          <button id="start-scan" class="button primary" type="button">开始检查</button>
+          <button id="discover-only" class="button secondary" type="button">仅发现资产</button>
+        </div>
+      </section>
+
+      <section class="workflow" aria-labelledby="workflow-heading">
+        <div class="workflow-head">
+          <div>
+            <p class="section-kicker">当前进度</p>
+            <h2 id="workflow-heading">准备就绪</h2>
+          </div>
+          <span id="elapsed-time" class="elapsed">等待开始</span>
+        </div>
+        <ol class="steps" aria-label="检查步骤">
+          <li class="step active" data-step="discover"><span>1</span><div><strong>发现资产</strong><small>Agent、MCP、Skill</small></div></li>
+          <li class="step" data-step="scan"><span>2</span><div><strong>只读扫描</strong><small>本地规则分析</small></div></li>
+          <li class="step" data-step="result"><span>3</span><div><strong>查看结果</strong><small>风险与报告</small></div></li>
+        </ol>
+        <div class="progress-track" aria-hidden="true"><i id="progress-bar"></i></div>
+        <p id="status-message" class="status-message" role="status" aria-live="polite">点击“开始检查”即可完成发现和扫描。</p>
+        <div id="error-message" class="error-message" role="alert" hidden></div>
+      </section>
+
+      <section id="asset-section" class="content-section" aria-labelledby="asset-heading" hidden>
+        <div class="section-head">
+          <div><p class="section-kicker">发现结果</p><h2 id="asset-heading">本机资产</h2></div>
+          <button id="rescan-assets" class="icon-button" type="button" title="重新发现" aria-label="重新发现">↻</button>
+        </div>
+        <div class="summary-grid asset-summary">
+          <div><span id="agent-count">0</span><small>Agent</small></div>
+          <div><span id="config-count">0</span><small>配置</small></div>
+          <div><span id="mcp-count">0</span><small>MCP</small></div>
+          <div><span id="skill-count">0</span><small>Skill</small></div>
+        </div>
+        <div id="agent-list" class="agent-list"></div>
+      </section>
+
+      <section id="result-section" class="content-section" aria-labelledby="result-heading" hidden>
+        <div class="section-head">
+          <div><p class="section-kicker">检查完成</p><h2 id="result-heading">安全结果</h2></div>
+          <div class="section-actions">
+            <a id="report-link" class="button secondary compact" href="#" target="_blank" rel="noopener" hidden>查看报告</a>
+            <a class="button ghost compact" href="/assessment/findings">全部风险</a>
+          </div>
+        </div>
+        <div class="summary-grid risk-summary">
+          <div class="risk-critical"><span id="p0-count">0</span><small>严重</small></div>
+          <div class="risk-high"><span id="p1-count">0</span><small>高危</small></div>
+          <div class="risk-medium"><span id="p2-count">0</span><small>中危</small></div>
+          <div><span id="other-count">0</span><small>其他</small></div>
+        </div>
+        <div class="result-meta">
+          <span id="result-status">-</span>
+          <span id="files-scanned">0 个文件</span>
+          <span id="evidence-count">0 份证据</span>
+        </div>
+        <div id="finding-list" class="finding-list"></div>
+      </section>
+
+      <section class="content-section history-section" aria-labelledby="history-heading">
+        <div class="section-head">
+          <div><p class="section-kicker">最近记录</p><h2 id="history-heading">检查历史</h2></div>
+          <button id="refresh-history" class="icon-button" type="button" title="刷新历史" aria-label="刷新历史">↻</button>
+        </div>
+        <div id="history-list" class="history-list"><p class="empty-state">正在读取...</p></div>
+      </section>
+    </main>
+
+    <footer class="lite-footer">
+      <span>数据仅保存在本机</span>
+      <span>不会启动 Agent 或 stdio MCP</span>
+      <a href="/assessment/advanced">进入专业工作台</a>
+    </footer>
+  </div>
+
+  <script src="/static/assessment/runtime.js?v=4.2.10"></script>
+  <script src="/static/assessment/lite.js?v=4.2.10"></script>
+</body>
+</html>

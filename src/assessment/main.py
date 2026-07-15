@@ -21,6 +21,7 @@ from .store import get_store, set_audit_correlation_id
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 INDEX_HTML = STATIC_DIR / "assessment" / "index.html"
+LITE_INDEX_HTML = STATIC_DIR / "assessment" / "lite.html"
 MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024
 
 
@@ -117,7 +118,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def root() -> FileResponse:
-        return FileResponse(INDEX_HTML)
+        return FileResponse(LITE_INDEX_HTML)
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> Response:
@@ -125,6 +126,10 @@ def create_app() -> FastAPI:
 
     @app.get("/assessment", include_in_schema=False)
     async def assessment_root() -> FileResponse:
+        return FileResponse(LITE_INDEX_HTML)
+
+    @app.get("/assessment/advanced", include_in_schema=False)
+    async def assessment_advanced() -> FileResponse:
         return FileResponse(INDEX_HTML)
 
     @app.get("/assessment/{path:path}", include_in_schema=False)

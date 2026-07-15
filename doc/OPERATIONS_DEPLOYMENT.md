@@ -16,13 +16,14 @@
 | `src/assessment/observability/` | OTLP Receiver、统一脱敏、行为链和异常分析 |
 | `src/assessment/reports/` | HTML/JSON 报告渲染器 |
 | `src/assessment/persistence/migrations/` | `001`-`003` 可执行 schema migration、校验和和升级链 |
-| `src/assessment/static/` | 离线 Vue 前端与本地 vendor 资源 |
+| `src/assessment/static/assessment/lite.*` | 默认轻量工作台，不加载 Vue/seed/bootstrap |
+| `src/assessment/static/assessment/index.html` | 完整 Vue 专业工作台 |
 | `data/db/app.db` | SQLite 主库，首次启动自动创建 |
 | `data/artifacts/` | 脱敏证据制品 |
 | `data/reports/` | HTML/JSON 报告制品 |
 | `data/backups/` | SQLite Online Backup 输出 |
 | `tests/fixtures/` | 本地回归样本 |
-| `start_services.ps1` / `stop_services.ps1` | 受 PID manifest 保护的主平台与 Receiver 启停 |
+| `start_services.ps1` / `stop_services.ps1` | 受 PID manifest 保护的启停；`-Lite` 仅启动主平台 |
 
 ## 2. 运行边界
 
@@ -70,7 +71,15 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-启动主平台和 OTel Receiver：
+推荐轻量启动，仅运行主平台：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1 -Lite
+```
+
+此时只监听 `127.0.0.1:8000`，`data/run/services.json` 中 `mode=lite` 且只有 `main` 服务。轻量扫描不依赖 OTel Receiver。
+
+完整启动主平台和 OTel Receiver：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\start_services.ps1
@@ -80,6 +89,7 @@ powershell -ExecutionPolicy Bypass -File .\start_services.ps1
 
 ```text
 http://127.0.0.1:8000/assessment
+http://127.0.0.1:8000/assessment/advanced
 http://127.0.0.1:4318/healthz
 ```
 
@@ -87,12 +97,17 @@ http://127.0.0.1:4318/healthz
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
-Invoke-RestMethod http://127.0.0.1:4318/healthz
 $selfTest = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/health/self-test
 $supervisor = Invoke-RestMethod http://127.0.0.1:8000/api/v1/execution-supervisor
 $selfTest.self_test.status
 $selfTest.self_test.download
 $supervisor.supervisor.state
+```
+
+完整模式再检查 Receiver：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:4318/healthz
 ```
 
 停止服务：

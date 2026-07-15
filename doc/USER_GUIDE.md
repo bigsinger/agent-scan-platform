@@ -4,28 +4,44 @@
 
 ## 1. 快速开始
 
+推荐使用轻量模式启动：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1 -Lite
+```
+
 启动服务后打开：
 
 ```text
 http://127.0.0.1:8000/assessment
 ```
 
-首次打开新库时，资产、任务、风险、证据、报告和执行进程列表应为空。这是正常行为：系统不会再用原型 seed 伪造 Agent、MCP、任务或风险数据。静态 `seed.json/seed.js` 也只保留导航、向导、维度和契约矩阵等 UI 配置；即使后端暂不可用，前端 fallback 也不会展示 `claude-code-repo-demo`、固定 fixture 计数或样例执行队列。只有执行“发现本机”“快速扫描”“Skill 扫描”“红队 dry-run”等本地动作后，相关记录才会写入 SQLite 并出现在页面中。旧版本遗留的已知原型 seed 记录会在启动初始化时从本系统 SQLite 中清理，不会改动已安装 Agent。
+该地址默认进入轻量工作台，不加载完整 Vue 工作台、seed 或 bootstrap。首次打开新库时，资产、检查历史和风险为空是正常行为；系统不会用原型数据伪造 Agent、任务或风险。
 
-推荐首次使用本机只读扫描：
+首次使用：
 
-1. 进入“快速扫描”。
-2. 扫描模式选择“发现本机 Agent”。
-3. 路径留空，系统会发现当前用户下已安装或可识别的 Codex、Hermes、Claude Code、Cursor 等 Agent 配置。
-4. 点击“开始快速扫描”。
-5. 系统进入任务详情页，展示阶段、事件、P0/P1 数量。
-6. 打开“风险中心”“证据中心”“报告中心”查看结果。
+1. 点击“开始检查”。
+2. 页面先发现 Codex、Hermes、Claude Code、Cursor 等本机 Agent，再创建只读扫描任务。
+3. 等待三步进度完成，直接查看 P0/P1/P2、前 10 条风险和本地 HTML 报告。
+4. 需要指定目录、MCP 审批、完整风险处置或 OTel 时，点击右上角“专业模式”。
+
+“仅发现资产”只运行发现，不创建扫描任务。轻量快检默认扫描当前用户、上限 150 个文件、关闭远程分析，不启动 Agent 或 stdio MCP，不修改已安装 Agent 配置。
+
+专业工作台入口：
+
+```text
+http://127.0.0.1:8000/assessment/advanced
+```
 
 `machine` 模式默认创建真实后台任务并返回 HTTP 202。页面会按 `poll` 地址刷新 `QUEUED -> RUNNING_DISCOVERY -> RUNNING_STATIC -> RUNNING_REPORT -> COMPLETED/WAITING_CONSENT`，任务和 Job 可取消、失败后可重试；关闭页面不会把任务伪装成已完成。`path`、`mcp` 模式默认同步返回 Assessment、Finding、Evidence 和 Report，也可以显式请求异步执行。
 
 `tests\fixtures\sample_agent_project` 仍保留为开发和回归测试样本，不作为企业客户默认验收入口。
 
-## 1.1 系统自检
+## 1.1 专业模式
+
+原 58 个页面及其 API、SQLite 数据和制品均保留。访问任一原专业路径，例如 `/assessment/quick-scan`、`/assessment/findings` 或 `/assessment/observability`，仍进入完整工作台。轻量与专业模式使用同一套真实数据，不存在两套任务或报告。
+
+## 1.2 系统自检
 
 位置：
 

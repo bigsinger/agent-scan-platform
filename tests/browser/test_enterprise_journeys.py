@@ -194,11 +194,18 @@ def _assert_and_shot(page: Page, errors: list[str], external: list[str], name: s
 
 def test_j01_first_start_empty_dashboard(page):
     browser, base, errors, external = page
-    _goto(browser, base, "/assessment", "马上测评本机 Agent")
+    _goto(browser, base, "/assessment", "检查本机 Agent 安全风险")
     assert _api(browser, base, "GET", "/healthz")["status"] == "ok"
     version = _api(browser, base, "GET", "/api/v1/version")
     assert version["app"] == "4.2.10" and version["spec"] == "V4.2.10"
-    assert browser.get_by_text("SQLite WAL", exact=False).count() > 0
+    assert browser.get_by_text("本机只读", exact=True).is_visible()
+    assert browser.get_by_role("link", name="专业模式", exact=True).get_attribute("href") == "/assessment/advanced"
+    with browser.expect_response(lambda response: response.url.endswith("/api/v1/discovery-runs") and response.request.method == "POST", timeout=60_000) as discovery:
+        browser.get_by_role("button", name="仅发现资产", exact=True).click()
+    assert discovery.value.ok
+    assert discovery.value.json()["mutates_installed_agents"] is False
+    browser.locator("#asset-section").wait_for(state="visible", timeout=30_000)
+    assert browser.locator(".agent-item").count() >= 1
     _assert_and_shot(browser, errors, external, "J01_dashboard")
 
 

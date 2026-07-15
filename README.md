@@ -4,7 +4,7 @@
 
 - FastAPI REST/SSE API，Base Path 为 `/api/v1`。
 - SQLite 本地数据库，默认位置 `data/db/app.db`。
-- 正式前端静态资源：`/static/vendor/vue.global.prod.js`、`/static/assessment/app.js`、`/static/assessment/style.css`。
+- 默认轻量工作台使用原生 HTML/CSS/JavaScript，只加载发现、扫描、结果和最近记录；完整 Vue 专业工作台保留在 `/assessment/advanced`。
 - 58 个页面/详情视图入口与 180 个 SPEC API 契约均可访问，并注入 FastAPI OpenAPI。
 - 前端不依赖 CDN，Vue 已 vendoring 到本地并登记 `vendor-manifest.json`。
 - 本地只读扫描：Agent 发现、MCP 配置解析、Skill 扫描、规则命中、脱敏证据、HTML/JSON 报告。
@@ -24,8 +24,15 @@
 
 - 运维部署：`doc/OPERATIONS_DEPLOYMENT.md`
 - 使用帮助：`doc/USER_GUIDE.md`
+- 轻量模式规范：`doc/LITE_MODE_SPEC.md`
 
-运行（同时启动主平台和本地 OTel Receiver）：
+推荐运行（轻量模式，仅启动主平台）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_services.ps1 -Lite
+```
+
+需要 Probe/OTel、调度、集成或运维能力时启动完整模式：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\start_services.ps1
@@ -35,8 +42,11 @@ powershell -ExecutionPolicy Bypass -File .\start_services.ps1
 
 ```text
 http://127.0.0.1:8000/assessment
+http://127.0.0.1:8000/assessment/advanced
 http://127.0.0.1:4318/healthz
 ```
+
+其中 4318 仅在完整模式监听。默认轻量页的一键检查使用本机只读扫描、150 文件上限和本地规则，不需要 OTel Receiver。
 
 验证：
 
